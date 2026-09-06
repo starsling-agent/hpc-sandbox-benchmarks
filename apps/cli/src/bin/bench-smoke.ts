@@ -22,9 +22,9 @@ if (import.meta.main) {
 	const log = (m: string) => console.error(m);
 
 	const runs = await forEachProviderWithCreds(
-		(provider) => {
-			log(`>>> ${provider.name}: booting sandbox…`);
-			return bootAndSmoke(provider);
+		(target) => {
+			log(`>>> ${target.id}: booting sandbox…`);
+			return bootAndSmoke(target);
 		},
 		{
 			log,

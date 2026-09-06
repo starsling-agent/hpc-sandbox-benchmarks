@@ -14,6 +14,7 @@ import {
 import type { SuiteRunContext } from "./index.ts";
 import {
 	benchmarkLifecycle,
+	benchmarkLifecycleCompute,
 	createSuiteSandbox,
 	createSuiteSandboxFromPlan,
 	hasRequiredCreds,
@@ -263,6 +264,26 @@ describe("@sandbox-benchmarks/harness", () => {
 		const spawnGap = result.gaps.find((g) => g.id === "lifecycle_spawn_ms");
 		expect(spawnGap?.reason).toBe("spawn boom");
 		expect(spawnGap?.outcome).toBe("failed");
+	});
+
+	it("benchmarkLifecycle skips control-plane info when the sandbox exposes no getInfo", async () => {
+		const compute: LifecycleCompute = {
+			sandbox: {
+				create: async () => ({
+					sandboxId: "sb-1",
+					runCommand: async () => ({ exitCode: 0 }),
+					destroy: async () => undefined,
+				}),
+			},
+		};
+		const result = await benchmarkLifecycleCompute("e2b", compute, { iterations: 2 });
+		const infoSkips = result.gaps.filter((g) => g.id === "control_plane_info_ms");
+		expect(infoSkips).toHaveLength(1);
+		expect(infoSkips[0]?.outcome).toBe("skipped");
+		expect(infoSkips[0]?.reason).toMatch(/no sandbox info/);
+		expect(result.aggregates.find((a) => a.metricId === "lifecycle_spawn_ms")?.aggregates.n).toBe(
+			2,
+		);
 	});
 
 	it("benchmarkLifecycle clamps a non-finite iterations to a single cycle", async () => {

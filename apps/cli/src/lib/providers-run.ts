@@ -4,13 +4,32 @@
 // vs timeOperation, "ok" vs "ran"). Keeping it here makes the skip-vs-fail contract single-sourced:
 // a provider with no creds SKIPS (never fails the run); a provider that runs and throws — or whose
 // result `ok()` rejects — FAILS.
-import { DRIVERS } from "@sandbox-benchmarks/drivers";
+import { missingDriverEnvNames } from "@sandbox-benchmarks/driver/env";
+import type { DriverProviderId } from "@sandbox-benchmarks/drivers";
 import { missingCreds } from "@sandbox-benchmarks/harness";
 import type { ProviderConfig } from "@sandbox-benchmarks/providers";
 import { providers } from "@sandbox-benchmarks/providers";
 import type { ProviderId } from "@sandbox-benchmarks/schema";
+import { PROVIDERS } from "@sandbox-benchmarks/schema";
+import { isDriverProviderId, usesDriverSuite } from "./driver-run.ts";
 
 export type ProviderRunStatus = "ok" | "skipped" | "failed";
+
+/** A leftover ComputeSDK adapter still served by `packages/providers`. */
+export interface LegacyProviderTarget {
+	readonly kind: "legacy";
+	readonly id: ProviderId;
+	readonly config: ProviderConfig;
+}
+
+/** A registered DriverModule; create goes through `loadDriverModule`. */
+export interface DriverProviderTarget {
+	readonly kind: "driver";
+	readonly id: DriverProviderId;
+}
+
+/** One visit of the shared smoke/lifecycle/bake loop. Discriminated by {@link usesDriverSuite}. */
+export type ProviderTarget = LegacyProviderTarget | DriverProviderTarget;
 
 /** The outcome of driving one provider: status plus (when it ran) the body's value and wall time. */
 export interface ProviderRun<T> {
@@ -47,13 +66,58 @@ export interface ForEachProviderOptions<T> {
 
 const noop = () => {};
 
+function selectedProviderIds(only: readonly ProviderId[] | undefined): ProviderId[] {
+	const all = PROVIDERS.map((meta) => meta.id);
+	if (only === undefined) return all;
+	if (only.length === 0) {
+		throw new Error(
+			"forEachProviderWithCreds: `only` is an empty list — pass at least one provider id, or omit `only` to visit every registered provider",
+		);
+	}
+	return all.filter((id) => only.includes(id));
+}
+
+function missingForTarget(
+	target: ProviderTarget,
+	env: Record<string, string | undefined> | undefined,
+): readonly string[] {
+	const ambient = env ?? process.env;
+	switch (target.kind) {
+		case "driver":
+			return missingDriverEnvNames(target.id, ambient);
+		case "legacy":
+			return missingCreds(target.config, ambient);
+		default: {
+			const _never: never = target;
+			return _never;
+		}
+	}
+}
+
+function targetFor(id: ProviderId): ProviderTarget | undefined {
+	if (usesDriverSuite(id)) {
+		if (!isDriverProviderId(id)) {
+			throw new Error(
+				`forEachProviderWithCreds: ${id} selected the driver path but has no DriverModule`,
+			);
+		}
+		return { kind: "driver", id };
+	}
+	const config = providers.find((provider) => provider.name === id);
+	if (config === undefined) return undefined;
+	return { kind: "legacy", id, config };
+}
+
 /**
  * Run `body` against every provider whose credentials are present, in registry order, collecting a
  * {@link ProviderRun} per provider. Never throws: a body that throws becomes a `failed` run carrying
  * the coerced error message; a provider with missing creds becomes a `skipped` run.
+ *
+ * Registered DriverModule ids (`usesDriverSuite`) are visited as `{ kind: "driver" }`; waived ids as
+ * `{ kind: "legacy", config }`. Callers must create sandboxes through the matching composition root.
  */
 export async function forEachProviderWithCreds<T>(
-	body: (provider: ProviderConfig) => Promise<T>,
+	body: (target: ProviderTarget) => Promise<T>,
 	options: ForEachProviderOptions<T> = {},
 ): Promise<ProviderRun<T>[]> {
 	const log = options.log ?? noop;
@@ -68,31 +132,15 @@ export async function forEachProviderWithCreds<T>(
 	// would EXIT 0 having validated nothing. A release that bakes nothing must never look like a release
 	// that passed. Omit `only` to mean "every provider"; `[]` means "you computed an empty set", which is
 	// never a valid request.
-	if (options.only && options.only.length === 0) {
-		throw new Error(
-			"forEachProviderWithCreds: `only` is an empty list — pass at least one provider id, or omit `only` to visit every registered provider",
-		);
-	}
-	if (options.only) {
-		const migrated = options.only.filter((id) => Object.hasOwn(DRIVERS, id));
-		if (migrated.length > 0) {
-			throw new Error(
-				`forEachProviderWithCreds: ${migrated.join(", ")} ${
-					migrated.length === 1 ? "has" : "have"
-				} no legacy adapter (migrated to DriverModule). Default bench-suite uses the driver path; smoke/lifecycle/bake-validate for these ids is not yet on this loop.`,
-			);
-		}
-	}
-	const selected = options.only
-		? providers.filter((p) => options.only?.includes(p.name))
-		: providers;
+	for (const id of selectedProviderIds(options.only)) {
+		const target = targetFor(id);
+		if (target === undefined) continue;
 
-	for (const provider of selected) {
-		const missing = missingCreds(provider, options.env);
+		const missing = missingForTarget(target, options.env);
 		if (missing.length > 0) {
-			log(`skip: ${provider.name} (missing ${missing.join(", ")})`);
+			log(`skip: ${id} (missing ${missing.join(", ")})`);
 			const skipped: ProviderRun<T> = {
-				provider: provider.name,
+				provider: id,
 				status: "skipped",
 				reason: `missing ${missing.join(", ")}`,
 			};
@@ -103,10 +151,10 @@ export async function forEachProviderWithCreds<T>(
 		const start = performance.now();
 		let run: ProviderRun<T>;
 		try {
-			const value = await body(provider);
+			const value = await body(target);
 			const ok = options.ok?.(value) ?? true;
 			run = {
-				provider: provider.name,
+				provider: id,
 				status: ok ? "ok" : "failed",
 				durationMs: performance.now() - start,
 				value,
@@ -114,7 +162,7 @@ export async function forEachProviderWithCreds<T>(
 			};
 		} catch (err) {
 			run = {
-				provider: provider.name,
+				provider: id,
 				status: "failed",
 				reason: err instanceof Error ? err.message : String(err),
 				durationMs: performance.now() - start,

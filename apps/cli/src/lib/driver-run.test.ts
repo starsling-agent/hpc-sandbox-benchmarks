@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type {
 	CreateRequest,
+	DriverModule,
 	ExecOptions,
 	SandboxDriver,
 	SandboxSession,
@@ -12,10 +13,13 @@ import type { LegacyAdapterId } from "@sandbox-benchmarks/providers";
 import { isLegacyAdapterId, providers } from "@sandbox-benchmarks/providers";
 import type { ProviderId } from "@sandbox-benchmarks/schema";
 import { PROVIDERS, REGISTRY, TOOLCHAIN_VERSION } from "@sandbox-benchmarks/schema";
+import type { OpenedDriver } from "./driver-run.ts";
 import {
 	createOwnedDriverSession,
+	driverLifecycleCompute,
 	driverTransport,
 	isDriverProviderId,
+	openedDriverCreateRequest,
 	resolveDriverArtifact,
 	sessionHandle,
 	usesDriverSuite,
@@ -300,5 +304,85 @@ describe("sessionHandle", () => {
 		expect(commands).toHaveLength(1);
 		expect(commands[0]).toContain("nohup");
 		expect(commands[0]).toContain("long-job");
+	});
+});
+
+function openedFrom(driver: SandboxDriver): OpenedDriver {
+	return {
+		module: { createBudget: { owner: "harness", timeoutMs: 60_000 } } as DriverModule<ProviderId>,
+		driver,
+		artifact: { kind: "baked", ref: "template" },
+		transport: { streaming: false, syncCapMs: 60_000, detachedPoll: false },
+	};
+}
+
+describe("driverLifecycleCompute", () => {
+	test("create goes through SandboxDriver.create and maps observe to getInfo", async () => {
+		const observed: string[] = [];
+		const created: CreateRequest[] = [];
+		const session = bareSession(async () => okResult());
+		const compute = driverLifecycleCompute(
+			openedFrom({
+				create: async (request) => {
+					created.push(request);
+					return session;
+				},
+				probes: {
+					observe: async (ref) => {
+						observed.push(ref.id);
+						return { state: "running" };
+					},
+				},
+			}),
+		);
+		const sandbox = await compute.sandbox.create();
+		expect(created).toEqual([
+			openedDriverCreateRequest(openedFrom({ create: async () => session })),
+		]);
+		expect(sandbox.sandboxId).toBe("isandbox");
+		expect(await sandbox.getInfo?.()).toEqual({ state: "running" });
+		expect(observed).toEqual(["isandbox"]);
+		expect(compute.sandbox.list).toBeUndefined();
+	});
+
+	test("prefers probes.describe over observe for getInfo", async () => {
+		const session = bareSession(async () => okResult());
+		const compute = driverLifecycleCompute(
+			openedFrom({
+				create: async () => session,
+				probes: {
+					observe: async () => {
+						throw new Error("observe must not run when describe exists");
+					},
+					describe: async (ref) => ({ described: ref.id }),
+				},
+			}),
+		);
+		const sandbox = await compute.sandbox.create();
+		expect(await sandbox.getInfo?.()).toEqual({ described: "isandbox" });
+	});
+
+	test("omits getInfo and list when the driver exposes no probes", async () => {
+		const compute = driverLifecycleCompute(
+			openedFrom({
+				create: async () => bareSession(async () => okResult()),
+			}),
+		);
+		const sandbox = await compute.sandbox.create();
+		expect(sandbox.getInfo).toBeUndefined();
+		expect(compute.sandbox.list).toBeUndefined();
+	});
+
+	test("exposes list when probes.list is present", async () => {
+		const compute = driverLifecycleCompute(
+			openedFrom({
+				create: async () => bareSession(async () => okResult()),
+				probes: {
+					observe: async () => ({ state: "running" }),
+					list: async () => [{ id: "a" }],
+				},
+			}),
+		);
+		expect(await compute.sandbox.list?.()).toEqual([{ id: "a" }]);
 	});
 });

@@ -145,23 +145,28 @@ export interface LifecycleBenchmark {
  * failure rejects (no sandbox to tear down); every other per-op failure is recorded as a FAILED gap, so
  * a single flaky probe can't sink the whole benchmark — while still being published as the outage it is.
  */
-export async function benchmarkLifecycle(
-	config: ProviderConfig,
-	options: BenchmarkLifecycleOptions = {},
+/**
+ * Repeat {@link measureLifecycle} for `iterations` cold-start cycles against any
+ * {@link LifecycleCompute} — leftover ComputeSDK adapters and DriverModule projections share this
+ * loop so spawn-failure accounting cannot drift between lanes.
+ */
+export async function benchmarkLifecycleCompute(
+	provider: string,
+	compute: LifecycleCompute,
+	options: BenchmarkLifecycleOptions & { createOptions?: unknown } = {},
 ): Promise<LifecycleBenchmark> {
 	// `?? 5` only catches undefined; a non-finite iterations would make `i < iterations` never run
 	// (NaN) or never stop (Infinity), so it falls back to a single cycle.
 	const rawIterations = options.iterations ?? 5;
 	const iterations = Number.isFinite(rawIterations) ? Math.max(1, Math.floor(rawIterations)) : 1;
-	const compute: LifecycleCompute = config.createCompute();
 
 	const samples: RawRun[] = [];
 	const gaps: ResultGap[] = [];
 	for (let i = 0; i < iterations; i++) {
 		try {
 			const pass = await measureLifecycle(compute, {
-				provider: config.name,
-				createOptions: config.createOptions,
+				provider,
+				createOptions: options.createOptions,
 				execCommand: options.execCommand,
 				controlPlaneSamples: options.controlPlaneSamples ?? 5,
 				snapshot: options.snapshot,
@@ -201,11 +206,21 @@ export async function benchmarkLifecycle(
 	});
 
 	return {
-		provider: config.name,
+		provider,
 		samples,
 		aggregates: aggregateLifecycle(samples),
 		gaps: dedupedGaps,
 	};
+}
+
+export async function benchmarkLifecycle(
+	config: ProviderConfig,
+	options: BenchmarkLifecycleOptions = {},
+): Promise<LifecycleBenchmark> {
+	return benchmarkLifecycleCompute(config.name, config.createCompute(), {
+		...options,
+		createOptions: config.createOptions,
+	});
 }
 
 /** An unknown provider or suite is a usage error, distinct from an operational failure mid-run. */

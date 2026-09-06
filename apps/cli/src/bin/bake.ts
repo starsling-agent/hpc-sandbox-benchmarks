@@ -14,7 +14,6 @@ import {
 	requiredProviders,
 	unmetRequirements,
 } from "@sandbox-benchmarks/harness";
-import type { ProviderConfig } from "@sandbox-benchmarks/providers";
 import { config } from "@sandbox-benchmarks/providers";
 import type { ProviderId } from "@sandbox-benchmarks/schema";
 import { PROVIDERS } from "@sandbox-benchmarks/schema";
@@ -26,14 +25,11 @@ import {
 	nonBakedArtifactAction,
 } from "../lib/bake/provider-artifacts.ts";
 import type { BakeReport, Log } from "../lib/bake/types.ts";
-import {
-	baseImageUse,
-	candidateCreateOptions,
-	candidateResolvedArtifact,
-} from "../lib/bake/validate.ts";
+import { baseImageUse } from "../lib/bake/validate.ts";
+import { bootAndSmokeCandidate } from "../lib/bake/validate-run.ts";
 import { isPartialScope, selectProviders } from "../lib/matrix.ts";
 import { anyFailed, forEachProviderWithCreds } from "../lib/providers-run.ts";
-import { bootAndSmoke, logChecks, smokeFailureReason, smokeOk } from "../lib/smoke-run.ts";
+import { logChecks, smokeFailureReason, smokeOk } from "../lib/smoke-run.ts";
 
 /**
  * Emit the bake/promote report JSON. To `$BAKE_REPORT_FILE` when set — the provider CLIs (e2b) and
@@ -212,27 +208,18 @@ if (import.meta.main) {
 	};
 
 	const runs = await forEachProviderWithCreds(
-		async (provider) => {
-			if (isBakedProviderId(provider.name)) {
-				log(`>>> ${provider.name}: baking candidate…`);
-				await buildBakedProviderArtifact(provider.name, "candidate", pinnedBaseImage, (m) =>
+		async (target) => {
+			if (isBakedProviderId(target.id)) {
+				log(`>>> ${target.id}: baking candidate…`);
+				await buildBakedProviderArtifact(target.id, "candidate", pinnedBaseImage, (m) =>
 					log(`    ${m}`),
 				);
 			} else {
-				log(`>>> ${provider.name}: ${nonBakedArtifactAction(provider.name, "candidate")}`);
+				log(`>>> ${target.id}: ${nonBakedArtifactAction(target.id, "candidate")}`);
 			}
 
-			log(`>>> ${provider.name}: validating (boot + smoke)…`);
-			// Boot the just-baked candidate (override the registry adapter's version create-options).
-			const validateConfig: ProviderConfig = {
-				...provider,
-				artifact: candidateResolvedArtifact(provider.name, candidateRefs),
-				createOptions: {
-					...provider.createOptions,
-					...candidateCreateOptions(provider.name, candidateRefs),
-				},
-			};
-			return bootAndSmoke(validateConfig);
+			log(`>>> ${target.id}: validating (boot + smoke)…`);
+			return bootAndSmokeCandidate(target, candidateRefs);
 		},
 		{
 			log,

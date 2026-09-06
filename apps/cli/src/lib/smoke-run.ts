@@ -3,9 +3,11 @@
 // feed to {@link forEachProviderWithCreds}. The probe results are captured INSIDE the lifecycle so a
 // teardown-only failure still reports which probes passed instead of looking like nothing ran.
 import { withSandbox } from "@sandbox-benchmarks/harness";
-import type { ProviderConfig } from "@sandbox-benchmarks/providers";
 import type { SmokeResult } from "@sandbox-benchmarks/templates/smoke";
 import { runSmoke } from "@sandbox-benchmarks/templates/smoke";
+import type { ArtifactResolution } from "./driver-run.ts";
+import { withDriverSandbox } from "./driver-run.ts";
+import type { ProviderTarget } from "./providers-run.ts";
 
 /** A smoke run's outcome: the probe results, plus the lifecycle error if boot/teardown threw. */
 export interface SmokeOutcome {
@@ -15,17 +17,45 @@ export interface SmokeOutcome {
 }
 
 /**
- * Boot a sandbox from `config`, run the smoke spec, and tear it down. Never throws: `checks` are
+ * Boot a sandbox from `target`, run the smoke spec, and tear it down. Never throws: `checks` are
  * captured before teardown so they survive a destroy failure, and any lifecycle error is returned in
  * `error` rather than thrown — the caller (via {@link smokeOk}) decides pass/fail.
+ *
+ * Registered ids create through {@link withDriverSandbox}; waived ids through leftover adapters.
  */
-export async function bootAndSmoke(config: ProviderConfig): Promise<SmokeOutcome> {
+export async function bootAndSmoke(
+	target: ProviderTarget,
+	options: { readonly artifact?: ArtifactResolution } = {},
+): Promise<SmokeOutcome> {
 	let checks: SmokeResult[] = [];
 	try {
-		await withSandbox(config, async (sandbox) => {
-			checks = await runSmoke((cmd) => sandbox.runCommand(cmd));
-		});
-		return { checks };
+		switch (target.kind) {
+			case "driver":
+				await withDriverSandbox(
+					target.id,
+					async (sandbox) => {
+						checks = await runSmoke(async (cmd) => {
+							const result = await sandbox.runCommand(cmd);
+							return {
+								stdout: result.stdout ?? "",
+								stderr: result.stderr ?? "",
+								exitCode: result.exitCode,
+							};
+						});
+					},
+					options,
+				);
+				return { checks };
+			case "legacy":
+				await withSandbox(target.config, async (sandbox) => {
+					checks = await runSmoke((cmd) => sandbox.runCommand(cmd));
+				});
+				return { checks };
+			default: {
+				const _never: never = target;
+				return _never;
+			}
+		}
 	} catch (error) {
 		return { checks, error };
 	}

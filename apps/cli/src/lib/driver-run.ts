@@ -27,8 +27,15 @@ import {
 import { missingDriverEnvNames, parseDriverEnv } from "@sandbox-benchmarks/driver/env";
 import type { DriverProviderId } from "@sandbox-benchmarks/drivers";
 import { DRIVERS, loadDriverModule } from "@sandbox-benchmarks/drivers";
-import type { RunSuiteOptions, SandboxHandle } from "@sandbox-benchmarks/harness";
+import type {
+	BenchmarkLifecycleOptions,
+	LifecycleBenchmark,
+	LifecycleCompute,
+	RunSuiteOptions,
+	SandboxHandle,
+} from "@sandbox-benchmarks/harness";
 import {
+	benchmarkLifecycleCompute,
 	CREATE_FAILURE_PREFIX,
 	createOwnedSandbox,
 	createSuiteSandboxFromPlan,
@@ -37,6 +44,7 @@ import {
 	runSuiteOnSandbox,
 	SUITE_CREATE_ATTEMPT_TIMEOUT_MS,
 	SuiteUsageError,
+	withCleanupPreservingPrimaryError,
 } from "@sandbox-benchmarks/harness";
 import type {
 	ArtifactPhase,
@@ -291,8 +299,8 @@ export function isDriverProviderId(value: string): value is DriverProviderId {
 }
 
 /**
- * Default bench-suite selection: a registered DriverModule id uses {@link runDriverSuite}
- * without `--driver-path`. Waived/unknown ids stay on the legacy `packages/providers` path
+ * Default lane selection: a registered DriverModule id uses {@link loadDriverModule} /
+ * {@link runDriverSuite} / {@link withDriverSandbox} without `--driver-path`. Waived/unknown ids stay on the legacy `packages/providers` path
  * unless the flag forces the driver lane (which then errors rather than inventing a module).
  */
 export function usesDriverSuite(providerId: string, driverPathFlag = false): boolean {
@@ -314,6 +322,90 @@ function createBudgetOf(module: DriverModule<ProviderId>): {
 	}
 	const timeoutMs = budget?.timeoutMs ?? SUITE_CREATE_ATTEMPT_TIMEOUT_MS;
 	return { timeoutMs, attemptCeilingMs: undefined, requestDeadlineMs: timeoutMs };
+}
+
+/** The pinned create request the composition root issues for an already-opened driver. */
+export function openedDriverCreateRequest(opened: OpenedDriver): CreateRequest {
+	return benchmarkCreateRequest(opened.artifact, createBudgetOf(opened.module).requestDeadlineMs);
+}
+
+/**
+ * Boot one DriverModule sandbox, run `fn` against its harness handle, and always tear it down.
+ * Smoke and bake-validate use this so registered ids create through {@link loadDriverModule}.
+ */
+export async function withDriverSandbox<T>(
+	id: DriverProviderId,
+	fn: (sandbox: SandboxHandle) => Promise<T>,
+	options: {
+		readonly artifact?: ArtifactResolution;
+		readonly env?: Readonly<Record<string, string | undefined>>;
+	} = {},
+): Promise<T> {
+	const opened = await openDriver(id, options);
+	const session = await createOwnedDriverSession(opened.driver, openedDriverCreateRequest(opened));
+	return withCleanupPreservingPrimaryError(
+		() => fn(sessionHandle(session)),
+		() => session.destroy(),
+		(error) =>
+			console.error(
+				`withDriverSandbox (${id}): teardown failed after the operation failed:`,
+				error,
+			),
+	);
+}
+
+/**
+ * Project an opened DriverModule onto the structural {@link LifecycleCompute} the harness times.
+ *
+ * Create goes through {@link SandboxDriver.create}. Control-plane info uses `probes.describe` when
+ * present, otherwise `probes.observe` (the return value is never inspected — it is a latency probe).
+ * List stays capability-by-presence.
+ */
+export function driverLifecycleCompute(opened: OpenedDriver): LifecycleCompute {
+	const request = openedDriverCreateRequest(opened);
+	const probes = opened.driver.probes;
+	const describe = probes?.describe?.bind(probes);
+	const observe = probes?.observe?.bind(probes);
+	const list = probes?.list?.bind(probes);
+	return {
+		sandbox: {
+			create: async () => {
+				const session = await opened.driver.create(request);
+				const handle = sessionHandle(session);
+				const info = describe
+					? () => describe(session.sandboxRef)
+					: observe
+						? () => observe(session.sandboxRef)
+						: undefined;
+				return {
+					sandboxId: session.sandboxRef.id,
+					runCommand: (command, options) => handle.runCommand(command, options),
+					destroy: () => session.destroy(),
+					...(info === undefined ? {} : { getInfo: info }),
+				};
+			},
+			...(list === undefined
+				? {}
+				: {
+						list: async () => {
+							const rows = await list();
+							if (!Array.isArray(rows)) {
+								throw new Error("driver list probe did not return an array");
+							}
+							return rows;
+						},
+					}),
+		},
+	};
+}
+
+/** Cold-start / control-plane measurement against a registered DriverModule. */
+export async function benchmarkDriverLifecycle(
+	id: DriverProviderId,
+	options: BenchmarkLifecycleOptions = {},
+): Promise<LifecycleBenchmark> {
+	const opened = await openDriver(id);
+	return benchmarkLifecycleCompute(id, driverLifecycleCompute(opened), options);
 }
 
 /**

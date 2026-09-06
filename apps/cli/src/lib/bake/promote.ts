@@ -293,17 +293,17 @@ export async function promoteAll(log: Log, options: PromoteOptions = {}): Promis
 		promotionScope.eligible.length === 0
 			? []
 			: await forEachProviderWithCreds(
-					async (provider) => {
-						if (isBakedProviderId(provider.name)) {
-							log(`>>> ${provider.name}: building version artifact from ${pinnedBaseImage}…`);
-							await buildBakedProviderArtifact(provider.name, "version", pinnedBaseImage, (m) =>
+					async (target) => {
+						if (isBakedProviderId(target.id)) {
+							log(`>>> ${target.id}: building version artifact from ${pinnedBaseImage}…`);
+							await buildBakedProviderArtifact(target.id, "version", pinnedBaseImage, (m) =>
 								log(`    ${m}`),
 							);
-						} else if (isMirroredProviderId(provider.name)) {
-							log(`>>> ${provider.name}: ${nonBakedArtifactAction(provider.name, "version")}…`);
-							await promoteMirroredProviderArtifact(provider.name, (m) => log(`    ${m}`));
+						} else if (isMirroredProviderId(target.id)) {
+							log(`>>> ${target.id}: ${nonBakedArtifactAction(target.id, "version")}…`);
+							await promoteMirroredProviderArtifact(target.id, (m) => log(`    ${m}`));
 						} else {
-							log(`>>> ${provider.name}: ${nonBakedArtifactAction(provider.name, "version")}`);
+							log(`>>> ${target.id}: ${nonBakedArtifactAction(target.id, "version")}`);
 						}
 					},
 					{

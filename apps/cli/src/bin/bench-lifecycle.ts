@@ -15,6 +15,7 @@ import {
 	requiredProviders,
 	unmetRequirements,
 } from "@sandbox-benchmarks/harness";
+import { benchmarkDriverLifecycle } from "../lib/driver-run.ts";
 import type { LifecycleMetricSummary } from "../lib/lifecycle-summary.ts";
 import {
 	formatLifecycleLines,
@@ -49,9 +50,18 @@ if (import.meta.main) {
 	// stdout JSON below. Skipped providers never settle through onComplete and carry no metrics.
 	const metricsByProvider = new Map<string, LifecycleMetricSummary[]>();
 	const runs = await forEachProviderWithCreds(
-		(provider) => {
-			log(`>>> ${provider.name}: measuring lifecycle…`);
-			return benchmarkLifecycle(provider, { iterations, controlPlaneSamples, snapshot });
+		(target) => {
+			log(`>>> ${target.id}: measuring lifecycle…`);
+			switch (target.kind) {
+				case "driver":
+					return benchmarkDriverLifecycle(target.id, { iterations, controlPlaneSamples, snapshot });
+				case "legacy":
+					return benchmarkLifecycle(target.config, { iterations, controlPlaneSamples, snapshot });
+				default: {
+					const _never: never = target;
+					return _never;
+				}
+			}
 		},
 		{
 			log,

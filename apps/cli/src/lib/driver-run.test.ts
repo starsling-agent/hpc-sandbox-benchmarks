@@ -1,4 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type {
 	CreateRequest,
 	DriverModule,
@@ -6,13 +9,19 @@ import type {
 	SandboxDriver,
 	SandboxSession,
 } from "@sandbox-benchmarks/driver";
+import {
+	DriverError,
+	isRetryableDriverCreate,
+	markRetryableDriverCreate,
+} from "@sandbox-benchmarks/driver";
 import type { DriverProviderId } from "@sandbox-benchmarks/drivers";
 import { DRIVERS } from "@sandbox-benchmarks/drivers";
-import { cleanupOwnedSandboxes } from "@sandbox-benchmarks/harness";
+import type { SandboxHandle } from "@sandbox-benchmarks/harness";
+import { cleanupOwnedSandboxes, createSuiteSandboxFromPlan } from "@sandbox-benchmarks/harness";
 import type { LegacyAdapterId } from "@sandbox-benchmarks/providers";
 import { isLegacyAdapterId, providers } from "@sandbox-benchmarks/providers";
 import type { ProviderId } from "@sandbox-benchmarks/schema";
-import { PROVIDERS, REGISTRY, TOOLCHAIN_VERSION } from "@sandbox-benchmarks/schema";
+import { PROVIDERS, REGISTRY, SUITES, TOOLCHAIN_VERSION } from "@sandbox-benchmarks/schema";
 import type { OpenedDriver } from "./driver-run.ts";
 import {
 	createOwnedDriverSession,
@@ -384,5 +393,103 @@ describe("driverLifecycleCompute", () => {
 			}),
 		);
 		expect(await compute.sandbox.list?.()).toEqual([{ id: "a" }]);
+	});
+});
+
+describe("driver-lane create retry classification (Phase A unit 2)", () => {
+	const roots: string[] = [];
+	afterEach(() => {
+		for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+	});
+
+	const createCtx = (resultsDir: string) => ({
+		suite: SUITES["cpu-node"],
+		suiteName: "cpu-node" as const,
+		providerName: "e2b",
+		resultsDir,
+		retryDelayMs: 1,
+		retryBudgetMs: 10_000,
+		createTimeoutMs: 1_000,
+	});
+
+	const handle: SandboxHandle = {
+		sandboxId: "i-retry",
+		runCommand: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+		destroy: async () => {},
+	};
+
+	test("a marked create-failed DriverError retries; unclassified 429 prose does not", async () => {
+		const resultsDir = mkdtempSync(join(tmpdir(), "driver-retry-mark-"));
+		roots.push(resultsDir);
+		let attempts = 0;
+		await expect(
+			createSuiteSandboxFromPlan(
+				{
+					create: async () => {
+						attempts += 1;
+						if (attempts < 3) {
+							throw markRetryableDriverCreate(
+								new DriverError("create-failed", "run.cloud create did not settle within 30000ms", {
+									provider: "e2b",
+								}),
+							);
+						}
+						return handle;
+					},
+					isRetryable: isRetryableDriverCreate,
+				},
+				createCtx(resultsDir),
+			),
+		).resolves.toBe(handle);
+		expect(attempts).toBe(3);
+		expect(existsSync(join(resultsDir, "sandbox-e2b-cpu-node--failed.json"))).toBe(false);
+	});
+
+	test("unclassified create-failed prose, including a 429 sentence, fails once", async () => {
+		const resultsDir = mkdtempSync(join(tmpdir(), "driver-retry-prose-"));
+		roots.push(resultsDir);
+		let attempts = 0;
+		await expect(
+			createSuiteSandboxFromPlan(
+				{
+					create: async () => {
+						attempts += 1;
+						throw new DriverError("create-failed", "429 Too Many Requests", {
+							provider: "e2b",
+							vendorMessage: "quota|rate limit|capacity|429",
+						});
+					},
+					isRetryable: isRetryableDriverCreate,
+				},
+				createCtx(resultsDir),
+			),
+		).rejects.toMatchObject({ code: "create-failed" });
+		expect(attempts).toBe(1);
+		expect(existsSync(join(resultsDir, "sandbox-e2b-cpu-node--failed.json"))).toBe(true);
+	});
+
+	test("a structured vendorExitCode 429 retries without a mark", async () => {
+		const resultsDir = mkdtempSync(join(tmpdir(), "driver-retry-429-"));
+		roots.push(resultsDir);
+		let attempts = 0;
+		await expect(
+			createSuiteSandboxFromPlan(
+				{
+					create: async () => {
+						attempts += 1;
+						if (attempts < 2) {
+							throw new DriverError("create-failed", "fake-cli new bench: exit 429", {
+								provider: "tama",
+								vendorExitCode: 429,
+							});
+						}
+						return handle;
+					},
+					isRetryable: isRetryableDriverCreate,
+				},
+				createCtx(resultsDir),
+			),
+		).resolves.toBe(handle);
+		expect(attempts).toBe(2);
 	});
 });

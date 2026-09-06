@@ -19,7 +19,13 @@ import type {
 	SandboxDriver,
 	SandboxSession,
 } from "@sandbox-benchmarks/driver";
-import { launchDetached, readTextFile, succeeded, writeTextFile } from "@sandbox-benchmarks/driver";
+import {
+	isRetryableDriverCreate,
+	launchDetached,
+	readTextFile,
+	succeeded,
+	writeTextFile,
+} from "@sandbox-benchmarks/driver";
 import {
 	driverReadinessBudgetMs,
 	verifyDriverReadiness,
@@ -487,9 +493,9 @@ export async function runDriverSuite(options: RunSuiteOptions): Promise<void> {
 				);
 				return sessionHandle(session);
 			},
-			// DriverError deliberately has no retryable bit. Until the registry-owned matcher from
-			// ADR-0007 lands, guessing from error prose here would recreate the legacy drift.
-			isRetryable: () => false,
+			// Typed DriverError rule (code + retryable mark and/or vendorExitCode 429). Do not regex
+			// vendor prose here — that is the legacy drift ADR-0008 dropped retryableCreatePatterns to end.
+			isRetryable: isRetryableDriverCreate,
 			destroy: (destroy, destroyOptions) => destroy(destroyOptions),
 		},
 		{

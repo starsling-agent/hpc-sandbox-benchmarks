@@ -39,6 +39,8 @@ import {
 	FailedCreateCleanupError,
 	isDriverError,
 	isFailedCreateCleanupError,
+	isRetryableDriverCreate,
+	markRetryableDriverCreate,
 	sandboxRef,
 } from "@sandbox-benchmarks/driver";
 import { sensitiveEnvValuesFor } from "@sandbox-benchmarks/driver/env";
@@ -148,6 +150,12 @@ export interface ComputeSdkCreateRecovery<TCompute extends ComputeSdkLike> {
 	 * lookup is far cheaper than a leaked billable sandbox.
 	 */
 	isDefinitive?(error: unknown): boolean;
+	/**
+	 * True when the vendor error is a transient capacity/rate-limit refusal the harness may retry
+	 * after reconciliation. The bridge copies that answer onto {@link DriverError.retryable}; it
+	 * never regexes vendor prose. Definitive rejections win and stay unmarked.
+	 */
+	isRetryableCreate?(error: unknown): boolean;
 }
 
 type ComputeSdkSandboxIdParser = Type<string> | Type<(In: string) => Out<string>>;
@@ -510,6 +518,7 @@ function wrapperFailure(
 			...(typeof vendorExitCode === "number" && Number.isSafeInteger(vendorExitCode)
 				? { vendorExitCode }
 				: {}),
+			...(code === "create-failed" && isRetryableDriverCreate(caught) ? { retryable: true } : {}),
 			cause: new Error(message),
 		});
 	}
@@ -841,6 +850,7 @@ function computeSdkMethodTable<TCompute extends ComputeSdkLike>(
 					locator: rawCreateRecovery.locator,
 					cleanup: rawCreateRecovery.cleanup,
 					isDefinitive: rawCreateRecovery.isDefinitive,
+					isRetryableCreate: rawCreateRecovery.isRetryableCreate,
 				};
 	const createRequestMapper: ComputeSdkCreateRequestMapper = {
 		coverage: snapshotComputeSdkCoverage(options.createOptions.coverage),
@@ -961,6 +971,12 @@ function computeSdkMethodTable<TCompute extends ComputeSdkLike>(
 				// would burn the caller's budget and, when the same rejection also fails the lookup,
 				// relabel a plain credential error as a cleanup double fault over a sandbox that never was.
 				if (isDefinitiveCreateRejection(provider, createRecovery, caught)) throw primary;
+				if (
+					isDriverError(primary) &&
+					isRetryableCreateRejection(provider, createRecovery, caught)
+				) {
+					markRetryableDriverCreate(primary);
+				}
 				return rejectWithRecovery(primary);
 			}
 			if ((typeof created !== "object" && typeof created !== "function") || created === null) {
@@ -1510,7 +1526,12 @@ function readRecoveryLocator<TCompute extends ComputeSdkLike>(
 
 function isDefinitiveCreateRejection(
 	provider: ProviderId,
-	recovery: { readonly isDefinitive?: ((error: unknown) => boolean) | undefined } | undefined,
+	recovery:
+		| {
+				readonly isDefinitive?: ((error: unknown) => boolean) | undefined;
+				readonly isRetryableCreate?: ((error: unknown) => boolean) | undefined;
+		  }
+		| undefined,
 	caught: unknown,
 ): boolean {
 	const isDefinitive = recovery?.isDefinitive;
@@ -1521,6 +1542,29 @@ function isDefinitiveCreateRejection(
 		return (
 			invokeComputeSdkProviderCallback(provider, "failed-create ambiguity classification", () =>
 				isDefinitive.call(recovery, caught),
+			) === true
+		);
+	} catch {
+		return false;
+	}
+}
+
+function isRetryableCreateRejection(
+	provider: ProviderId,
+	recovery:
+		| {
+				readonly isDefinitive?: ((error: unknown) => boolean) | undefined;
+				readonly isRetryableCreate?: ((error: unknown) => boolean) | undefined;
+		  }
+		| undefined,
+	caught: unknown,
+): boolean {
+	const isRetryableCreate = recovery?.isRetryableCreate;
+	if (isRetryableCreate === undefined) return false;
+	try {
+		return (
+			invokeComputeSdkProviderCallback(provider, "retryable-create classification", () =>
+				isRetryableCreate.call(recovery, caught),
 			) === true
 		);
 	} catch {

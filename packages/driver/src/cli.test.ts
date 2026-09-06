@@ -21,7 +21,13 @@ import {
 	redactDiagnostic,
 } from "./cli.ts";
 import type { CreateRequest } from "./index.ts";
-import { DriverError, driverFromTable, FailedCreateCleanupError, sandboxRef } from "./index.ts";
+import {
+	DriverError,
+	driverFromTable,
+	FailedCreateCleanupError,
+	isRetryableDriverCreate,
+	sandboxRef,
+} from "./index.ts";
 
 const machineRows = type("string.json.parse").to(
 	type({ id: "string", name: "string", status: "string", "status_detail?": "string" }).array(),
@@ -649,6 +655,92 @@ describe("cliDriver", () => {
 			vendorMessage: "status=failed (capacity unavailable)",
 		});
 		expect(calls).toEqual(["new", "list", "list", "rm"]);
+		expect(isRetryableDriverCreate(error)).toBe(false);
+	});
+
+	test("a 429 create exit is retryable after cleanup; 429 prose with another exit is not", async () => {
+		const run = async (_binary: string, args: readonly string[]): Promise<CliRunResult> => {
+			if (args[0] === "new") {
+				return {
+					stdout: "",
+					stderr: "429 Too Many Requests",
+					code: args.includes("--quota") ? 429 : 7,
+				};
+			}
+			if (args[0] === "list") return { stdout: "[]", stderr: "", code: 0 };
+			if (args[0] === "rm-name") {
+				return { stdout: "", stderr: "machine not found", code: 1 };
+			}
+			return { stdout: "", stderr: "unexpected", code: 2 };
+		};
+
+		const limited = (await cliDriver(
+			tamaLikeSpec({
+				create: (_request, name) => ["new", name, "--quota"],
+				cleanupCreated: {
+					kind: "command",
+					command: (name) => ["rm-name", "-y", name],
+					absenceConfirmationMs: 5,
+				},
+			}),
+			{ run },
+		)
+			.create(request)
+			.catch((caught: unknown) => caught)) as DriverError;
+		expect(limited).toMatchObject({ code: "create-failed", vendorExitCode: 429, provider: "tama" });
+		expect(isRetryableDriverCreate(limited)).toBe(true);
+
+		const prose = (await cliDriver(
+			tamaLikeSpec({
+				create: (_request, name) => ["new", name],
+				cleanupCreated: {
+					kind: "command",
+					command: (name) => ["rm-name", "-y", name],
+					absenceConfirmationMs: 5,
+				},
+			}),
+			{ run },
+		)
+			.create(request)
+			.catch((caught: unknown) => caught)) as DriverError;
+		expect(prose).toMatchObject({
+			code: "create-failed",
+			vendorExitCode: 7,
+			vendorMessage: "429 Too Many Requests",
+		});
+		expect(isRetryableDriverCreate(prose)).toBe(false);
+	});
+
+	test("a module isRetryableCreate hook can mark a create after confirmed cleanup", async () => {
+		const error = (await cliDriver(
+			tamaLikeSpec({
+				isRetryableCreate: (failed) => failed.vendorExitCode === 8,
+				cleanupCreated: {
+					kind: "command",
+					command: (name) => ["rm-name", "-y", name],
+					absenceConfirmationMs: 5,
+				},
+			}),
+			{
+				run: async (_binary, args) => {
+					if (args[0] === "new") return { stdout: "", stderr: "no slot right now", code: 8 };
+					if (args[0] === "list") return { stdout: "[]", stderr: "", code: 0 };
+					if (args[0] === "rm-name") {
+						return { stdout: "", stderr: "machine not found", code: 1 };
+					}
+					return { stdout: "", stderr: "unexpected", code: 2 };
+				},
+			},
+		)
+			.create(request)
+			.catch((caught: unknown) => caught)) as DriverError;
+		expect(error).toMatchObject({
+			code: "create-failed",
+			vendorExitCode: 8,
+			vendorMessage: "no slot right now",
+		});
+		expect(error.retryable).toBe(true);
+		expect(isRetryableDriverCreate(error)).toBe(true);
 	});
 
 	test("redacts overlapping prepare and cleanup secrets from terminal readiness detail", async () => {

@@ -13,6 +13,8 @@ import type { DriverOperationOptions, SandboxRef } from "./port.ts";
 // nominal "created by this kit instance" guarantee that a structural code/name check would lose.
 const driverErrors = new WeakSet<object>();
 const failedCreateCleanupErrors = new WeakSet<object>();
+/** Create-failed errors whose driver established that nothing remains allocated and a retry is useful. */
+const retryableCreates = new WeakSet<object>();
 
 /**
  * What went wrong, in terms of what the caller may do next:
@@ -21,9 +23,10 @@ const failedCreateCleanupErrors = new WeakSet<object>();
  *     config is wrong. Terminal; fix the input, do not retry.
  *   - `artifact-mismatch` / `use-after-destroy` / `vendor-contract-violation` — a kit or driver
  *     invariant was broken. Terminal; a bug, not a transient condition.
- *   - `create-failed` — the vendor refused create. The harness decides retry-vs-terminal by
- *     matching the registry's `retryableCreatePatterns` against {@link DriverError.vendorMessage}
- *     (a designated field — NOT a formatted message that embeds argv).
+ *   - `create-failed` — the vendor refused create. The harness decides retry-vs-terminal with
+ *     {@link isRetryableDriverCreate}: the error code plus an explicit {@link DriverError.retryable}
+ *     mark and/or a structured {@link DriverError.vendorExitCode} of 429. {@link DriverError.vendorMessage}
+ *     is diagnostic only — never regexed as the classifier.
  *   - `readiness-timeout` — create was accepted but the sandbox never became ready in budget.
  *   - `vendor-output-unparseable` — the vendor's control-plane output drifted from its schema.
  *   - `exec-failed` — a kit-owned shell fallback failed before it could satisfy its contract.
@@ -52,9 +55,15 @@ export type DriverErrorCode =
 export interface DriverErrorFields {
 	readonly provider?: ProviderId;
 	readonly ref?: SandboxRef;
-	/** Raw vendor diagnostic/detail — the field retry heuristics match, never the formatted message. */
+	/** Raw vendor diagnostic/detail. Logged and retained; never regexed to decide retry-vs-fail. */
 	readonly vendorMessage?: string;
 	readonly vendorExitCode?: number;
+	/**
+	 * True only when this `create-failed` error is safe to retry: the driver established that
+	 * nothing remains allocated. Ignored for every other {@link DriverErrorCode}. A `vendorExitCode`
+	 * of 429 is the other structured retry signal; see {@link isRetryableDriverCreate}.
+	 */
+	readonly retryable?: boolean;
 	readonly cause?: unknown;
 }
 
@@ -210,6 +219,43 @@ export class DriverError extends Error {
 		this.ref = fields.ref;
 		this.vendorMessage = fields.vendorMessage;
 		this.vendorExitCode = fields.vendorExitCode;
+		if (code === "create-failed" && fields.retryable === true) {
+			retryableCreates.add(this);
+		}
+	}
+
+	/**
+	 * Whether this create failure is an explicit retry mark. Independent of
+	 * {@link DriverError.vendorExitCode} 429; {@link isRetryableDriverCreate} is the harness rule.
+	 */
+	get retryable(): boolean {
+		return this.code === "create-failed" && retryableCreates.has(this);
+	}
+}
+
+/**
+ * Mark a `create-failed` {@link DriverError} as safe to retry. Non-create codes and non-DriverError
+ * values are returned untouched — inventing a wrapper would lose the identity callers match on.
+ */
+export function markRetryableDriverCreate<E>(error: E): E {
+	if (isDriverError(error) && error.code === "create-failed") {
+		retryableCreates.add(error);
+	}
+	return error;
+}
+
+/**
+ * Typed create-retry classifier for the driver lane. True only for a branded `create-failed`
+ * {@link DriverError} that carries an explicit retry mark or a structured vendor exit of 429.
+ * Unclassified prose (including a formatted message that happens to mention quota/429) is false.
+ * A {@link FailedCreateCleanupError} is never retryable: cleanup did not prove the allocation is gone.
+ */
+export function isRetryableDriverCreate(error: unknown): boolean {
+	if (!isDriverError(error) || error.code !== "create-failed") return false;
+	try {
+		return error.retryable || error.vendorExitCode === 429;
+	} catch {
+		return false;
 	}
 }
 

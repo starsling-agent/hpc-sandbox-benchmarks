@@ -6,6 +6,7 @@ import {
 	AuthenticationError,
 	CommandExitError,
 	InvalidArgumentError,
+	RateLimitError,
 	Sandbox,
 	TimeoutError,
 } from "e2b";
@@ -23,6 +24,7 @@ import e2bDriver, {
 	e2bSpec,
 	execE2bCommandAsRoot,
 	isE2bDefinitiveCreateRejection,
+	isE2bRetryableCreate,
 	launchE2bCommandAsRoot,
 } from "./e2b.ts";
 
@@ -634,5 +636,26 @@ describe("E2B proof driver", () => {
 		const looping = new Error("looping");
 		Object.defineProperty(looping, "cause", { value: looping });
 		expect(isE2bDefinitiveCreateRejection(looping)).toBe(false);
+	});
+
+	test("only typed rate-limit signals are retryable creates; prose is not", () => {
+		expect(isE2bRetryableCreate(new RateLimitError("too many sandboxes"))).toBe(true);
+		expect(
+			isE2bRetryableCreate(
+				new Error("computesdk create failed", { cause: new RateLimitError("too many sandboxes") }),
+			),
+		).toBe(true);
+		expect(
+			isE2bRetryableCreate(Object.assign(new Error("wrapper copy"), { name: "RateLimitError" })),
+		).toBe(true);
+		expect(isE2bRetryableCreate(Object.assign(new Error("throttled"), { status: 429 }))).toBe(true);
+		expect(isE2bRetryableCreate(new Error("429 Too Many Requests"))).toBe(false);
+		expect(isE2bRetryableCreate(new Error("quota|rate limit|capacity"))).toBe(false);
+		expect(isE2bRetryableCreate(new TimeoutError("request timed out"))).toBe(false);
+		expect(isE2bRetryableCreate(new AuthenticationError("invalid api key"))).toBe(false);
+		expect(isE2bRetryableCreate(undefined)).toBe(false);
+		const looping = new Error("looping");
+		Object.defineProperty(looping, "cause", { value: looping });
+		expect(isE2bRetryableCreate(looping)).toBe(false);
 	});
 });

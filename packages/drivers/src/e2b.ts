@@ -13,7 +13,13 @@ import type {
 	SandboxRef,
 } from "@sandbox-benchmarks/driver";
 import { type } from "arktype";
-import { AuthenticationError, InvalidArgumentError, Sandbox, SandboxNotFoundError } from "e2b";
+import {
+	AuthenticationError,
+	InvalidArgumentError,
+	RateLimitError,
+	Sandbox,
+	SandboxNotFoundError,
+} from "e2b";
 import type {
 	ComputeSdkCreatedRequestVerification,
 	ComputeSdkCreateRecovery,
@@ -224,11 +230,50 @@ export function isE2bDefinitiveCreateRejection(error: unknown): boolean {
 	return false;
 }
 
+function vendorStatusCode(error: unknown): number | undefined {
+	if ((typeof error !== "object" && typeof error !== "function") || error === null) {
+		return undefined;
+	}
+	try {
+		for (const key of ["status", "statusCode", "httpStatusCode"] as const) {
+			const value = Reflect.get(error, key);
+			if (typeof value === "number" && Number.isSafeInteger(value)) return value;
+		}
+	} catch {
+		return undefined;
+	}
+	return undefined;
+}
+
+/**
+ * E2B capacity/rate-limit refusals the harness may retry after reconciliation. Typed SDK class,
+ * class name (wrapper copies), or HTTP 429 — never vendor-message regex.
+ */
+export function isE2bRetryableCreate(error: unknown): boolean {
+	let cause: unknown = error;
+	for (let depth = 0; depth < 8; depth += 1) {
+		if (cause instanceof RateLimitError) return true;
+		if (vendorStatusCode(cause) === 429) return true;
+		if (!(cause instanceof Error)) return false;
+		if (cause.name === "RateLimitError") return true;
+		let next: unknown;
+		try {
+			next = cause.cause;
+		} catch {
+			return false;
+		}
+		if (next === undefined || next === cause) return false;
+		cause = next;
+	}
+	return false;
+}
+
 export function e2bCreateRecovery(apiKey: string): ComputeSdkCreateRecovery<E2bCompute> {
 	return {
 		absenceConfirmationMs: E2B_RECOVERY_CONFIRMATION_MS,
 		maxAttempts: E2B_RECOVERY_MAX_ATTEMPTS,
 		isDefinitive: isE2bDefinitiveCreateRejection,
+		isRetryableCreate: isE2bRetryableCreate,
 		locator: (createOptions) => ({
 			kind: "marker",
 			key: E2B_ATTEMPT_METADATA_KEY,

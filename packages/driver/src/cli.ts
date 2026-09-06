@@ -26,7 +26,12 @@ import type {
 	SandboxRef,
 } from "./index.ts";
 import { defineDriver, driverFromTable, sandboxRef } from "./index.ts";
-import { DriverError, FailedCreateCleanupError, isDriverError } from "./lib/errors.ts";
+import {
+	DriverError,
+	FailedCreateCleanupError,
+	isDriverError,
+	markRetryableDriverCreate,
+} from "./lib/errors.ts";
 import { pollUntilReady } from "./lib/poll.ts";
 import type { MethodTable } from "./lib/table.ts";
 
@@ -255,6 +260,10 @@ function snapshotCliSpec<Row>(provider: ProviderId, spec: CliSpec<Row>): CliSpec
 		} else {
 			throw new Error("cleanup kind is invalid");
 		}
+		const isRetryableCreate: unknown = Reflect.get(spec, "isRetryableCreate");
+		if (isRetryableCreate !== undefined && typeof isRetryableCreate !== "function") {
+			throw new Error("isRetryableCreate is not callable");
+		}
 		return {
 			binary: Reflect.get(spec, "binary"),
 			secretFlags: Reflect.get(spec, "secretFlags"),
@@ -285,6 +294,9 @@ function snapshotCliSpec<Row>(provider: ProviderId, spec: CliSpec<Row>): CliSpec
 			exec: Reflect.get(spec, "exec"),
 			destroy: Reflect.get(spec, "destroy"),
 			notFound: Reflect.get(spec, "notFound"),
+			...(typeof isRetryableCreate === "function"
+				? { isRetryableCreate: isRetryableCreate as (error: DriverError) => boolean }
+				: {}),
 		} as CliSpec<Row>;
 	});
 }
@@ -476,6 +488,13 @@ export interface CliSpec<Row> {
 	readonly destroy: (id: string) => CliArgv;
 	/** Vendor prose meaning "already gone" — destroy-of-missing MUST succeed (ADR-0008). */
 	readonly notFound: RegExp;
+	/**
+	 * Optional module-owned create-retry classifier. Called only after failed-create reconciliation
+	 * has confirmed the generated name is gone. True marks the `create-failed` {@link DriverError}
+	 * for the harness; a throw or any other value leaves it terminal. The kit already treats a
+	 * structured `vendorExitCode` of 429 as retryable without this hook.
+	 */
+	readonly isRetryableCreate?: (error: DriverError) => boolean;
 }
 
 export type CliSpecFields<Row> = Omit<CliSpec<Row>, "ready"> & {
@@ -947,6 +966,7 @@ export function cliMethodTable<Row>(
 	const sandboxId = compiled.sandboxId;
 	const execArgv = compiled.exec;
 	const destroyArgv = compiled.destroy;
+	const isRetryableCreate = compiled.isRetryableCreate;
 	const secretFlags = normalizeCliStringList(provider, "secretFlags", compiled.secretFlags);
 	const readyPoll = normalizeCliArgv(provider, "ready.poll", ready.poll);
 	const prepare =
@@ -1039,8 +1059,9 @@ export function cliMethodTable<Row>(
 	};
 	const providerCallback = <T>(boundary: string, callback: () => T, ref?: SandboxRef): T =>
 		invokeCliProviderCallback(provider, boundary, callback, ref);
-	// Vendor failures carry structured fields (exit code + vendor diagnostic) so the harness classifies
-	// by them, not by regexing a formatted message; the message redacts secret argv for humans.
+	// Vendor failures carry structured fields (exit code + vendor diagnostic). The harness
+	// classifies retry with isRetryableDriverCreate (explicit mark or vendorExitCode 429), never
+	// by regexing the formatted message.
 	const vendorFailed = (
 		code: "create-failed" | "destroy-failed" | "probe-failed",
 		args: CliArgv,
@@ -1680,6 +1701,15 @@ export function cliMethodTable<Row>(
 						cleanup: (cleanupOptions: DriverOperationOptions = {}) =>
 							retryCleanup(commandTimeoutMs, cleanupOptions.signal),
 					});
+				}
+				if (isDriverError(primary) && primary.code === "create-failed") {
+					let classified = false;
+					try {
+						classified = isRetryableCreate?.(primary) === true;
+					} catch {
+						classified = false;
+					}
+					if (classified) throw markRetryableDriverCreate(primary);
 				}
 				throw primary;
 			}

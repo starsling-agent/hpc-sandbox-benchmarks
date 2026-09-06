@@ -9,6 +9,7 @@ import {
 	createModalControlRunner,
 	defineModalDriver,
 	execModalCommand,
+	isModalRetryableCreate,
 	launchModalCommand,
 	lazyModalCompute,
 	MODAL_APP_NAME,
@@ -525,6 +526,26 @@ describe("Modal truthful lifecycle and recovery projections", () => {
 				modalLifecycle("vm", directRunner(control)).destroy({} as never, modalRef, {}),
 			).rejects.toMatchObject({ path, code: Status.NOT_FOUND });
 		}
+	});
+
+	it("only typed RESOURCE_EXHAUSTED is a retryable create; prose and UNAVAILABLE are not", () => {
+		const exhausted = new ClientError(
+			"/modal.client.ModalClient/SandboxCreate",
+			Status.RESOURCE_EXHAUSTED,
+			"quota",
+		);
+		expect(isModalRetryableCreate(exhausted)).toBe(true);
+		expect(isModalRetryableCreate(new Error("wrapper", { cause: exhausted }))).toBe(true);
+		expect(
+			isModalRetryableCreate(
+				new ClientError("/modal.client.ModalClient/SandboxCreate", Status.UNAVAILABLE, "retry"),
+			),
+		).toBe(false);
+		expect(isModalRetryableCreate(new Error("429 Too Many Requests"))).toBe(false);
+		expect(isModalRetryableCreate(new Error("quota|rate limit|capacity"))).toBe(false);
+		expect(
+			modalCreateRecovery("vm", directRunner({ sandboxes: {} })).isRetryableCreate?.(exhausted),
+		).toBe(true);
 	});
 
 	it("preserves an auth-token NOT_FOUND through production name recovery", async () => {

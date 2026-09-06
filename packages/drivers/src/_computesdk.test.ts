@@ -2,7 +2,11 @@ import { describe, expect, test } from "bun:test";
 import type { E2BSandbox } from "@computesdk/e2b";
 import { e2b } from "@computesdk/e2b";
 import type { CreateRequest, ExecOptions, SandboxDriver } from "@sandbox-benchmarks/driver";
-import { DriverError, FailedCreateCleanupError } from "@sandbox-benchmarks/driver";
+import {
+	DriverError,
+	FailedCreateCleanupError,
+	isRetryableDriverCreate,
+} from "@sandbox-benchmarks/driver";
 import { type } from "arktype";
 import type {
 	ComputeSdkCreateRequestCoverage,
@@ -2005,6 +2009,124 @@ describe("computeSdkDriver", () => {
 		expect(error).toMatchObject({ code: "create-failed", provider: "e2b" });
 		// A refused request owns nothing; polling for it would only burn the caller's budget.
 		expect(cleanupCalls).toBe(0);
+	});
+
+	test("a marked create-failed survives wrapping and stays retryable after cleanup", async () => {
+		const marked = new DriverError("create-failed", "no slot right now", {
+			provider: "e2b",
+			retryable: true,
+		});
+		let cleanupCalls = 0;
+		const error = await bridge(
+			{
+				sandbox: {
+					create: async () => {
+						throw marked;
+					},
+				},
+			},
+			{
+				createRecovery: {
+					absenceConfirmationMs: 5,
+					maxAttempts: 3,
+					locator: () => ({ kind: "name", value: "attempt-marked" }),
+					cleanup: async () => {
+						cleanupCalls += 1;
+						return { status: "destroyed" };
+					},
+				},
+			},
+		)
+			.create(request)
+			.catch((caught: unknown) => caught);
+		expect(cleanupCalls).toBe(1);
+		expect(error).toBeInstanceOf(DriverError);
+		expect(error).toMatchObject({ code: "create-failed", provider: "e2b" });
+		expect(isRetryableDriverCreate(error)).toBe(true);
+	});
+
+	test("a module isRetryableCreate mark retries; unclassified 429 prose does not", async () => {
+		const rateLimited = new Error("429 Too Many Requests");
+		let cleanupCalls = 0;
+		const retryable = await bridge(
+			{
+				sandbox: {
+					create: async () => {
+						throw rateLimited;
+					},
+				},
+			},
+			{
+				createRecovery: {
+					absenceConfirmationMs: 5,
+					maxAttempts: 3,
+					locator: () => ({ kind: "name", value: "attempt-rate-limit" }),
+					isRetryableCreate: (caught) => caught === rateLimited,
+					cleanup: async () => {
+						cleanupCalls += 1;
+						return { status: "destroyed" };
+					},
+				},
+			},
+		)
+			.create(request)
+			.catch((caught: unknown) => caught);
+		expect(cleanupCalls).toBe(1);
+		expect(isRetryableDriverCreate(retryable)).toBe(true);
+
+		cleanupCalls = 0;
+		const prose = await bridge(
+			{
+				sandbox: {
+					create: async () => {
+						throw new Error("429 Too Many Requests");
+					},
+				},
+			},
+			{
+				createRecovery: {
+					absenceConfirmationMs: 5,
+					maxAttempts: 3,
+					locator: () => ({ kind: "name", value: "attempt-prose" }),
+					cleanup: async () => {
+						cleanupCalls += 1;
+						return { status: "destroyed" };
+					},
+				},
+			},
+		)
+			.create(request)
+			.catch((caught: unknown) => caught);
+		expect(cleanupCalls).toBe(1);
+		expect(isRetryableDriverCreate(prose)).toBe(false);
+		expect(prose).toMatchObject({ code: "create-failed", vendorMessage: "429 Too Many Requests" });
+	});
+
+	test("a throwing isRetryableCreate classifier is treated as unmarked", async () => {
+		const error = await bridge(
+			{
+				sandbox: {
+					create: async () => {
+						throw new Error("capacity");
+					},
+				},
+			},
+			{
+				createRecovery: {
+					absenceConfirmationMs: 5,
+					maxAttempts: 3,
+					locator: () => ({ kind: "name", value: "attempt-classifier-throw" }),
+					isRetryableCreate: () => {
+						throw new Error("classifier exploded");
+					},
+					cleanup: async () => ({ status: "destroyed" }),
+				},
+			},
+		)
+			.create(request)
+			.catch((caught: unknown) => caught);
+		expect(isRetryableDriverCreate(error)).toBe(false);
+		expect(error).toMatchObject({ code: "create-failed", provider: "e2b" });
 	});
 
 	test("an unproven create failure still reconciles even when the classifier misbehaves", async () => {

@@ -125,6 +125,31 @@ function isModalNotFound(caught: unknown): boolean {
 }
 
 /**
+ * Modal capacity/rate-limit refusals the harness may retry after reconciliation. gRPC
+ * RESOURCE_EXHAUSTED is the typed signal — never vendor-message regex.
+ */
+export function isModalRetryableCreate(error: unknown): boolean {
+	let cause: unknown = error;
+	for (let depth = 0; depth < 8; depth += 1) {
+		try {
+			if (cause instanceof ClientError && cause.code === Status.RESOURCE_EXHAUSTED) return true;
+		} catch {
+			return false;
+		}
+		if (!(cause instanceof Error)) return false;
+		let next: unknown;
+		try {
+			next = cause.cause;
+		} catch {
+			return false;
+		}
+		if (next === undefined || next === cause) return false;
+		cause = next;
+	}
+	return false;
+}
+
+/**
  * Modal's high-level fromName catches every nested NOT_FOUND (including AuthTokenGet) and rewrites
  * it to an unqualified NotFoundError. Ownership lookup uses the public control client directly so
  * the originating RPC path survives and only a sandbox lookup can prove absence.
@@ -404,6 +429,7 @@ export function modalCreateRecovery<TCompute extends ComputeSdkLike = ModalCompu
 	return {
 		absenceConfirmationMs: MODAL_RECOVERY_CONFIRMATION_MS,
 		maxAttempts: MODAL_RECOVERY_MAX_ATTEMPTS,
+		isRetryableCreate: isModalRetryableCreate,
 		locator: (createOptions) => ({ kind: "name", value: recoveryName(createOptions) }),
 		cleanup: (_compute, locator, options) => {
 			const name = locator.value;

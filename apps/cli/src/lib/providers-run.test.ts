@@ -19,11 +19,10 @@ describe("forEachProviderWithCreds `only`", () => {
 
 	test("runs the body for a selected provider whose creds are present", async () => {
 		const runs = await forEachProviderWithCreds(async () => "smoked", {
-			only: ["e2b"],
-			env: { E2B_API_KEY: "present" },
+			only: ["daytona-vm"],
+			env: { DAYTONA_API_KEY: "present" },
 		});
-		expect(runs).toHaveLength(1);
-		expect(runs[0]?.provider).toBe("e2b");
+		expect(runs.map((r) => r.provider)).toEqual(["daytona-vm"]);
 		expect(runs[0]?.status).toBe("ok");
 		expect(runs[0]?.value).toBe("smoked");
 	});
@@ -32,20 +31,16 @@ describe("forEachProviderWithCreds `only`", () => {
 		const runs = await forEachProviderWithCreds(async () => null, { env: {} });
 		// All registered providers are visited (all skipped here for want of creds).
 		expect(runs.map((r) => r.provider)).toEqual([
-			"e2b",
 			"daytona-vm",
 			"daytona-container",
 			"blaxel",
 			"microsandbox-local",
 			"microsandbox-cloud",
-			"modal-gvisor",
-			"modal-vm",
 			"novita",
 			"runloop",
 			"namespace",
 			"vercel",
 			"runcloud",
-			"tama",
 		]);
 	});
 
@@ -55,5 +50,11 @@ describe("forEachProviderWithCreds `only`", () => {
 		await expect(forEachProviderWithCreds(async () => null, { only: [], env: {} })).rejects.toThrow(
 			/empty list/,
 		);
+	});
+
+	test("a migrated DriverModule id in `only` throws rather than visiting nothing", async () => {
+		await expect(
+			forEachProviderWithCreds(async () => null, { only: ["e2b"], env: {} }),
+		).rejects.toThrow(/no legacy adapter/);
 	});
 });

@@ -5,13 +5,20 @@ import type {
 	SandboxDriver,
 	SandboxSession,
 } from "@sandbox-benchmarks/driver";
+import type { DriverProviderId } from "@sandbox-benchmarks/drivers";
+import { DRIVERS } from "@sandbox-benchmarks/drivers";
 import { cleanupOwnedSandboxes } from "@sandbox-benchmarks/harness";
-import { REGISTRY, TOOLCHAIN_VERSION } from "@sandbox-benchmarks/schema";
+import type { LegacyAdapterId } from "@sandbox-benchmarks/providers";
+import { isLegacyAdapterId, providers } from "@sandbox-benchmarks/providers";
+import type { ProviderId } from "@sandbox-benchmarks/schema";
+import { PROVIDERS, REGISTRY, TOOLCHAIN_VERSION } from "@sandbox-benchmarks/schema";
 import {
 	createOwnedDriverSession,
 	driverTransport,
+	isDriverProviderId,
 	resolveDriverArtifact,
 	sessionHandle,
+	usesDriverSuite,
 } from "./driver-run.ts";
 
 /** A session with only the three required members; `files` and `launch` are deliberately absent. */
@@ -45,6 +52,57 @@ const createRequest: CreateRequest = {
 	artifact: { kind: "baked", ref: "template" },
 	deadlineMs: 60_000,
 };
+
+type Equal<Left, Right> =
+	(<T>() => T extends Left ? 1 : 2) extends <T>() => T extends Right ? 1 : 2
+		? (<T>() => T extends Right ? 1 : 2) extends <T>() => T extends Left ? 1 : 2
+			? true
+			: false
+		: false;
+type Expect<Condition extends true> = Condition;
+
+describe("bench-suite driver vs legacy selection (Phase A unit 1)", () => {
+	test("registered DriverModule ids and leftover adapters partition ProviderId", () => {
+		type _complete = Expect<Equal<ProviderId, DriverProviderId | LegacyAdapterId>>;
+		type _disjoint = Expect<
+			Extract<DriverProviderId, LegacyAdapterId> extends never ? true : false
+		>;
+		const driverIds = Object.keys(DRIVERS);
+		const adapterIds: string[] = providers.map((provider) => provider.name);
+		expect(driverIds.sort()).toEqual(["e2b", "modal-gvisor", "modal-vm", "tama"]);
+		expect([...driverIds, ...adapterIds].sort()).toEqual(PROVIDERS.map((meta) => meta.id).sort());
+		expect(driverIds.filter((id) => adapterIds.includes(id))).toEqual([]);
+		for (const id of driverIds) {
+			expect(isDriverProviderId(id)).toBe(true);
+			expect(isLegacyAdapterId(id)).toBe(false);
+		}
+		for (const id of adapterIds) {
+			expect(isDriverProviderId(id)).toBe(false);
+			expect(isLegacyAdapterId(id)).toBe(true);
+		}
+	});
+
+	test("registered ids select runDriverSuite without --driver-path", () => {
+		for (const id of Object.keys(DRIVERS)) {
+			expect(usesDriverSuite(id)).toBe(true);
+			expect(usesDriverSuite(id, false)).toBe(true);
+			expect(usesDriverSuite(id, true)).toBe(true);
+		}
+	});
+
+	test("waived ids stay on the legacy path unless --driver-path forces the driver lane", () => {
+		expect(usesDriverSuite("daytona-vm")).toBe(false);
+		expect(usesDriverSuite("runcloud")).toBe(false);
+		expect(usesDriverSuite("novita", false)).toBe(false);
+		expect(usesDriverSuite("daytona-vm", true)).toBe(true);
+		expect(isDriverProviderId("runcloud")).toBe(false);
+	});
+
+	test("an unknown id does not invent a DriverModule", () => {
+		expect(usesDriverSuite("nope")).toBe(false);
+		expect(isDriverProviderId("nope")).toBe(false);
+	});
+});
 
 describe("createOwnedDriverSession", () => {
 	test("registers before create and releases ownership only after provider destroy", async () => {

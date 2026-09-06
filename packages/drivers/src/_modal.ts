@@ -11,6 +11,7 @@ import type {
 	DriverContext,
 	DriverOperationOptions,
 	ExecOptions,
+	ProviderCostEvidenceCapability,
 	SandboxObservation,
 	SandboxRef,
 } from "@sandbox-benchmarks/driver";
@@ -67,6 +68,11 @@ export interface ModalControlRunner {
 }
 
 export const MODAL_APP_NAME = "sandbox-benchmarks";
+/** Native Modal SDK identity for cost-evidence records (not the `@computesdk/modal` wrapper). */
+export const MODAL_COST_SDK_PROVENANCE = {
+	packageName: "modal",
+	version: "0.7.6",
+} as const satisfies ProviderCostEvidenceCapability["sdk"];
 export const MODAL_SANDBOX_LIFETIME_MS = 3 * 60 * 60_000;
 export const MODAL_CONTROL_TIMEOUT_MS = 5_000;
 export const MODAL_RECOVERY_CONFIRMATION_MS = 2_000;
@@ -643,12 +649,49 @@ function modalSpec<P extends ModalProviderId>(
 	);
 }
 
+/**
+ * Shared object: both Modal isolation variants have exactly one public cost capability.
+ * The hook does not invoke the private SandboxGetResourceUsage RPC.
+ */
+export const modalCostEvidence: ProviderCostEvidenceCapability<ModalProviderId> = {
+	sdk: MODAL_COST_SDK_PROVENANCE,
+	captureAfterTeardown: async (input) => {
+		const subject = {
+			kind: "sandbox" as const,
+			sandboxId: input.sandboxId,
+			appName: MODAL_APP_NAME,
+		};
+		if (!input.teardown.completed) {
+			return {
+				kind: "missing",
+				cell: input.cell,
+				subject,
+				capturedAt: new Date().toISOString(),
+				sdk: MODAL_COST_SDK_PROVENANCE,
+				reason: "sandbox_teardown_unconfirmed",
+				detail: "Sandbox teardown was not confirmed; no provider usage was considered.",
+			};
+		}
+		return {
+			kind: "missing",
+			cell: input.cell,
+			subject,
+			capturedAt: new Date().toISOString(),
+			sdk: MODAL_COST_SDK_PROVENANCE,
+			reason: "unsupported_public_api",
+			detail:
+				"The generated SandboxGetResourceUsage RPC is private and was not invoked; the installed public Modal SDK exposes no trustworthy sandbox-scoped billed usage endpoint.",
+		};
+	},
+};
+
 /** One provider literal selects both identity and backend; invalid cross-pairs are unrepresentable. */
 export function defineModalDriver<P extends ModalProviderId>(provider: P) {
 	return defineComputeSdkDriver(provider, {
 		provenance: MODAL_PROVENANCE,
 		readiness: MODAL_READINESS,
 		execution: MODAL_EXECUTION,
+		costEvidence: modalCostEvidence,
 		spec: (context) => modalSpec(provider, context),
 	});
 }

@@ -285,8 +285,18 @@ export async function openDriver<P extends DriverProviderId>(
 	return { module, driver, artifact, transport: driverTransport(module.execution) };
 }
 
-function isDriverProviderId(value: string): value is DriverProviderId {
+/** True when `value` is a registered DriverModule id (`Object.keys(DRIVERS)`). */
+export function isDriverProviderId(value: string): value is DriverProviderId {
 	return Object.hasOwn(DRIVERS, value);
+}
+
+/**
+ * Default bench-suite selection: a registered DriverModule id uses {@link runDriverSuite}
+ * without `--driver-path`. Waived/unknown ids stay on the legacy `packages/providers` path
+ * unless the flag forces the driver lane (which then errors rather than inventing a module).
+ */
+export function usesDriverSuite(providerId: string, driverPathFlag = false): boolean {
+	return driverPathFlag || isDriverProviderId(providerId);
 }
 
 function createBudgetOf(module: DriverModule<ProviderId>): {
@@ -309,9 +319,9 @@ function createBudgetOf(module: DriverModule<ProviderId>): {
 /**
  * Run one real benchmark cell through a registered DriverModule.
  *
- * This is deliberately an explicit migration path: an unregistered provider is rejected instead of
- * falling back to packages/providers, while the existing bench-suite path remains unchanged until
- * the port-native lane has live evidence. The shared harness still owns create retry budgeting,
+ * Default `bench-suite <id>` selects this for every registered DriverModule id. An unregistered
+ * (waived) provider is rejected here instead of inventing a driver or falling back — the legacy
+ * `runSuite` path still serves those ids. The shared harness still owns create retry budgeting,
  * failure markers, result collection, teardown, and Run v6 artifact evidence.
  */
 export async function runDriverSuite(options: RunSuiteOptions): Promise<void> {

@@ -45,10 +45,13 @@ describe("@sandbox-benchmarks/providers", () => {
 		}
 	});
 
-	it("wires every schema provider through to a computesdk factory", () => {
-		// `adapters` is a Record<ProviderId, …>, so it's the same set as the schema registry by
-		// construction — assert that against PROVIDERS rather than a hardcoded list.
-		expect(providers.map((p) => p.name).sort()).toEqual(PROVIDERS.map((m) => m.id).sort());
+	it("wires every unmigrated schema provider through to a computesdk factory", () => {
+		// Migrated DriverModule ids are omitted from this join on purpose.
+		expect(providers.map((p) => p.name).sort()).toEqual(
+			PROVIDERS.map((m) => m.id)
+				.filter((id) => id !== "e2b" && id !== "modal-gvisor" && id !== "modal-vm" && id !== "tama")
+				.sort(),
+		);
 		for (const p of providers) {
 			expect(typeof p.createCompute).toBe("function");
 			expect(p.requiredEnvVars.length).toBeGreaterThan(0);
@@ -57,24 +60,25 @@ describe("@sandbox-benchmarks/providers", () => {
 
 	it("carries each provider's schema-owned transport capability through to the config", () => {
 		// The join must surface the same transport the schema declares, so the harness selects a
-		// transport from the provider's real capability rather than a hardcoded default. `providers` is
-		// `PROVIDERS.map(...)`, so the two are index-aligned by construction — assert positionally
-		// instead of an O(N²) `.find`, which also keeps the failure message pointing at the drift.
-		expect(providers.length).toBe(PROVIDERS.length);
-		for (let i = 0; i < providers.length; i++) {
-			expect(providers[i]?.transport).toEqual(PROVIDERS[i]?.transport);
+		// transport from the provider's real capability rather than a hardcoded default.
+		expect(providers.length).toBeGreaterThan(0);
+		for (const adapter of providers) {
+			const meta = PROVIDERS.find((m) => m.id === adapter.name);
+			if (meta === undefined) throw new Error(`missing schema meta for ${adapter.name}`);
+			expect(adapter.transport).toEqual(meta.transport);
 		}
 	});
 
 	it("carries the exact boot artifact beside each legacy create policy", () => {
-		expect(providers.length).toBe(PROVIDERS.length);
+		expect(providers.length).toBe(
+			PROVIDERS.filter(
+				(m) => m.id !== "e2b" && m.id !== "modal-gvisor" && m.id !== "modal-vm" && m.id !== "tama",
+			).length,
+		);
 		for (let i = 0; i < providers.length; i++) {
-			expect(providers[i]?.artifact.kind).toBe(PROVIDERS[i]?.artifact.kind);
+			const meta = PROVIDERS.find((m) => m.id === providers[i]?.name);
+			expect(providers[i]?.artifact.kind).toBe(meta?.artifact.kind);
 		}
-		expect(providers.find((provider) => provider.name === "e2b")?.artifact).toEqual({
-			kind: "baked",
-			ref: config.e2bTemplate,
-		});
 		expect(providers.find((provider) => provider.name === "namespace")?.artifact).toEqual({
 			kind: "image",
 			ref: config.toolchainImage,
@@ -83,32 +87,6 @@ describe("@sandbox-benchmarks/providers", () => {
 			kind: "mirror",
 			ref: config.vercelImage,
 		});
-	});
-
-	it("pins both Modal variants' create-time spec from the shared TARGET_SPEC", () => {
-		const gvisor = providers.find((p) => p.name === "modal-gvisor");
-		const vm = providers.find((p) => p.name === "modal-vm");
-		expect(gvisor).toBeDefined();
-		expect(vm).toBeDefined();
-		// Modal's `cpu` unit delivers one schedulable vCPU (nproc tracks it 1:1 and throughput scales
-		// with it — measured 2026-07-10), so the pinned vCPU count passes through unhalved; halving it
-		// benchmarked Modal on half the CPU of every other provider.
-		// `memoryLimitMiB` is the hard cap (memoryMiB alone is only a reservation, and the guest then
-		// still sees the host's RAM) — assert it, or the memory fix has no regression guard at all.
-		const spec = {
-			cpu: TARGET_SPEC.vcpus,
-			cpuLimit: TARGET_SPEC.vcpus,
-			memoryMiB: TARGET_SPEC.memoryGb * 1024,
-			memoryLimitMiB: TARGET_SPEC.memoryGb * 1024,
-		};
-		expect(gvisor?.createOptions).toMatchObject(spec);
-		expect(vm?.createOptions).toMatchObject(spec);
-		// The variants differ only in isolation: modal-vm selects the VM runtime via experimentalOptions,
-		// modal-gvisor (the default) carries none.
-		expect(vm?.createOptions?.experimentalOptions).toEqual({ vm_runtime: true });
-		expect(gvisor?.createOptions?.experimentalOptions).toBeUndefined();
-		expect(gvisor?.costEvidence).toBeDefined();
-		expect(vm?.costEvidence).toBe(gvisor?.costEvidence);
 	});
 
 	it("configures Vercel through its custom provider factory", () => {
@@ -227,14 +205,7 @@ describe("@sandbox-benchmarks/providers", () => {
 		}
 	});
 
-	it("boots e2b from the configured template and keeps Daytona alive for long suites", () => {
-		const e2bAdapter = providers.find((p) => p.name === "e2b");
-		expect(e2bAdapter?.createOptions?.snapshotId).toBe(config.e2bTemplate);
-		const compute = e2bAdapter?.createCompute();
-		const methods = (compute as unknown as { sandbox: { methods: Record<string, unknown> } })
-			.sandbox.methods;
-		expect(methods.runCommand).toBe(runE2bCommandAsRoot);
-
+	it("keeps Daytona alive for long suites and pins region off createOptions", () => {
 		const daytona = providers.find((p) => p.name === "daytona-vm");
 		expect(daytona).toBeDefined();
 		expect(daytona?.createOptions?.snapshotId).toBe(config.daytonaVm.snapshot);
@@ -419,7 +390,9 @@ describe("assertProviderJoin", () => {
 		).not.toThrow();
 		expect(() =>
 			assertProviderJoin(
-				PROVIDERS.map((m) => m.id),
+				PROVIDERS.map((m) => m.id).filter(
+					(id) => id !== "e2b" && id !== "modal-gvisor" && id !== "modal-vm" && id !== "tama",
+				),
 				providers.map((p) => p.name),
 			),
 		).not.toThrow();

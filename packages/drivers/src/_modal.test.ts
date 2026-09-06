@@ -64,6 +64,38 @@ describe("Modal shared driver factory", () => {
 		expect(modalVm.execution).toEqual(modalGvisor.execution);
 	});
 
+	it("wires Modal costEvidence on both DriverModule variants", async () => {
+		expect(modalGvisor.costEvidence).toBeDefined();
+		expect(modalVm.costEvidence).toBeDefined();
+		const capture = modalGvisor.costEvidence?.captureAfterTeardown;
+		expect(typeof capture).toBe("function");
+		const completed = await capture?.({
+			cell: { runId: "run-1", providerId: "modal-gvisor", suite: "cpu-node" },
+			providerId: "modal-gvisor",
+			sandboxId: "sb-123",
+			teardown: {
+				completed: true,
+				attemptedAt: "2026-08-08T00:00:00.000Z",
+				completedAt: "2026-08-08T00:00:01.000Z",
+			},
+		});
+		expect(completed).toMatchObject({
+			kind: "missing",
+			reason: "unsupported_public_api",
+			subject: { kind: "sandbox", sandboxId: "sb-123", appName: MODAL_APP_NAME },
+		});
+		if (completed?.kind !== "missing") throw new Error("Modal hook returned observed evidence");
+		expect(completed.detail).toContain("was not invoked");
+		expect(
+			await modalVm.costEvidence?.captureAfterTeardown({
+				cell: { runId: "run-1", providerId: "modal-vm", suite: "cpu-node" },
+				providerId: "modal-vm",
+				sandboxId: "sb-123",
+				teardown: { completed: false, attemptedAt: "2026-08-08T00:00:00.000Z" },
+			}),
+		).toMatchObject({ kind: "missing", reason: "sandbox_teardown_unconfirmed" });
+	});
+
 	it("defers the wrapper's eager app lookup until create and reuses one instance", async () => {
 		let factoryCalls = 0;
 		let createCalls = 0;

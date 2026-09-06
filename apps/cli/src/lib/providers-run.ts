@@ -4,6 +4,7 @@
 // vs timeOperation, "ok" vs "ran"). Keeping it here makes the skip-vs-fail contract single-sourced:
 // a provider with no creds SKIPS (never fails the run); a provider that runs and throws — or whose
 // result `ok()` rejects — FAILS.
+import { DRIVERS } from "@sandbox-benchmarks/drivers";
 import { missingCreds } from "@sandbox-benchmarks/harness";
 import type { ProviderConfig } from "@sandbox-benchmarks/providers";
 import { providers } from "@sandbox-benchmarks/providers";
@@ -71,6 +72,16 @@ export async function forEachProviderWithCreds<T>(
 		throw new Error(
 			"forEachProviderWithCreds: `only` is an empty list — pass at least one provider id, or omit `only` to visit every registered provider",
 		);
+	}
+	if (options.only) {
+		const migrated = options.only.filter((id) => Object.hasOwn(DRIVERS, id));
+		if (migrated.length > 0) {
+			throw new Error(
+				`forEachProviderWithCreds: ${migrated.join(", ")} ${
+					migrated.length === 1 ? "has" : "have"
+				} no legacy adapter (migrated to DriverModule). Default bench-suite uses the driver path; smoke/lifecycle/bake-validate for these ids is not yet on this loop.`,
+			);
+		}
 	}
 	const selected = options.only
 		? providers.filter((p) => options.only?.includes(p.name))

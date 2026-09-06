@@ -1,10 +1,8 @@
-// The runtime half of the PROVIDERS × adapters join guarantee. The `Record<ProviderId, …>` type on
-// both registries already makes a one-sided provider a *compile* error, but a compile error only
-// protects an in-repo edit: a published/installed build, a downstream consumer, or any path where the
-// schema and providers packages drift to different versions can present a registry pair the compiler
-// never type-checked together. This asserts the two id sets are identical at load and throws naming
-// the exact offenders, so a one-sided provider fails loudly here instead of surfacing as an
-// `undefined` adapter deep inside a benchmark run.
+// The runtime half of the remaining PROVIDERS × adapters join. During DriverModule migration,
+// `adapters` is `Record<LegacyAdapterId, …>` (waived schema ids only). A compile error still
+// catches an in-repo miss; this asserts the two remaining id sets are identical at load so a
+// published/installed build or cross-version drift cannot surface as an `undefined` adapter deep
+// inside a benchmark run.
 
 /**
  * Assert that the schema provider ids and the harness adapter ids are exactly the same set.

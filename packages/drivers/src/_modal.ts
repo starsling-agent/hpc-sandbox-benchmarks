@@ -112,6 +112,10 @@ export const MODAL_REQUEST_COVERAGE = {
  * The complete capacity envelope the pinned `@computesdk/modal` build throws in place of the gRPC
  * error. A whole literal authored by a catalog-pinned wrapper, matched by equality and drift-guarded
  * by a test that reads the installed package — not vendor prose, and not a regex.
+ *
+ * Matching it inherits the wrapper's classification: its create catch routes any message containing
+ * `quota` or `limit` here once the auth branch has claimed credential failures. Coarser than the
+ * gRPC status, and the finest signal that survives the wrapper's class-and-cause erasure.
  */
 export const MODAL_WRAPPER_CAPACITY_CREATE_MESSAGE =
 	"Modal quota exceeded. Please check your usage at https://modal.com/";

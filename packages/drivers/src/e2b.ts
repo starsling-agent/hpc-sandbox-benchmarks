@@ -65,7 +65,13 @@ export const E2B_WRAPPER_DEFINITIVE_CREATE_MESSAGES = new Set([
 	"Invalid E2B API key format. E2B API keys should start with 'e2b_'.",
 	"E2B authentication failed. Please check your E2B_API_KEY environment variable.",
 ]);
-/** The same wrapper's single capacity envelope — its `quota`/`limit` branch, not a prose match. */
+/**
+ * The same wrapper's single capacity envelope. Matching it inherits the wrapper's own classification
+ * (its create catch routes any SDK message containing `quota` or `limit` here, after the auth branch
+ * has already claimed credential failures), which is coarser than a status code but is the finest
+ * signal that survives it. Over-matching costs a bounded retry of an allocation the driver proved is
+ * absent; under-matching is the hard-fail on attempt 1 this constant exists to prevent.
+ */
 export const E2B_WRAPPER_CAPACITY_CREATE_MESSAGE =
 	"E2B quota exceeded. Please check your usage at https://e2b.dev/";
 

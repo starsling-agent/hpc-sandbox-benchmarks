@@ -6,7 +6,7 @@ import { blaxel } from "@computesdk/blaxel";
 import { daytona } from "@computesdk/daytona";
 import { namespace } from "@computesdk/namespace";
 import type { ProviderId } from "@sandbox-benchmarks/schema";
-import { TARGET_SPEC } from "@sandbox-benchmarks/schema";
+import { PROVIDER_IDS, TARGET_SPEC } from "@sandbox-benchmarks/schema";
 import type { DaytonaConfig } from "../config.ts";
 import { config } from "../config.ts";
 import { blaxelWithVolumeAndKeepAlive } from "./blaxel-volume.ts";
@@ -23,8 +23,22 @@ import { vercelCompute } from "./vercel.ts";
 /**
  * Provider ids whose production path is a registered DriverModule, not a `packages/providers`
  * adapter. Must stay in lockstep with `Object.keys(DRIVERS)` — the CLI partition test proves it.
+ *
+ * Deliberately a standalone list rather than anything derived from {@link adapters}: this is the
+ * only reason an id may be absent from the join below, so reading it off the adapter table would
+ * make {@link assertProviderJoin} tautological and hide the missing-adapter drift it exists to
+ * catch. `packages/drivers` cannot be imported here either — the dependency DAG (ADR-0002) points
+ * the other way, and this package must not pull a fleet of vendor SDKs into its load.
  */
-export type MigratedDriverId = "e2b" | "modal-gvisor" | "modal-vm" | "tama";
+export const MIGRATED_DRIVER_IDS = [
+	"e2b",
+	"modal-gvisor",
+	"modal-vm",
+	"tama",
+] as const satisfies readonly ProviderId[];
+
+/** A schema id served by a registered DriverModule. Derived from the list, so the two cannot drift. */
+export type MigratedDriverId = (typeof MIGRATED_DRIVER_IDS)[number];
 /** Schema ids still served by this package's ComputeSDK adapters. */
 export type LegacyAdapterId = Exclude<ProviderId, MigratedDriverId>;
 
@@ -236,6 +250,16 @@ export const adapters: Record<LegacyAdapterId, ProviderAdapter> = {
 	},
 };
 
+/**
+ * Whether `id` is a schema provider this package is still expected to serve.
+ *
+ * Answers from the schema registry and the migrated-id list — never from `adapters` itself. A
+ * membership test against the table would report "not ours" for a waived provider whose adapter is
+ * simply MISSING, which is exactly the drift {@link assertProviderJoin} must still be able to see.
+ */
 export function isLegacyAdapterId(id: string): id is LegacyAdapterId {
-	return Object.hasOwn(adapters, id);
+	return (
+		(PROVIDER_IDS as readonly string[]).includes(id) &&
+		!(MIGRATED_DRIVER_IDS as readonly string[]).includes(id)
+	);
 }

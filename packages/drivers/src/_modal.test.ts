@@ -1,4 +1,7 @@
 import { describe, expect, it } from "bun:test";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { CreateRequest } from "@sandbox-benchmarks/driver";
 import { ModalClient, NotFoundError } from "modal";
 import type { ClientMiddleware, ServiceDefinition } from "nice-grpc";
@@ -13,6 +16,7 @@ import {
 	lazyModalCompute,
 	MODAL_APP_NAME,
 	MODAL_CONTROL_TIMEOUT_MS,
+	MODAL_COST_SDK_PROVENANCE,
 	MODAL_SANDBOX_LIFETIME_MS,
 	MODAL_V1_SANDBOX_ID,
 	MODAL_V2_SANDBOX_ID,
@@ -53,6 +57,26 @@ function unsupported(detail: string): never {
 	throw new Error(detail);
 }
 
+/** The version of `packageName` as this package resolves it — the copy the driver actually loads. */
+function installedVersion(packageName: string): string {
+	let directory = dirname(fileURLToPath(import.meta.resolve(packageName)));
+	for (;;) {
+		const manifest = join(directory, "package.json");
+		try {
+			const parsed: unknown = JSON.parse(readFileSync(manifest, "utf8"));
+			if (parsed !== null && typeof parsed === "object" && "version" in parsed) {
+				const { name, version } = parsed as { name?: unknown; version?: unknown };
+				if (name === packageName && typeof version === "string") return version;
+			}
+		} catch {
+			// Keep walking: dist directories often have no manifest of their own.
+		}
+		const parent = dirname(directory);
+		if (parent === directory) throw new Error(`could not resolve an installed ${packageName}`);
+		directory = parent;
+	}
+}
+
 describe("Modal shared driver factory", () => {
 	it("attaches the shared implementation only through the two literal modules", () => {
 		expect(modalGvisor.id).toBe("modal-gvisor");
@@ -62,6 +86,13 @@ describe("Modal shared driver factory", () => {
 			durable: "shell-detach",
 		});
 		expect(modalVm.execution).toEqual(modalGvisor.execution);
+	});
+
+	it("pins cost-evidence provenance to the native SDK this driver actually loads", () => {
+		// Resolved from this package, which is where `_modal.ts` imports `modal` from: the record must
+		// name the SDK whose public surface was searched, not the older copy nested under the wrapper.
+		expect(MODAL_COST_SDK_PROVENANCE.packageName).toBe("modal");
+		expect(String(MODAL_COST_SDK_PROVENANCE.version)).toBe(installedVersion("modal"));
 	});
 
 	it("wires Modal costEvidence on both DriverModule variants", async () => {

@@ -3,7 +3,7 @@
 // wrappers (the unified provider runtime). Each provider is wired via its @computesdk/* factory;
 // `providers` is the schema identity joined with those adapters.
 import { PROVIDERS } from "@sandbox-benchmarks/schema";
-import { adapters, isLegacyAdapterId } from "./lib/adapters.ts";
+import { adapters, isLegacyAdapterId, MIGRATED_DRIVER_IDS } from "./lib/adapters.ts";
 import { assertCreateCeilingDeclared, assertProviderJoin } from "./lib/join.ts";
 import type { ProviderConfig } from "./lib/types.ts";
 
@@ -37,7 +37,7 @@ export type {
 	ProviderCostEvidenceCapability,
 	SandboxTeardownResult,
 } from "./lib/types.ts";
-export { isLegacyAdapterId };
+export { isLegacyAdapterId, MIGRATED_DRIVER_IDS };
 
 /**
  * Unmigrated provider benchmark configurations: each remaining schema provider's identity joined
@@ -47,6 +47,10 @@ export { isLegacyAdapterId };
  * Compile-time honesty is `Record<LegacyAdapterId, ProviderAdapter>`: a waived provider added to
  * the schema without an adapter here is a type error. The runtime {@link assertProviderJoin} backs
  * that for any path the type-checker never saw (published/installed build, cross-version drift).
+ *
+ * The expected set subtracts only {@link MIGRATED_DRIVER_IDS} — a list that owes nothing to
+ * `adapters` — so a schema id that lost its adapter is still reported as a one-sided join instead
+ * of quietly filtering itself out of both sides of the comparison.
  */
 assertProviderJoin(
 	PROVIDERS.map((meta) => meta.id).filter(isLegacyAdapterId),

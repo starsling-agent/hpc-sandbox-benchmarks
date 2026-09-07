@@ -446,6 +446,9 @@ export function renderDriversProvenance(root = REPO_ROOT): string {
 	const entries = [
 		["E2B", "@computesdk/e2b", catalogVersion(catalog, "@computesdk/e2b")],
 		["MODAL", "@computesdk/modal", catalogVersion(catalog, "@computesdk/modal")],
+		// The Modal driver's control plane, cost-evidence lookups included, runs on the catalog's
+		// native SDK — not the older copy vendored under the wrapper — so it needs its own identity.
+		["MODAL_NATIVE", "modal", catalogVersion(catalog, "modal")],
 		["TAMA", "tama CLI", tamaCliVersion(root)],
 	] as const;
 	const constants = entries

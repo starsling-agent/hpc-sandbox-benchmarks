@@ -94,7 +94,16 @@ function missingForTarget(
 	}
 }
 
-function targetFor(id: ProviderId): ProviderTarget | undefined {
+/**
+ * Pick the composition root that owns `id`, or throw naming the drift that left it unservable.
+ *
+ * Every schema provider must land in exactly one lane, so neither branch may fall through: a
+ * registered id with no module and a waived id with no adapter are both repo-level drift (the
+ * `packages/providers` load-time join and the CLI partition test each reject it earlier). Returning
+ * "nothing to do" instead would drop the provider from the loop with no run at all — no result and
+ * no failure — which is how a validation pass exits 0 having validated less than it reported.
+ */
+function targetFor(id: ProviderId): ProviderTarget {
 	if (usesDriverSuite(id)) {
 		if (!isDriverProviderId(id)) {
 			throw new Error(
@@ -104,7 +113,11 @@ function targetFor(id: ProviderId): ProviderTarget | undefined {
 		return { kind: "driver", id };
 	}
 	const config = providers.find((provider) => provider.name === id);
-	if (config === undefined) return undefined;
+	if (config === undefined) {
+		throw new Error(
+			`forEachProviderWithCreds: ${id} has neither a DriverModule nor a packages/providers adapter`,
+		);
+	}
 	return { kind: "legacy", id, config };
 }
 
@@ -133,8 +146,19 @@ export async function forEachProviderWithCreds<T>(
 	// that passed. Omit `only` to mean "every provider"; `[]` means "you computed an empty set", which is
 	// never a valid request.
 	for (const id of selectedProviderIds(options.only)) {
-		const target = targetFor(id);
-		if (target === undefined) continue;
+		let target: ProviderTarget;
+		try {
+			target = targetFor(id);
+		} catch (err) {
+			// Lane selection is this loop's own work, not the body's, so a drifted registry reports as a
+			// FAILED run for that provider rather than escaping and taking the whole pass down with it.
+			const reason = err instanceof Error ? err.message : String(err);
+			log(`fail: ${id} (${reason})`);
+			const failed: ProviderRun<T> = { provider: id, status: "failed", reason };
+			runs.push(failed);
+			options.onComplete?.(failed);
+			continue;
+		}
 
 		const missing = missingForTarget(target, options.env);
 		if (missing.length > 0) {

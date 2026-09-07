@@ -50,17 +50,21 @@ const READINESS_PROBE_TIMEOUT_MS = 2_000;
  * exists to prevent.
  */
 const PAYLOAD_DISABLED = "64KiB payload exec disabled for this run";
-const NO_LIST_OP = "provider SDK exposes no sandbox list operation";
-const NO_INFO_OP = "provider SDK exposes no sandbox info operation";
+// Scoped to the integration under measurement — a leftover ComputeSDK adapter or a DriverModule
+// projection — never to the vendor SDK as a whole. Two different integrations of one provider can
+// expose different control-plane calls, and this benchmark only ever observes the one it was handed;
+// "the vendor has no such API" is a claim about the vendor that the absent method is no evidence for.
+const NO_LIST_OP = "the provider integration under measurement exposes no sandbox list operation";
+const NO_INFO_OP = "the provider integration under measurement exposes no sandbox info operation";
 const SNAPSHOT_DISABLED = "snapshot measurement disabled for this run";
-const NO_SNAPSHOT_OP = "provider SDK exposes no snapshot operation";
+const NO_SNAPSHOT_OP = "the provider integration under measurement exposes no snapshot operation";
 /**
  * A measurement this RUN turned off. Deliberately not `unsupported-operation`: the provider can do it,
  * we chose not to time it, and publishing a config toggle as a missing capability would be a claim
  * about the provider we have no evidence for.
  */
 const DISABLED_CAUSE = { kind: "measurement-disabled" } as const satisfies GapCause;
-/** The provider's SDK exposes no such call — a capability statement, unlike {@link DISABLED_CAUSE}. */
+/** The measured integration exposes no such call — a capability statement, unlike {@link DISABLED_CAUSE}. */
 const NO_LIST_CAUSE = {
 	kind: "unsupported-operation",
 	detail: NO_LIST_OP,

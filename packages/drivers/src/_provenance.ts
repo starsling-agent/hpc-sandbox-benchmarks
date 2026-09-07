@@ -11,6 +11,11 @@ export const MODAL_PROVENANCE = Object.freeze({
 	version: "1.9.3",
 });
 
+export const MODAL_NATIVE_PROVENANCE = Object.freeze({
+	packageName: "modal",
+	version: "0.9.0",
+});
+
 export const TAMA_PROVENANCE = Object.freeze({
 	packageName: "tama CLI",
 	version: "0.1.17",

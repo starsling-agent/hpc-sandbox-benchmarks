@@ -31,9 +31,9 @@ import type {
 	ComputeSdkSandboxOf,
 } from "./_computesdk.ts";
 import { computeSdkSpec, defineComputeSdkDriver } from "./_computesdk.ts";
-import { MODAL_PROVENANCE } from "./_provenance.ts";
+import { MODAL_NATIVE_PROVENANCE, MODAL_PROVENANCE } from "./_provenance.ts";
 
-export { MODAL_PROVENANCE };
+export { MODAL_NATIVE_PROVENANCE, MODAL_PROVENANCE };
 
 export type ModalProviderId = "modal-gvisor" | "modal-vm";
 export type ModalVariant = "gvisor" | "vm";
@@ -68,11 +68,16 @@ export interface ModalControlRunner {
 }
 
 export const MODAL_APP_NAME = "sandbox-benchmarks";
-/** Native Modal SDK identity for cost-evidence records (not the `@computesdk/modal` wrapper). */
-export const MODAL_COST_SDK_PROVENANCE = {
-	packageName: "modal",
-	version: "0.7.6",
-} as const satisfies ProviderCostEvidenceCapability["sdk"];
+/**
+ * Native Modal SDK identity for cost-evidence records (not the `@computesdk/modal` wrapper).
+ *
+ * This module imports `modal` directly for its control plane, so the SDK whose public surface was
+ * searched for a sandbox-scoped usage endpoint is the catalog-pinned copy this package resolves —
+ * NOT the older one the wrapper vendors. Generated from that same pin so the recorded version
+ * cannot drift from the installed one; `_modal.test.ts` asserts it against the resolved package.
+ */
+export const MODAL_COST_SDK_PROVENANCE =
+	MODAL_NATIVE_PROVENANCE satisfies ProviderCostEvidenceCapability["sdk"];
 export const MODAL_SANDBOX_LIFETIME_MS = 3 * 60 * 60_000;
 export const MODAL_CONTROL_TIMEOUT_MS = 5_000;
 export const MODAL_RECOVERY_CONFIRMATION_MS = 2_000;

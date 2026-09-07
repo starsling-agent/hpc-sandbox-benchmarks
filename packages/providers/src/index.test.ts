@@ -8,6 +8,8 @@ import { REGISTRY } from "@sandbox-benchmarks/schema/providers";
 import { ENV_KEYS } from "./config.ts";
 import {
 	config,
+	isLegacyAdapterId,
+	MIGRATED_DRIVER_IDS,
 	microsandboxCloudCompute,
 	microsandboxLocalCompute,
 	NOVITA_E2B_DOMAIN,
@@ -15,6 +17,7 @@ import {
 	novitaConnection,
 	providers,
 } from "./index.ts";
+import { adapters } from "./lib/adapters.ts";
 import { runE2bCommandAsRoot } from "./lib/e2b-root.ts";
 import { assertCreateCeilingDeclared, assertProviderJoin } from "./lib/join.ts";
 
@@ -49,7 +52,7 @@ describe("@sandbox-benchmarks/providers", () => {
 		// Migrated DriverModule ids are omitted from this join on purpose.
 		expect(providers.map((p) => p.name).sort()).toEqual(
 			PROVIDERS.map((m) => m.id)
-				.filter((id) => id !== "e2b" && id !== "modal-gvisor" && id !== "modal-vm" && id !== "tama")
+				.filter(isLegacyAdapterId)
 				.sort(),
 		);
 		for (const p of providers) {
@@ -70,11 +73,7 @@ describe("@sandbox-benchmarks/providers", () => {
 	});
 
 	it("carries the exact boot artifact beside each legacy create policy", () => {
-		expect(providers.length).toBe(
-			PROVIDERS.filter(
-				(m) => m.id !== "e2b" && m.id !== "modal-gvisor" && m.id !== "modal-vm" && m.id !== "tama",
-			).length,
-		);
+		expect(providers.length).toBe(PROVIDERS.length - MIGRATED_DRIVER_IDS.length);
 		for (let i = 0; i < providers.length; i++) {
 			const meta = PROVIDERS.find((m) => m.id === providers[i]?.name);
 			expect(providers[i]?.artifact.kind).toBe(meta?.artifact.kind);
@@ -390,9 +389,7 @@ describe("assertProviderJoin", () => {
 		).not.toThrow();
 		expect(() =>
 			assertProviderJoin(
-				PROVIDERS.map((m) => m.id).filter(
-					(id) => id !== "e2b" && id !== "modal-gvisor" && id !== "modal-vm" && id !== "tama",
-				),
+				PROVIDERS.map((m) => m.id).filter(isLegacyAdapterId),
 				providers.map((p) => p.name),
 			),
 		).not.toThrow();
@@ -404,6 +401,20 @@ describe("assertProviderJoin", () => {
 		expect(() => assertProviderJoin(["e2b", "daytona", "modal"], ["e2b", "daytona"])).toThrow(
 			/missing a harness adapter: modal/,
 		);
+	});
+
+	it("still sees a missing adapter with the live expected set", () => {
+		// Regression guard for the shape of the real call. Deriving the expected ids from `adapters`
+		// (an `id in adapters` predicate) would drop the very id that lost its adapter from BOTH sides,
+		// leaving a guard that can never fail. Drop one waived adapter and the guard must still name it.
+		const expected = PROVIDERS.map((meta) => meta.id).filter(isLegacyAdapterId);
+		const withoutRuncloud = Object.keys(adapters).filter((id) => id !== "runcloud");
+		expect(() => assertProviderJoin(expected, withoutRuncloud)).toThrow(
+			/missing a harness adapter: runcloud/,
+		);
+		// …and a migrated id is still excluded by the list, not by its absence from the table.
+		expect(expected).not.toContain("e2b");
+		expect(expected.length).toBe(PROVIDERS.length - MIGRATED_DRIVER_IDS.length);
 	});
 
 	it("throws naming an adapter that has no schema entry", () => {

@@ -13,6 +13,11 @@ import type { Log } from "./types.ts";
 import type { CandidateRefs } from "./validate.ts";
 import { candidateCreateOptions, candidateResolvedArtifact } from "./validate.ts";
 
+/**
+ * The candidate ref as a driver-lane artifact override. A provider that boots stock has no ref to
+ * override, and asking the composition root to resolve one would be rejected as a lie about its
+ * registry descriptor — so that case resolves the registry default instead.
+ */
 function candidateArtifactResolution(id: ProviderId, refs: CandidateRefs): ArtifactResolution {
 	const resolved = candidateResolvedArtifact(id, refs);
 	if (resolved.kind === "none") return {};

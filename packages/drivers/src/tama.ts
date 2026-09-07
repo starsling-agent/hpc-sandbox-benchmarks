@@ -98,6 +98,11 @@ export function tamaSpec({ env, resolvedArtifact }: DriverContext<"tama">) {
 		exec: (id, command) => ["exec", id, "--", "bash", "-lc", command],
 		destroy: (id) => ["rm", "-y", id],
 		notFound: TAMA_MACHINE_NOT_FOUND,
+		// No `isRetryableCreate`, deliberately. A refused `tama new` reaches the kit as a process exit
+		// status plus free-form stderr, and no observed run has shown a documented per-cause exit or a
+		// machine-readable capacity field to classify. The only rule available today would be a regex
+		// over that prose — the classifier ADR-0008 dropped — so tama creates stay terminal, and this
+		// is the seam to wire once the CLI exposes something typed.
 	});
 }
 

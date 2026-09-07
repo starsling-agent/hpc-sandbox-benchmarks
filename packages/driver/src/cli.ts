@@ -491,8 +491,13 @@ export interface CliSpec<Row> {
 	/**
 	 * Optional module-owned create-retry classifier. Called only after failed-create reconciliation
 	 * has confirmed the generated name is gone. True marks the `create-failed` {@link DriverError}
-	 * for the harness; a throw or any other value leaves it terminal. The kit already treats a
-	 * structured `vendorExitCode` of 429 as retryable without this hook.
+	 * for the harness; a throw or any other value leaves it terminal.
+	 *
+	 * This hook is the CLI lane's ONLY create-retry channel. The shared rule's other arm reads
+	 * `vendorExitCode === 429`, but on this lane that field is the child's PROCESS exit status, which
+	 * POSIX truncates to 0-255 — a CLI cannot exit 429, so nothing arrives that way. A module with no
+	 * typed signal to classify (a CLI whose only capacity evidence is stderr prose) leaves this unset
+	 * and its creates stay terminal: guessing from wording is the drift ADR-0008 exists to end.
 	 */
 	readonly isRetryableCreate?: (error: DriverError) => boolean;
 }
@@ -1059,9 +1064,9 @@ export function cliMethodTable<Row>(
 	};
 	const providerCallback = <T>(boundary: string, callback: () => T, ref?: SandboxRef): T =>
 		invokeCliProviderCallback(provider, boundary, callback, ref);
-	// Vendor failures carry structured fields (exit code + vendor diagnostic). The harness
-	// classifies retry with isRetryableDriverCreate (explicit mark or vendorExitCode 429), never
-	// by regexing the formatted message.
+	// Vendor failures carry structured fields (the child's exit status + its vendor diagnostic), and
+	// the message redacts secret argv for humans. Retry is decided by isRetryableDriverCreate, from a
+	// mark this lane sets only through CliSpec.isRetryableCreate — never by regexing either string.
 	const vendorFailed = (
 		code: "create-failed" | "destroy-failed" | "probe-failed",
 		args: CliArgv,

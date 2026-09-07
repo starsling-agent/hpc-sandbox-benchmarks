@@ -967,16 +967,21 @@ function computeSdkMethodTable<TCompute extends ComputeSdkLike>(
 					undefined,
 					sensitiveValues,
 				);
-				// A create the control plane refused outright owns nothing to reconcile. Polling for it
-				// would burn the caller's budget and, when the same rejection also fails the lookup,
-				// relabel a plain credential error as a cleanup double fault over a sandbox that never was.
-				if (isDefinitiveCreateRejection(provider, createRecovery, caught)) throw primary;
+				// The retry mark asserts two things: the refusal is transient, and nothing remains
+				// allocated. Reconciliation is one way to establish the second; a DEFINITIVE rejection is
+				// the other and the stronger one — the control plane refused before allocating. So a
+				// module that classifies a refusal as both keeps its retry here, rather than having the
+				// cheaper proof of "nothing was allocated" cost it the retry.
 				if (
 					isDriverError(primary) &&
 					isRetryableCreateRejection(provider, createRecovery, caught)
 				) {
 					markRetryableDriverCreate(primary);
 				}
+				// A create the control plane refused outright owns nothing to reconcile. Polling for it
+				// would burn the caller's budget and, when the same rejection also fails the lookup,
+				// relabel a plain credential error as a cleanup double fault over a sandbox that never was.
+				if (isDefinitiveCreateRejection(provider, createRecovery, caught)) throw primary;
 				return rejectWithRecovery(primary);
 			}
 			if ((typeof created !== "object" && typeof created !== "function") || created === null) {

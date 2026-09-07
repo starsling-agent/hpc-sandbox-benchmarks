@@ -21,6 +21,7 @@ import {
 	MODAL_SANDBOX_LIFETIME_MS,
 	MODAL_V1_SANDBOX_ID,
 	MODAL_V2_SANDBOX_ID,
+	MODAL_WRAPPER_CAPACITY_CREATE_MESSAGE,
 	modalControlPlane,
 	modalCreateOptions,
 	modalCreateRecovery,
@@ -572,11 +573,23 @@ describe("Modal truthful lifecycle and recovery projections", () => {
 				new ClientError("/modal.client.ModalClient/SandboxCreate", Status.UNAVAILABLE, "retry"),
 			),
 		).toBe(false);
+		// The pinned wrapper erases the gRPC class and the cause on create, so its complete envelope is
+		// what a real RESOURCE_EXHAUSTED leaves behind on the path this driver creates through.
+		expect(isModalRetryableCreate(new Error(MODAL_WRAPPER_CAPACITY_CREATE_MESSAGE))).toBe(true);
 		expect(isModalRetryableCreate(new Error("429 Too Many Requests"))).toBe(false);
 		expect(isModalRetryableCreate(new Error("quota|rate limit|capacity"))).toBe(false);
+		expect(isModalRetryableCreate(new Error("Modal quota exceeded somewhere else"))).toBe(false);
 		expect(
 			modalCreateRecovery("vm", directRunner({ sandboxes: {} })).isRetryableCreate?.(exhausted),
 		).toBe(true);
+	});
+
+	it("the pinned wrapper still throws the capacity envelope the classifier matches", () => {
+		// Read the installed build rather than trust the constant: the wrapper's create catch is the
+		// only thing standing between a real capacity refusal and a terminal cell, and a catalog bump
+		// that reworded this envelope would disable the retry with nothing failing to say so.
+		const wrapper = readFileSync(fileURLToPath(import.meta.resolve("@computesdk/modal")), "utf8");
+		expect(wrapper).toContain(MODAL_WRAPPER_CAPACITY_CREATE_MESSAGE);
 	});
 
 	it("preserves an auth-token NOT_FOUND through production name recovery", async () => {

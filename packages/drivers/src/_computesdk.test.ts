@@ -2009,6 +2009,42 @@ describe("computeSdkDriver", () => {
 		expect(error).toMatchObject({ code: "create-failed", provider: "e2b" });
 		// A refused request owns nothing; polling for it would only burn the caller's budget.
 		expect(cleanupCalls).toBe(0);
+		expect(isRetryableDriverCreate(error)).toBe(false);
+	});
+
+	test("a definitive rejection the module also calls retryable keeps its retry", async () => {
+		// Both classifiers can be right at once: the control plane refused before allocating (nothing to
+		// reconcile) AND the refusal was capacity. The definitive answer is the STRONGER proof of the
+		// mark's safety half, so skipping the lookup must not also cost the retry it justifies.
+		let cleanupCalls = 0;
+		const refused = new Error("no capacity for this account right now");
+		const error = await bridge(
+			{
+				sandbox: {
+					create: async () => {
+						throw refused;
+					},
+				},
+			},
+			{
+				createRecovery: {
+					absenceConfirmationMs: 5,
+					maxAttempts: 3,
+					locator: () => ({ kind: "name", value: "attempt-definitive-capacity" }),
+					isDefinitive: (caught) => caught === refused,
+					isRetryableCreate: (caught) => caught === refused,
+					cleanup: async () => {
+						cleanupCalls += 1;
+						return { status: "destroyed" };
+					},
+				},
+			},
+		)
+			.create(request)
+			.catch((caught: unknown) => caught);
+		expect(cleanupCalls).toBe(0);
+		expect(error).toMatchObject({ code: "create-failed", provider: "e2b" });
+		expect(isRetryableDriverCreate(error)).toBe(true);
 	});
 
 	test("a marked create-failed survives wrapping and stays retryable after cleanup", async () => {

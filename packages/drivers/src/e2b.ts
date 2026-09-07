@@ -50,11 +50,24 @@ export const E2B_EXECUTION = Object.freeze({
 	durable: "native-launch" as const,
 });
 const E2B_RECOVERY_MAX_PAGES = 100;
-const E2B_WRAPPER_DEFINITIVE_CREATE_MESSAGES = new Set([
+/**
+ * Complete envelopes the pinned `@computesdk/e2b` build throws in place of the SDK's typed errors.
+ *
+ * These are not vendor prose: they are whole string literals authored by a catalog-pinned wrapper
+ * (`workspaces.catalogs.computesdk`), matched by equality, and `e2b.test.ts` reads the installed
+ * package to prove each one is still emitted — so a wrapper bump that reworded them fails a test
+ * instead of silently reclassifying a create. Recognizing them is what keeps classification typed at
+ * all: the wrapper's create catch discards the SDK error class AND its cause, so `instanceof` alone
+ * decides nothing on the only path this driver actually creates through.
+ */
+export const E2B_WRAPPER_DEFINITIVE_CREATE_MESSAGES = new Set([
 	"Missing E2B API key. Provide 'apiKey' in config or set E2B_API_KEY environment variable.",
 	"Invalid E2B API key format. E2B API keys should start with 'e2b_'.",
 	"E2B authentication failed. Please check your E2B_API_KEY environment variable.",
 ]);
+/** The same wrapper's single capacity envelope — its `quota`/`limit` branch, not a prose match. */
+export const E2B_WRAPPER_CAPACITY_CREATE_MESSAGE =
+	"E2B quota exceeded. Please check your usage at https://e2b.dev/";
 
 export const E2B_REQUEST_COVERAGE = {
 	spec: {
@@ -246,8 +259,17 @@ function vendorStatusCode(error: unknown): number | undefined {
 }
 
 /**
- * E2B capacity/rate-limit refusals the harness may retry after reconciliation. Typed SDK class,
- * class name (wrapper copies), or HTTP 429 — never vendor-message regex.
+ * E2B capacity/rate-limit refusals the harness may retry after reconciliation.
+ *
+ * Three signals, in descending order of directness: the typed SDK class, its class name (which a
+ * boundary that copies an error preserves), and an HTTP 429 status field. None of them survives the
+ * pinned wrapper's create catch, which rethrows a bare `new Error` with no class and no cause, so
+ * the wrapper's own complete capacity envelope is the fourth — matched by equality against a
+ * catalog-pinned literal and drift-guarded in `e2b.test.ts`, exactly as the definitive classifier
+ * above already matches that wrapper's auth envelope. Without it this classifier is decorative: it
+ * would answer "not retryable" for every rate limit E2B actually returns through this driver.
+ *
+ * Still never a regex over vendor prose — a message that merely mentions a quota does not retry.
  */
 export function isE2bRetryableCreate(error: unknown): boolean {
 	let cause: unknown = error;
@@ -256,6 +278,7 @@ export function isE2bRetryableCreate(error: unknown): boolean {
 		if (vendorStatusCode(cause) === 429) return true;
 		if (!(cause instanceof Error)) return false;
 		if (cause.name === "RateLimitError") return true;
+		if (cause.message === E2B_WRAPPER_CAPACITY_CREATE_MESSAGE) return true;
 		let next: unknown;
 		try {
 			next = cause.cause;

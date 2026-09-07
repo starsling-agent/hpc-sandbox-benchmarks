@@ -1,4 +1,6 @@
 import { describe, expect, spyOn, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import type { E2BSandbox } from "@computesdk/e2b";
 import type { CreateRequest } from "@sandbox-benchmarks/driver";
 import { DriverError, FailedCreateCleanupError, sandboxRef } from "@sandbox-benchmarks/driver";
@@ -21,6 +23,8 @@ import e2bDriver, {
 	E2B_REQUEST_COVERAGE,
 	E2B_SANDBOX_ID,
 	E2B_SANDBOX_LIFETIME_MS,
+	E2B_WRAPPER_CAPACITY_CREATE_MESSAGE,
+	E2B_WRAPPER_DEFINITIVE_CREATE_MESSAGES,
 	e2bSpec,
 	execE2bCommandAsRoot,
 	isE2bDefinitiveCreateRejection,
@@ -649,13 +653,31 @@ describe("E2B proof driver", () => {
 			isE2bRetryableCreate(Object.assign(new Error("wrapper copy"), { name: "RateLimitError" })),
 		).toBe(true);
 		expect(isE2bRetryableCreate(Object.assign(new Error("throttled"), { status: 429 }))).toBe(true);
+		// The pinned wrapper erases the SDK class and the cause, so its own complete envelope is the
+		// only signal a real rate limit leaves behind on the path this driver creates through.
+		expect(isE2bRetryableCreate(new Error(E2B_WRAPPER_CAPACITY_CREATE_MESSAGE))).toBe(true);
 		expect(isE2bRetryableCreate(new Error("429 Too Many Requests"))).toBe(false);
 		expect(isE2bRetryableCreate(new Error("quota|rate limit|capacity"))).toBe(false);
+		expect(isE2bRetryableCreate(new Error("E2B quota exceeded elsewhere"))).toBe(false);
 		expect(isE2bRetryableCreate(new TimeoutError("request timed out"))).toBe(false);
 		expect(isE2bRetryableCreate(new AuthenticationError("invalid api key"))).toBe(false);
 		expect(isE2bRetryableCreate(undefined)).toBe(false);
 		const looping = new Error("looping");
 		Object.defineProperty(looping, "cause", { value: looping });
 		expect(isE2bRetryableCreate(looping)).toBe(false);
+	});
+
+	test("the pinned wrapper still throws the envelopes both classifiers match", () => {
+		// Classification of a create failure rests on these exact strings, because the wrapper's create
+		// catch discards the SDK error class and its cause. Read the installed build rather than trust
+		// the constant: a catalog bump that reworded an envelope would otherwise turn every auth
+		// rejection into a recovery lookup and every rate limit into a terminal failure, silently.
+		const wrapper = readFileSync(fileURLToPath(import.meta.resolve("@computesdk/e2b")), "utf8");
+		for (const envelope of [
+			...E2B_WRAPPER_DEFINITIVE_CREATE_MESSAGES,
+			E2B_WRAPPER_CAPACITY_CREATE_MESSAGE,
+		]) {
+			expect(wrapper).toContain(envelope);
+		}
 	});
 });

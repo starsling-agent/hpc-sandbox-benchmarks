@@ -108,6 +108,14 @@ export const MODAL_REQUEST_COVERAGE = {
 	env: "mapped",
 } as const satisfies ComputeSdkCreateRequestCoverage;
 
+/**
+ * The complete capacity envelope the pinned `@computesdk/modal` build throws in place of the gRPC
+ * error. A whole literal authored by a catalog-pinned wrapper, matched by equality and drift-guarded
+ * by a test that reads the installed package — not vendor prose, and not a regex.
+ */
+export const MODAL_WRAPPER_CAPACITY_CREATE_MESSAGE =
+	"Modal quota exceeded. Please check your usage at https://modal.com/";
+
 const MODAL_SANDBOX_NOT_FOUND_PATHS = new Set([
 	"/modal.client.ModalClient/SandboxGetFromName",
 	"/modal.client.ModalClient/SandboxGetFromNameV2",
@@ -130,8 +138,16 @@ function isModalNotFound(caught: unknown): boolean {
 }
 
 /**
- * Modal capacity/rate-limit refusals the harness may retry after reconciliation. gRPC
- * RESOURCE_EXHAUSTED is the typed signal — never vendor-message regex.
+ * Modal capacity/rate-limit refusals the harness may retry after reconciliation.
+ *
+ * gRPC `RESOURCE_EXHAUSTED` is the typed signal, and the only one when a boundary preserves the
+ * error. The pinned `@computesdk/modal` create catch does not: it rethrows a bare `new Error` whose
+ * class and cause are gone, so its one complete capacity envelope is matched by equality against a
+ * catalog-pinned literal (drift-guarded in `_modal.test.ts`). Without that, this classifier could
+ * never answer true on the path the driver actually creates through.
+ *
+ * `UNAVAILABLE` stays terminal — a transport failure is not evidence of capacity — and a message
+ * that merely mentions a quota is never matched.
  */
 export function isModalRetryableCreate(error: unknown): boolean {
 	let cause: unknown = error;
@@ -142,6 +158,7 @@ export function isModalRetryableCreate(error: unknown): boolean {
 			return false;
 		}
 		if (!(cause instanceof Error)) return false;
+		if (cause.message === MODAL_WRAPPER_CAPACITY_CREATE_MESSAGE) return true;
 		let next: unknown;
 		try {
 			next = cause.cause;

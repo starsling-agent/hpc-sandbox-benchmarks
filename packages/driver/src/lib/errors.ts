@@ -57,6 +57,12 @@ export interface DriverErrorFields {
 	readonly ref?: SandboxRef;
 	/** Raw vendor diagnostic/detail. Logged and retained; never regexed to decide retry-vs-fail. */
 	readonly vendorMessage?: string;
+	/**
+	 * The vendor's own numeric status for this failure. A CLI driver sets the child's PROCESS exit
+	 * status (POSIX-truncated to 0-255); a driver that builds its failure straight from an HTTP
+	 * response sets that response's status, which is the only way the 429 arm of
+	 * {@link isRetryableDriverCreate} can match. Every other driver marks retries explicitly instead.
+	 */
 	readonly vendorExitCode?: number;
 	/**
 	 * True only when this `create-failed` error is safe to retry: the driver established that
@@ -246,9 +252,13 @@ export function markRetryableDriverCreate<E>(error: E): E {
 
 /**
  * Typed create-retry classifier for the driver lane. True only for a branded `create-failed`
- * {@link DriverError} that carries an explicit retry mark or a structured vendor exit of 429.
+ * {@link DriverError} that carries an explicit retry mark or a {@link DriverError.vendorExitCode} of
+ * 429 (see that field: an HTTP status a driver read off a response, never a CLI's process exit).
  * Unclassified prose (including a formatted message that happens to mention quota/429) is false.
  * A {@link FailedCreateCleanupError} is never retryable: cleanup did not prove the allocation is gone.
+ *
+ * The mark is where every registered module answers today. Its two halves — "transient" and "nothing
+ * remains allocated" — are both the module's to establish; this function only reports the answer.
  */
 export function isRetryableDriverCreate(error: unknown): boolean {
 	if (!isDriverError(error) || error.code !== "create-failed") return false;

@@ -349,6 +349,15 @@ export function usesDriverSuite(providerId: string, driverPathFlag = false): boo
 	return driverPathFlag || isDriverProviderId(providerId);
 }
 
+/**
+ * Split a module's declared create budget into the three numbers the harness and the request need.
+ *
+ * A module that owns its bound (`owner: "driver"`) turns the harness race OFF (`timeoutMs: null`) and
+ * declares the ceiling instead, so the retry loop can still subtract one attempt's worst case before
+ * starting another — the same pair `assertCreateCeilingDeclared` enforces on leftover adapters.
+ * Either way the request deadline is whatever actually bounds an attempt, so the driver and the loop
+ * cannot disagree about how long one create may take.
+ */
 function createBudgetOf(module: DriverModule<ProviderId>): {
 	readonly timeoutMs: number | null;
 	readonly attemptCeilingMs: number | undefined;

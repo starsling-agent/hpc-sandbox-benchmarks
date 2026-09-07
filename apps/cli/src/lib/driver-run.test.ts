@@ -6,6 +6,7 @@ import type {
 	SandboxDriver,
 	SandboxSession,
 } from "@sandbox-benchmarks/driver";
+import { parseDriverEnv } from "@sandbox-benchmarks/driver/env";
 import type { DriverProviderId } from "@sandbox-benchmarks/drivers";
 import { DRIVERS } from "@sandbox-benchmarks/drivers";
 import { cleanupOwnedSandboxes } from "@sandbox-benchmarks/harness";
@@ -16,6 +17,7 @@ import { PROVIDERS, REGISTRY, TOOLCHAIN_VERSION } from "@sandbox-benchmarks/sche
 import type { OpenedDriver } from "./driver-run.ts";
 import {
 	createOwnedDriverSession,
+	driverArtifactResolution,
 	driverLifecycleCompute,
 	driverTransport,
 	isDriverProviderId,
@@ -194,6 +196,48 @@ describe("resolveDriverArtifact", () => {
 			kind: "mirror",
 			ref: "vcr/image:v8",
 		});
+	});
+});
+
+describe("driverArtifactResolution", () => {
+	test("honors the operator's registry-declared artifact override", () => {
+		// The leftover lane read E2B_TEMPLATE through its config gatekeeper and CI still forwards it on
+		// every e2b cell, so defaulting e2b to the driver lane must not silently boot the published
+		// template instead of the one the operator pinned.
+		const env = parseDriverEnv("e2b", { E2B_API_KEY: "key", E2B_TEMPLATE: "debug-template" });
+		expect(driverArtifactResolution("e2b", env)).toEqual({ ref: "debug-template" });
+		expect(resolveDriverArtifact("e2b", driverArtifactResolution("e2b", env))).toEqual({
+			kind: "baked",
+			ref: "debug-template",
+		});
+	});
+
+	test("an explicit caller ref wins over the override", () => {
+		// Bake validation asks for a specific candidate ref; that request is the more specific one.
+		const env = parseDriverEnv("e2b", { E2B_API_KEY: "key", E2B_TEMPLATE: "debug-template" });
+		expect(driverArtifactResolution("e2b", env, { ref: "candidate-template" })).toEqual({
+			ref: "candidate-template",
+		});
+	});
+
+	test("an unset or CI-empty override leaves the registry default in place", () => {
+		// GitHub Actions cannot express "unset", so an unconfigured variable arrives as "". parseDriverEnv
+		// drops it; resolving an empty ref would boot nothing at all.
+		expect(driverArtifactResolution("e2b", parseDriverEnv("e2b", { E2B_API_KEY: "key" }))).toEqual(
+			{},
+		);
+		expect(
+			driverArtifactResolution(
+				"e2b",
+				parseDriverEnv("e2b", { E2B_API_KEY: "key", E2B_TEMPLATE: "" }),
+				{ phase: "candidate" },
+			),
+		).toEqual({ phase: "candidate" });
+	});
+
+	test("a driver with no declared override is unaffected", () => {
+		const env = parseDriverEnv("tama", { TAMA_TOKEN: "token", TAMA_CLI: "/opt/tama" });
+		expect(driverArtifactResolution("tama", env)).toEqual({});
 	});
 });
 

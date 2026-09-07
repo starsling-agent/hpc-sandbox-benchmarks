@@ -245,7 +245,7 @@ describe("measureLifecycle", () => {
 		expect(calls.order).toContain("exec:uname -a");
 	});
 
-	it("records a skip (not a sample) when the SDK exposes no snapshot or list operation", async () => {
+	it("records a skip (not a sample) when the integration exposes no snapshot or list operation", async () => {
 		const { compute } = fakeCompute(); // no snapshot manager, no list
 		const { samples, gaps } = await measureLifecycle(compute, { provider: "modal" });
 
@@ -259,18 +259,18 @@ describe("measureLifecycle", () => {
 		expect(reasonFor(gaps, HARNESS_METRIC_IDS.controlPlaneList)).toMatch(
 			/no sandbox list operation/,
 		);
-		// The SDK exposes no such call, so neither was ever attempted — a skip, not an outage. And the
+		// The integration exposes no such call, so neither was attempted — a skip, not an outage. And the
 		// cause is `unsupported-operation`: a statement about the PROVIDER, the opposite half of the
 		// distinction `measurement-disabled` carries.
 		expect(outcomeFor(gaps, HARNESS_METRIC_IDS.snapshot)).toBe("skipped");
 		expect(outcomeFor(gaps, HARNESS_METRIC_IDS.controlPlaneList)).toBe("skipped");
 		expect(causeFor(gaps, HARNESS_METRIC_IDS.snapshot)).toEqual({
 			kind: "unsupported-operation",
-			detail: "provider SDK exposes no snapshot operation",
+			detail: "the provider integration under measurement exposes no snapshot operation",
 		});
 		expect(causeFor(gaps, HARNESS_METRIC_IDS.controlPlaneList)).toEqual({
 			kind: "unsupported-operation",
-			detail: "provider SDK exposes no sandbox list operation",
+			detail: "the provider integration under measurement exposes no sandbox list operation",
 		});
 	});
 

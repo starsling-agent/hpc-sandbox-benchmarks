@@ -22,6 +22,11 @@ export interface SmokeOutcome {
  * `error` rather than thrown — the caller (via {@link smokeOk}) decides pass/fail.
  *
  * Registered ids create through {@link withDriverSandbox}; waived ids through leftover adapters.
+ *
+ * `options.artifact` is the driver lane's artifact override (bake validates a candidate ref this
+ * way). The leftover lane has no equivalent channel — its ref rides the `ProviderConfig` the caller
+ * already built — so passing one with a `legacy` target is rejected rather than ignored: silently
+ * booting the published artifact would report a candidate as validated without ever touching it.
  */
 export async function bootAndSmoke(
 	target: ProviderTarget,
@@ -29,6 +34,11 @@ export async function bootAndSmoke(
 ): Promise<SmokeOutcome> {
 	let checks: SmokeResult[] = [];
 	try {
+		if (target.kind === "legacy" && options.artifact !== undefined) {
+			throw new Error(
+				`bootAndSmoke(${target.id}): the leftover adapter lane takes its artifact through the provider config, not options.artifact`,
+			);
+		}
 		switch (target.kind) {
 			case "driver":
 				await withDriverSandbox(

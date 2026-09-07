@@ -264,6 +264,42 @@ export async function createOwnedDriverSession(
 }
 
 /**
+ * Registry inputs whose value replaces the resolved artifact ref for a registered DriverModule.
+ *
+ * The leftover lane honors the same variable through its config gatekeeper (`config.e2bTemplate`),
+ * and CI forwards it on every e2b cell, so defaulting e2b to the driver lane must not quietly drop
+ * it: an ignored override boots the published template while the operator believes they pinned a
+ * debug one. Keyed by id on purpose — "this input names an artifact" is a fact about the provider's
+ * artifact descriptor, not something the registry's input descriptors declare, so there is nothing
+ * honest to infer it from.
+ */
+const ARTIFACT_REF_OVERRIDE_ENV = {
+	e2b: "E2B_TEMPLATE",
+} as const satisfies Partial<Record<DriverProviderId, string>>;
+
+/**
+ * Which artifact ref this open should resolve: an explicit caller ref, else the operator's override.
+ *
+ * A caller-supplied ref (bake candidate validation) is the more specific request and wins. The
+ * override is read from the PARSED driver env, so CI's "set but empty" spelling of an unconfigured
+ * variable is already normalized to absent and cannot resolve an empty artifact ref.
+ */
+export function driverArtifactResolution(
+	id: DriverProviderId,
+	env: Readonly<Record<string, unknown>>,
+	resolution: ArtifactResolution = {},
+): ArtifactResolution {
+	if (resolution.ref !== undefined) return resolution;
+	const name: string | undefined = ARTIFACT_REF_OVERRIDE_ENV[
+		id as keyof typeof ARTIFACT_REF_OVERRIDE_ENV
+	] as string | undefined;
+	const override = name === undefined ? undefined : env[name];
+	return typeof override === "string" && override.length > 0
+		? { ...resolution, ref: override }
+		: resolution;
+}
+
+/**
  * Run ADR-0007's composition flow for one provider: load, parse, resolve, construct.
  *
  * Deliberately ordered so nothing vendor-specific evaluates until the module is selected, and
@@ -282,7 +318,7 @@ export async function openDriver<P extends DriverProviderId>(
 	// carry that through a generic parameter, and this is the single place that gap is crossed.
 	const module = (await loadDriverModule(id)) as DriverModule<ProviderId>;
 	const env = parseDriverEnv(id, options.env ?? process.env);
-	const artifact = resolveDriverArtifact(id, options.artifact);
+	const artifact = resolveDriverArtifact(id, driverArtifactResolution(id, env, options.artifact));
 	// The context's three members are exactly what the registry declares for this id: the descriptor
 	// and the resolved artifact both derive from REGISTRY[id], so they agree by construction.
 	const driver = module.driver({
@@ -359,7 +395,14 @@ export async function withDriverSandbox<T>(
  *
  * Create goes through {@link SandboxDriver.create}. Control-plane info uses `probes.describe` when
  * present, otherwise `probes.observe` (the return value is never inspected — it is a latency probe).
- * List stays capability-by-presence.
+ *
+ * `list` and `snapshot` are capability-by-presence, and none of the four registered modules declares
+ * either today, so both record a skip rather than a measurement. That is deliberate: a projection
+ * that reached around the port to call a vendor list would time a call the driver does not own, and
+ * ADR-0008's whole premise is that a declared capability must be the one the driver actually
+ * exercises. The recorded skip says exactly that — "the integration under measurement exposes no
+ * such operation" — not that the vendor SDK lacks one. Wiring `probes.list` (and a snapshot
+ * capability) onto the registered modules restores those metrics without touching this projection.
  */
 export function driverLifecycleCompute(opened: OpenedDriver): LifecycleCompute {
 	const request = openedDriverCreateRequest(opened);

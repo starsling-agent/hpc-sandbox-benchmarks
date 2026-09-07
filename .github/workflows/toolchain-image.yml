@@ -474,7 +474,7 @@ jobs:
         run: docker logout vcr.vercel.com
       - name: Bake + verify candidate
         id: bake
-        # The cell's provider + required flag reach the script through the environment, never
+        # The cell's provider + full required set reach the script through the environment, never
         # interpolated into the shell, so a matrix value can't inject into the runner command. Provider
         # creds are optional: a missing one SKIPS that provider (required cells fail instead — see
         # --require below). blaxel gets no creds here (its bake is a no-op booting the stock base), so
@@ -486,7 +486,7 @@ jobs:
         # them here is what makes the fan-out least-privilege rather than just concurrent.
         env:
           PROVIDER: ${{ matrix.provider }}
-          REQUIRED: ${{ matrix.required }}
+          REQUIRED_PROVIDERS: ${{ needs.plan.outputs.required }}
           # Pin every cell to the one base selected by the release plan. A full build supplies its
           # immutable output digest; a build-skipped scoped backfill supplies the published version,
           # never the mutable candidate that may already contain the next release's bytes.
@@ -521,25 +521,17 @@ jobs:
           VERCEL_CANDIDATE_IMAGE: ${{ steps.vercel-vcr.outcome == 'success' && steps.vercel-vcr.outputs.digest-ref || '' }}
         run: |
           set -euo pipefail
-          args=(--provider "${PROVIDER}" --base-image "${BASE_IMAGE_REF}")
-          # Required providers must not silently skip: --require fails the cell if this provider's
-          # secret is missing/misnamed or it fails to validate.
-          if [ "${REQUIRED}" = "true" ]; then args+=(--require "${PROVIDER}"); fi
           # Route the report JSON to a file via env (not a `> file` redirect): the provider CLIs inherit
           # stdout, so a redirect would splice their chatter into the report. bake.ts writes the file
           # even when it exits non-zero, so it's a clean diagnostic on failure too.
           export BAKE_REPORT_FILE="bake-${PROVIDER}.json"
-          # Only a REQUIRED provider blocks the release: a required cell passed --require above, so
-          # bake.ts exits non-zero (failing the cell) if it fails or skips. A NON-required cell — e.g.
-          # daytona-container / modal-vm, which share a required variant's credentials and so can never
-          # take the missing-creds skip path — still runs, but a failure is surfaced as a warning and
-          # must NOT block the publish (its outcome is in the uploaded bake report either way).
-          if [ "${REQUIRED}" = "true" ]; then
-            bun apps/cli/src/bin/bake.ts "${args[@]}"
-          else
-            bun apps/cli/src/bin/bake.ts "${args[@]}" ||
-              echo "::warning title=Non-required provider not validated::${PROVIDER} did not pass its bake/verify — reported, not blocking the release (best-effort variant)"
-          fi
+          # Every cell receives the same release policy. bake.ts scopes the missing-required check to
+          # this cell, emits a real Actions warning for a best-effort failure, and exits non-zero only
+          # for a blocking outcome. Keeping the policy in TypeScript avoids a shell-level exit swallow.
+          bun apps/cli/src/bin/bake.ts \
+            --provider "${PROVIDER}" \
+            --base-image "${BASE_IMAGE_REF}" \
+            --require "${REQUIRED_PROVIDERS}"
       # Failure-safe fallback for auth/mirror failures that skip the immediate post-mirror logout.
       - name: Ensure VCR logout
         if: always()
@@ -569,8 +561,10 @@ jobs:
           base-image: ${{ needs.build.outputs.base-digest-ref || needs.plan.outputs.image-source }}
           provider-target: ${{ matrix.provider }}
           size-tier: ${{ needs.plan.outputs.size-tier }}
-          verify: bun apps/cli/src/bin/bake.ts --provider ${{ matrix.provider }} --base-image ${{ needs.build.outputs.base-digest-ref || needs.plan.outputs.image-source }}${{ matrix.required && format(' --require {0}', matrix.provider) || '' }}
+          verify: bun apps/cli/src/bin/bake.ts --provider ${{ matrix.provider }} --base-image ${{ needs.build.outputs.base-digest-ref || needs.plan.outputs.image-source }} --require ${{ needs.plan.outputs.required }}
           diagnostics: bake-${{ matrix.provider }}-${{ github.run_id }}
+          required: ${{ needs.plan.outputs.required }}
+          report: bake-${{ matrix.provider }}.json
 
   # PROMOTE: the serialized publication barrier and the ONLY job that mutates the public :v1. Runs only
   # after every bake cell converges (a failed required cell fails `bake` and blocks this via `needs`).
@@ -744,3 +738,5 @@ jobs:
           verify: bun apps/cli/src/bin/bake.ts --promote --require ${{ needs.plan.outputs.required }} --provider ${{ needs.plan.outputs.providers }}${{ inputs.force_republish && ' --force' || '' }}
           published: ${{ needs.plan.outputs.publish-target }}
           diagnostics: promote-payload-${{ github.run_id }}
+          required: ${{ needs.plan.outputs.required }}
+          report: promote-payload.json

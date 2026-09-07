@@ -3,8 +3,9 @@
 // by booting a sandbox from the just-baked artifact and running the shared smoke spec. This is the
 // iteration loop: edit Dockerfile/templates → `bake --build-push` → `bake` → repeat. Everything hits
 // the mutable candidate (`:v1-candidate`, `…-v1-candidate`); the public `:v1` is untouched until
-// `promote` (next PR). Providers without credentials are skipped; exits non-zero iff a baked provider
-// failed to validate. bun auto-loads .env, so local creds are picked up.
+// `promote` (next PR). Providers without credentials are skipped. In release CI, only required
+// providers block; best-effort failures stay visible as warnings. Locally, with no required set, any
+// failure remains fatal. bun auto-loads .env, so local creds are picked up.
 //
 // The provider loop + skip-vs-fail contract is shared with bench-smoke/promote (providers-run.ts);
 // the boot+smoke lifecycle (probe results captured before teardown) is shared too (smoke-run.ts).
@@ -18,8 +19,15 @@ import type { ProviderConfig } from "@sandbox-benchmarks/providers";
 import { config } from "@sandbox-benchmarks/providers";
 import type { ProviderId } from "@sandbox-benchmarks/schema";
 import { PROVIDERS } from "@sandbox-benchmarks/schema";
+import { logWarning } from "../lib/actions-log.ts";
+import {
+	blockingFailures,
+	blockingReports,
+	nonBlockingFailures,
+	unknownProviderIds,
+} from "../lib/bake/gates.ts";
 import { buildAndPushCandidate, resolveImageDigestRef } from "../lib/bake/image.ts";
-import { promoteAll } from "../lib/bake/promote.ts";
+import { effectivePromotionRequirements, promoteAll } from "../lib/bake/promote.ts";
 import {
 	buildBakedProviderArtifact,
 	isBakedProviderId,
@@ -32,7 +40,7 @@ import {
 	candidateResolvedArtifact,
 } from "../lib/bake/validate.ts";
 import { isPartialScope, selectProviders } from "../lib/matrix.ts";
-import { anyFailed, forEachProviderWithCreds } from "../lib/providers-run.ts";
+import { forEachProviderWithCreds } from "../lib/providers-run.ts";
 import { bootAndSmoke, logChecks, smokeFailureReason, smokeOk } from "../lib/smoke-run.ts";
 
 /**
@@ -46,6 +54,20 @@ function writeReport(report: unknown): void {
 	const file = process.env.BAKE_REPORT_FILE;
 	if (file) writeFileSync(file, json);
 	else process.stdout.write(json);
+}
+
+/** Emit one real Actions warning per failed best-effort provider (stderr locally). */
+function warnNonBlocking(
+	reports: readonly BakeReport[],
+	required: readonly string[],
+	verb: string,
+): void {
+	for (const report of nonBlockingFailures(reports, required)) {
+		logWarning(
+			`${report.provider} did not ${verb} — recorded, not blocking the release: ${report.reason ?? "failed"}`,
+			{ title: `Non-required provider did not ${verb}` },
+		);
+	}
 }
 
 /**
@@ -125,6 +147,12 @@ if (import.meta.main) {
 		log(`error: ${err instanceof Error ? err.message : String(err)}`);
 		await exitAfterSandboxCleanup(2);
 	}
+	const configuredRequired = requiredProviders();
+	const unknownRequired = unknownProviderIds(configuredRequired);
+	if (unknownRequired.length > 0) {
+		log(`error: unknown required provider(s): ${unknownRequired.join(", ")}`);
+		await exitAfterSandboxCleanup(2);
+	}
 
 	// Promote is the release step: publish the already-validated candidate as the public version.
 	if (process.argv.includes("--promote")) {
@@ -159,6 +187,14 @@ if (import.meta.main) {
 			},
 			reports: promoted.reports,
 		});
+		const required = effectivePromotionRequirements(configuredRequired, only);
+		warnNonBlocking(promoted.reports, required, "promote");
+		if (!promoted.ok) {
+			const blocking = blockingReports(promoted.reports, required);
+			log(
+				`error: promote failed${blocking.length > 0 ? ` — blocking: ${blocking.map((r) => r.provider).join(", ")}` : ""}`,
+			);
+		}
 		// The transaction outcome is separate from its diagnostics: an optional provider can fail and stay
 		// visible in the report without turning a successfully published shared version red after commit.
 		await exitAfterSandboxCleanup(promoted.ok ? 0 : 1);
@@ -273,14 +309,23 @@ if (import.meta.main) {
 		reports,
 	});
 
-	if (anyFailed(runs)) await exitAfterSandboxCleanup(1);
+	const required = configuredRequired;
+	warnNonBlocking(reports, required, "pass bake/verify");
 
-	// D1: at the publish boundary (CI passes `--require e2b,daytona-vm,modal-gvisor`) a required provider that was
-	// skipped for a missing/misnamed secret — or failed to validate — must fail the bake loudly, so a
-	// candidate is never blessed while a provider was silently never built. Lenient locally (none required).
-	const required = requiredProviders();
-	const unmet = unmetRequirements(reports, required);
-	if (required.length > 0 && unmet.length > 0) {
+	// A required failure blocks; a best-effort failure warns and exits zero. With no explicit required
+	// set (the local default), every failure remains fatal as a hand-run safety net.
+	const blocking = blockingFailures(reports, required);
+	if (blocking.length > 0) {
+		log(`error: bake failed — blocking: ${blocking.map((r) => r.provider).join(", ")}`);
+		await exitAfterSandboxCleanup(1);
+	}
+
+	// D1: a required provider skipped for a missing/misnamed secret must fail loudly. CI hands every
+	// matrix cell the full required set, so scope the absence check to this invocation's provider(s): a
+	// cell is not responsible for required providers it never ran.
+	const scopedRequired = only ? required.filter((id) => only.includes(id as ProviderId)) : required;
+	const unmet = unmetRequirements(reports, scopedRequired);
+	if (scopedRequired.length > 0 && unmet.length > 0) {
 		log(
 			`error: required providers did not pass: ${unmet.join(", ")} (--require / REQUIRE_PROVIDERS)`,
 		);

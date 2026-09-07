@@ -4,7 +4,9 @@ description: >-
   a run annotation, via @actions/core (release-summary.ts). Every release job calls this with the same
   field vocabulary (mode, image, base, provider target, size tier, verify command, published pointer,
   diagnostics, elapsed) so an operator reads one shape across build/bake/promote. Rows with an empty
-  value are omitted, so each phase shows only its own facts.
+  value are omitted, so each phase shows only its own facts. When a phase report + the required set are
+  passed, the summary renders the PRECISE result — per-provider outcomes, blocking vs best-effort, and a
+  banner whenever job.status disagrees with the real result — so a green-but-failed phase is obvious.
 
 inputs:
   phase:
@@ -48,6 +50,17 @@ inputs:
   elapsed:
     description: Elapsed wall time for the phase.
     default: ""
+  required:
+    description: >-
+      Comma-separated required-provider ids (needs.plan.outputs.required). Lets the summary classify each
+      provider failure as blocking vs best-effort. Empty for phases with no provider matrix (plan/build).
+    default: ""
+  report:
+    description: >-
+      Path to the phase's bake/promote report JSON (bake-<provider>.json / promote-payload.json). When
+      set, the summary renders the per-provider result table and the precise Result. Omit for phases that
+      produce no such report.
+    default: ""
 
 runs:
   using: composite
@@ -55,7 +68,9 @@ runs:
     - name: Append phase summary
       shell: bash
       # Inputs reach the script as env (a composite `run` step gets no INPUT_* vars); the script owns the
-      # core.summary table + run annotation. RUN_URL links the diagnostics artifact to this run.
+      # core.summary table + run annotation. RUN_URL links the diagnostics artifact to this run. The job
+      # identity (JOB/RUN_ID/RUN_ATTEMPT/ACTOR/EVENT) is read from the github context HERE so no caller has
+      # to thread it — a composite step can reference github.* directly.
       env:
         PHASE: ${{ inputs.phase }}
         STATUS: ${{ inputs.status }}
@@ -70,5 +85,12 @@ runs:
         PUBLISHED: ${{ inputs.published }}
         DIAGNOSTICS: ${{ inputs.diagnostics }}
         ELAPSED: ${{ inputs.elapsed }}
+        REQUIRED: ${{ inputs.required }}
+        REPORT_FILE: ${{ inputs.report }}
+        JOB: ${{ github.job }}
+        RUN_ID: ${{ github.run_id }}
+        RUN_ATTEMPT: ${{ github.run_attempt }}
+        ACTOR: ${{ github.triggering_actor || github.actor }}
+        EVENT: ${{ github.event_name }}
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       run: bun apps/cli/src/bin/release-summary.ts

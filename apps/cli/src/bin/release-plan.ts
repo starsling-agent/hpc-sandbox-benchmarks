@@ -28,6 +28,7 @@ import {
 	REGISTRY,
 } from "@sandbox-benchmarks/schema/providers";
 import { validatedPins } from "@sandbox-benchmarks/templates/pins";
+import { fail, logWarning } from "../lib/actions-log.ts";
 import { imageExistsInRegistry, imageName, imageRepo, releaseBaseTag } from "../lib/bake/image.ts";
 import { emitStepOutputs } from "../lib/gha-output.ts";
 import { isPartialScope, selectProviders } from "../lib/matrix.ts";
@@ -314,9 +315,10 @@ if (import.meta.main) {
 		alreadyPublished = await imageExistsInRegistry(config.toolchainImageVersion);
 	} catch (err) {
 		probeConclusive = false;
-		console.error(
-			`::warning::could not probe whether ${config.toolchainImageVersion} is already published ` +
+		logWarning(
+			`could not probe whether ${config.toolchainImageVersion} is already published ` +
 				`(${err instanceof Error ? err.message : String(err)}); proceeding — promote does the authoritative guard.`,
+			{ title: "Published-version probe inconclusive" },
 		);
 	}
 
@@ -334,11 +336,12 @@ if (import.meta.main) {
 	// fail: the probe above is best-effort (an auth/network blip reads as "not published"), and promote
 	// does the authoritative refuse-on-uncertain check before anything is written.
 	if (plan.partial && !alreadyPublished && plan.promote) {
-		console.error(
-			`::warning::${config.toolchainImageVersion} does not look published yet, but this is a scoped ` +
+		logWarning(
+			`${config.toolchainImageVersion} does not look published yet, but this is a scoped ` +
 				`release (${plan.providers.map((p) => p.provider).join(", ")}) — a scoped promote backfills ` +
 				"providers onto an existing version and never writes the base, so it will refuse. Run a full " +
 				"release first, or dispatch with promote disabled to bake + verify only.",
+			{ title: "Scoped release has no published base" },
 		);
 	}
 
@@ -348,13 +351,13 @@ if (import.meta.main) {
 	// job ahead of the `privileged` approval the bake matrix would otherwise spend. Gated on a CONCLUSIVE
 	// probe, so a registry blip degrades to an honest downstream failure rather than a false refusal.
 	if (plan.partial && plan.build === "skip" && probeConclusive && !alreadyPublished) {
-		console.error(
-			`::error title=No published base to backfill onto::${config.toolchainImageVersion} is not ` +
-				"published, and a scoped `build: skip` release derives its artifacts from that base without " +
-				"building anything — there is nothing to derive from. Cut this version with a full release " +
-				"first; a scoped backfill adds a provider to a version that already shipped.",
+		fail(
+			`${config.toolchainImageVersion} is not published, and a scoped \`build: skip\` release ` +
+				"derives its artifacts from that base without building anything — there is nothing to derive " +
+				"from. Cut this version with a full release first; a scoped backfill adds a provider to a " +
+				"version that already shipped.",
+			{ properties: { title: "No published base to backfill onto" } },
 		);
-		process.exit(1);
 	}
 
 	// Optional first positional (flags filtered out): write the full plan JSON here for the

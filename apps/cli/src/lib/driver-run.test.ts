@@ -351,6 +351,7 @@ describe("sessionHandle", () => {
 	});
 });
 
+/** An `OpenedDriver` around one fake driver: the harness-owned create budget, nothing vendor-specific. */
 function openedFrom(driver: SandboxDriver): OpenedDriver {
 	return {
 		module: { createBudget: { owner: "harness", timeoutMs: 60_000 } } as DriverModule<ProviderId>,

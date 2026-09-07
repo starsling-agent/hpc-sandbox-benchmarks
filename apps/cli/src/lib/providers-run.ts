@@ -66,6 +66,7 @@ export interface ForEachProviderOptions<T> {
 
 const noop = () => {};
 
+/** The registry ids this pass visits, in registry order, with the empty-`only` bug rejected loudly. */
 function selectedProviderIds(only: readonly ProviderId[] | undefined): ProviderId[] {
 	const all = PROVIDERS.map((meta) => meta.id);
 	if (only === undefined) return all;
@@ -77,6 +78,7 @@ function selectedProviderIds(only: readonly ProviderId[] | undefined): ProviderI
 	return all.filter((id) => only.includes(id));
 }
 
+/** Credentials this lane needs but the environment does not carry — the driver env slice or the adapter's. */
 function missingForTarget(
 	target: ProviderTarget,
 	env: Record<string, string | undefined> | undefined,

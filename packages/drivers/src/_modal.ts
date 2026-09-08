@@ -31,6 +31,7 @@ import type {
 	ComputeSdkSandboxOf,
 } from "./_computesdk.ts";
 import { computeSdkSpec, defineComputeSdkDriver } from "./_computesdk.ts";
+import { matchesAnyCause } from "./_errors.ts";
 import { MODAL_NATIVE_PROVENANCE, MODAL_PROVENANCE } from "./_provenance.ts";
 
 export { MODAL_NATIVE_PROVENANCE, MODAL_PROVENANCE };
@@ -116,6 +117,10 @@ export const MODAL_REQUEST_COVERAGE = {
  * Matching it inherits the wrapper's classification: its create catch routes any message containing
  * `quota` or `limit` here once the auth branch has claimed credential failures. Coarser than the
  * gRPC status, and the finest signal that survives the wrapper's class-and-cause erasure.
+ *
+ * A compromise, not the destination — see the same note on e2b's constant. Creating against the SDK
+ * directly would let the typed `RESOURCE_EXHAUSTED` arm above carry this alone; here that is the
+ * harder half of the change, because the wrapper vendors its own older `modal` copy.
  */
 export const MODAL_WRAPPER_CAPACITY_CREATE_MESSAGE =
 	"Modal quota exceeded. Please check your usage at https://modal.com/";
@@ -154,25 +159,12 @@ function isModalNotFound(caught: unknown): boolean {
  * that merely mentions a quota is never matched.
  */
 export function isModalRetryableCreate(error: unknown): boolean {
-	let cause: unknown = error;
-	for (let depth = 0; depth < 8; depth += 1) {
-		try {
-			if (cause instanceof ClientError && cause.code === Status.RESOURCE_EXHAUSTED) return true;
-		} catch {
-			return false;
-		}
-		if (!(cause instanceof Error)) return false;
-		if (cause.message === MODAL_WRAPPER_CAPACITY_CREATE_MESSAGE) return true;
-		let next: unknown;
-		try {
-			next = cause.cause;
-		} catch {
-			return false;
-		}
-		if (next === undefined || next === cause) return false;
-		cause = next;
-	}
-	return false;
+	return matchesAnyCause(
+		error,
+		(link) =>
+			(link instanceof ClientError && link.code === Status.RESOURCE_EXHAUSTED) ||
+			(link instanceof Error && link.message === MODAL_WRAPPER_CAPACITY_CREATE_MESSAGE),
+	);
 }
 
 /**

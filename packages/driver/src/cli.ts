@@ -1707,14 +1707,19 @@ export function cliMethodTable<Row>(
 							retryCleanup(commandTimeoutMs, cleanupOptions.signal),
 					});
 				}
+				// Reconciliation above proved the generated name is gone, so the module may now classify
+				// the refusal. Same boundary as every other spec-owned callback on this lane; a throwing
+				// classifier leaves the create terminal rather than failing it a second way.
 				if (isDriverError(primary) && primary.code === "create-failed") {
-					let classified = false;
 					try {
-						classified = isRetryableCreate?.(primary) === true;
+						const retryable = providerCallback("retryable-create classifier", () =>
+							isRetryableCreate?.(primary),
+						);
+						if (retryable === true) markRetryableDriverCreate(primary);
 					} catch {
-						classified = false;
+						// The boundary already redacted the classifier's own failure; the create failure
+						// below is the one the caller needs.
 					}
-					if (classified) throw markRetryableDriverCreate(primary);
 				}
 				throw primary;
 			}

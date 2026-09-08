@@ -261,12 +261,11 @@ export function markRetryableDriverCreate<E>(error: E): E {
  * remains allocated" — are both the module's to establish; this function only reports the answer.
  */
 export function isRetryableDriverCreate(error: unknown): boolean {
+	// `isDriverError` is a WeakSet brand, so past it the value is an instance this module constructed:
+	// `retryable` is our own getter over a WeakSet lookup and `vendorExitCode` a plain constructor
+	// field. Neither read can reach user code, which is why `code` above needs no guard either.
 	if (!isDriverError(error) || error.code !== "create-failed") return false;
-	try {
-		return error.retryable || error.vendorExitCode === 429;
-	} catch {
-		return false;
-	}
+	return error.retryable || error.vendorExitCode === 429;
 }
 
 export const isDriverError = (value: unknown): value is DriverError =>

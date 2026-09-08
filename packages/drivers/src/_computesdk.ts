@@ -975,17 +975,17 @@ function computeSdkMethodTable<TCompute extends ComputeSdkLike>(
 				// allocated. Reconciliation is one way to establish the second; a DEFINITIVE rejection is
 				// the other and the stronger one — the control plane refused before allocating. So a
 				// module that classifies a refusal as both keeps its retry here, rather than having the
-				// cheaper proof of "nothing was allocated" cost it the retry.
-				if (
-					isDriverError(primary) &&
-					isRetryableCreateRejection(provider, createRecovery, caught)
-				) {
+				// cheaper proof of "nothing was allocated" cost it the retry. (The mark is a no-op on a
+				// FailedCreateCleanupError, which is the only other thing `primary` can be.)
+				if (classifiesCreateRejection(provider, createRecovery, "isRetryableCreate", caught)) {
 					markRetryableDriverCreate(primary);
 				}
 				// A create the control plane refused outright owns nothing to reconcile. Polling for it
 				// would burn the caller's budget and, when the same rejection also fails the lookup,
 				// relabel a plain credential error as a cleanup double fault over a sandbox that never was.
-				if (isDefinitiveCreateRejection(provider, createRecovery, caught)) throw primary;
+				if (classifiesCreateRejection(provider, createRecovery, "isDefinitive", caught)) {
+					throw primary;
+				}
 				return rejectWithRecovery(primary);
 			}
 			if ((typeof created !== "object" && typeof created !== "function") || created === null) {
@@ -1533,47 +1533,34 @@ function readRecoveryLocator<TCompute extends ComputeSdkLike>(
 	}
 }
 
-function isDefinitiveCreateRejection(
-	provider: ProviderId,
-	recovery:
-		| {
-				readonly isDefinitive?: ((error: unknown) => boolean) | undefined;
-				readonly isRetryableCreate?: ((error: unknown) => boolean) | undefined;
-		  }
-		| undefined,
-	caught: unknown,
-): boolean {
-	const isDefinitive = recovery?.isDefinitive;
-	if (isDefinitive === undefined) return false;
-	try {
-		// Only an explicit `true` releases recovery. A classifier that throws, or answers with
-		// anything else, has not proven absence — reconcile rather than assume nothing was billed.
-		return (
-			invokeComputeSdkProviderCallback(provider, "failed-create ambiguity classification", () =>
-				isDefinitive.call(recovery, caught),
-			) === true
-		);
-	} catch {
-		return false;
-	}
-}
+/** The two independent questions a module may answer about its own create rejection. */
+type ComputeSdkCreateClassifier = "isDefinitive" | "isRetryableCreate";
 
-function isRetryableCreateRejection(
+const CREATE_CLASSIFIER_BOUNDARIES = {
+	isDefinitive: "failed-create ambiguity classification",
+	isRetryableCreate: "retryable-create classification",
+} as const satisfies Record<ComputeSdkCreateClassifier, string>;
+
+/**
+ * Ask one of a module's create-rejection classifiers, treating anything but an explicit `true` as no.
+ *
+ * A classifier that throws, or answers with anything else, has proven nothing: for `isDefinitive`
+ * that means reconciling rather than assuming nothing was billed, and for `isRetryableCreate` it
+ * means leaving the failure terminal. The two are asked separately and neither answer constrains
+ * the other — see {@link ComputeSdkCreateRecovery.isRetryableCreate}.
+ */
+function classifiesCreateRejection(
 	provider: ProviderId,
-	recovery:
-		| {
-				readonly isDefinitive?: ((error: unknown) => boolean) | undefined;
-				readonly isRetryableCreate?: ((error: unknown) => boolean) | undefined;
-		  }
-		| undefined,
+	recovery: Partial<Record<ComputeSdkCreateClassifier, (error: unknown) => boolean>> | undefined,
+	classifier: ComputeSdkCreateClassifier,
 	caught: unknown,
 ): boolean {
-	const isRetryableCreate = recovery?.isRetryableCreate;
-	if (isRetryableCreate === undefined) return false;
+	const classify = recovery?.[classifier];
+	if (classify === undefined) return false;
 	try {
 		return (
-			invokeComputeSdkProviderCallback(provider, "retryable-create classification", () =>
-				isRetryableCreate.call(recovery, caught),
+			invokeComputeSdkProviderCallback(provider, CREATE_CLASSIFIER_BOUNDARIES[classifier], () =>
+				classify.call(recovery, caught),
 			) === true
 		);
 	} catch {

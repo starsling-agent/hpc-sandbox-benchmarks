@@ -98,11 +98,19 @@ export function tamaSpec({ env, resolvedArtifact }: DriverContext<"tama">) {
 		exec: (id, command) => ["exec", id, "--", "bash", "-lc", command],
 		destroy: (id) => ["rm", "-y", id],
 		notFound: TAMA_MACHINE_NOT_FOUND,
-		// No `isRetryableCreate`, deliberately. A refused `tama new` reaches the kit as a process exit
-		// status plus free-form stderr, and no observed run has shown a documented per-cause exit or a
-		// machine-readable capacity field to classify. The only rule available today would be a regex
-		// over that prose — the classifier ADR-0008 dropped — so tama creates stay terminal, and this
-		// is the seam to wire once the CLI exposes something typed.
+		// No `isRetryableCreate`, deliberately — but for two different reasons, only one of which is
+		// tama's. A refused `tama new` reaches the kit as a process exit status plus free-form stderr,
+		// with no documented per-cause exit observed, so there is genuinely nothing typed to classify
+		// and the only available rule would be the prose regex ADR-0008 dropped.
+		//
+		// A create that fails READINESS is not like that: `classify` above holds a parsed row and has
+		// already discriminated `status`/`status_detail` by type. The kit is what loses it —
+		// `CliReadinessStatus`'s terminal arm is a bare string, so the row is flattened to prose before
+		// `isRetryableCreate` ever runs. Widening that arm to carry the classifier's own retry verdict
+		// (the way `providers/src/lib/runcloud.ts` marks off a typed vendor state) is the change that
+		// would let tama answer on that path; it belongs to the kit, not here.
+		//
+		// So tama creates stay terminal for now, and this is the seam to wire in either case.
 	});
 }
 

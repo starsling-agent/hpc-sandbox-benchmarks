@@ -30,6 +30,7 @@ import type {
 	ComputeSdkSandboxOf,
 } from "./_computesdk.ts";
 import { computeSdkSpec, defineComputeSdkDriver } from "./_computesdk.ts";
+import { matchesAnyCause, vendorHttpStatus } from "./_errors.ts";
 import { E2B_PROVENANCE } from "./_provenance.ts";
 
 export { E2B_PROVENANCE };
@@ -70,7 +71,16 @@ export const E2B_WRAPPER_DEFINITIVE_CREATE_MESSAGES = new Set([
  * (its create catch routes any SDK message containing `quota` or `limit` here, after the auth branch
  * has already claimed credential failures), which is coarser than a status code but is the finest
  * signal that survives it. Over-matching costs a bounded retry of an allocation the driver proved is
- * absent; under-matching is the hard-fail on attempt 1 this constant exists to prevent.
+ * absent; under-matching is the hard-fail on attempt 1 this constant exists to prevent. A rate limit
+ * whose message also mentions an API key is claimed by that earlier auth branch and stays terminal —
+ * a real limitation of classifying downstream of someone else's `String.includes`.
+ *
+ * This is a compromise, not the destination. The steady-state fix is the seam this module already
+ * uses for exec, destroy, recovery and probes: perform the allocation against the SDK directly, so
+ * the typed `RateLimitError` reaches the first arm above and both wrapper constants (plus their
+ * drift guards) delete. That needs a `create` projection on `ComputeSdkDriverSpec` and a filesystem
+ * projection to go with it, which is its own change — and for Modal it also has to clear ADR-0007
+ * §9's bar on casting across the wrapper's separately vendored SDK copy.
  */
 export const E2B_WRAPPER_CAPACITY_CREATE_MESSAGE =
 	"E2B quota exceeded. Please check your usage at https://e2b.dev/";
@@ -232,36 +242,13 @@ export function e2bLifecycle(apiKey: string): ComputeSdkLifecycle<E2bCompute> {
  * walk still supports boundaries that preserve the original typed SDK error.
  */
 export function isE2bDefinitiveCreateRejection(error: unknown): boolean {
-	let cause: unknown = error;
-	for (let depth = 0; depth < 8; depth += 1) {
-		if (cause instanceof AuthenticationError || cause instanceof InvalidArgumentError) return true;
-		if (!(cause instanceof Error)) return false;
-		if (E2B_WRAPPER_DEFINITIVE_CREATE_MESSAGES.has(cause.message)) return true;
-		let next: unknown;
-		try {
-			next = cause.cause;
-		} catch {
-			return false;
-		}
-		if (next === undefined || next === cause) return false;
-		cause = next;
-	}
-	return false;
-}
-
-function vendorStatusCode(error: unknown): number | undefined {
-	if ((typeof error !== "object" && typeof error !== "function") || error === null) {
-		return undefined;
-	}
-	try {
-		for (const key of ["status", "statusCode", "httpStatusCode"] as const) {
-			const value = Reflect.get(error, key);
-			if (typeof value === "number" && Number.isSafeInteger(value)) return value;
-		}
-	} catch {
-		return undefined;
-	}
-	return undefined;
+	return matchesAnyCause(
+		error,
+		(link) =>
+			link instanceof AuthenticationError ||
+			link instanceof InvalidArgumentError ||
+			(link instanceof Error && E2B_WRAPPER_DEFINITIVE_CREATE_MESSAGES.has(link.message)),
+	);
 }
 
 /**
@@ -278,23 +265,14 @@ function vendorStatusCode(error: unknown): number | undefined {
  * Still never a regex over vendor prose — a message that merely mentions a quota does not retry.
  */
 export function isE2bRetryableCreate(error: unknown): boolean {
-	let cause: unknown = error;
-	for (let depth = 0; depth < 8; depth += 1) {
-		if (cause instanceof RateLimitError) return true;
-		if (vendorStatusCode(cause) === 429) return true;
-		if (!(cause instanceof Error)) return false;
-		if (cause.name === "RateLimitError") return true;
-		if (cause.message === E2B_WRAPPER_CAPACITY_CREATE_MESSAGE) return true;
-		let next: unknown;
-		try {
-			next = cause.cause;
-		} catch {
-			return false;
-		}
-		if (next === undefined || next === cause) return false;
-		cause = next;
-	}
-	return false;
+	return matchesAnyCause(
+		error,
+		(link) =>
+			link instanceof RateLimitError ||
+			vendorHttpStatus(link) === 429 ||
+			(link instanceof Error &&
+				(link.name === "RateLimitError" || link.message === E2B_WRAPPER_CAPACITY_CREATE_MESSAGE)),
+	);
 }
 
 export function e2bCreateRecovery(apiKey: string): ComputeSdkCreateRecovery<E2bCompute> {

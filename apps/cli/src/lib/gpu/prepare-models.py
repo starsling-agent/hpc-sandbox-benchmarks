@@ -94,8 +94,19 @@ def resolve_model():
         "repo_id": model_repo_id,
         "cache_dir": cache_dir,
     }
+    # `# nosec B615` below is a false-positive suppression, not an exemption. Bandit's B615
+    # (Hugging Face download without revision pinning) in releases before 1.9.4 only accepts a
+    # revision written as a hex string literal at the call site; a variable is reported as
+    # unpinned even though every call here passes `revision=model_revision`. That variable has
+    # already been through pinned_revision(), which refuses anything but a full 40-character
+    # commit SHA before any download starts, and validate_model_snapshot() then checks the
+    # bytes on disk against that same SHA. Both controls are stricter than the linter's
+    # 7-hex-character heuristic. Bandit >= 1.9.4 trusts a non-literal revision and reports
+    # nothing here; the markers exist for scanners still on older releases.
     try:
-        path = snapshot_download(**options, revision=model_revision, local_files_only=True)
+        path = snapshot_download(  # nosec B615
+            **options, revision=model_revision, local_files_only=True
+        )
         validate_model_snapshot(path)
         disposition = "cached"
     except Exception as cache_error:
@@ -104,8 +115,10 @@ def resolve_model():
                 f"model snapshot is absent or incomplete: {model_repo_id}@{model_revision}"
             ) from cache_error
         print(f"Downloading {model_repo_id}@{model_revision}", flush=True)
-        snapshot_download(**options, revision=model_revision, max_workers=4)
-        path = snapshot_download(**options, revision=model_revision, local_files_only=True)
+        snapshot_download(**options, revision=model_revision, max_workers=4)  # nosec B615
+        path = snapshot_download(  # nosec B615
+            **options, revision=model_revision, local_files_only=True
+        )
         validate_model_snapshot(path)
         disposition = "downloaded"
     resolved = {**model, "path": path, "disposition": disposition}

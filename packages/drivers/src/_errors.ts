@@ -39,23 +39,3 @@ export function matchesAnyCause(error: unknown, matches: (link: unknown) => bool
 	}
 	return false;
 }
-
-/**
- * An HTTP status a vendor error carries as a plain field, under any of the three names the
- * ecosystem's clients use. Reads defensively: this runs on values a vendor SDK rejected with, so a
- * hostile or exotic accessor yields "no status" rather than escaping the classifier.
- */
-export function vendorHttpStatus(error: unknown): number | undefined {
-	if ((typeof error !== "object" && typeof error !== "function") || error === null) {
-		return undefined;
-	}
-	try {
-		for (const key of ["status", "statusCode", "httpStatusCode"] as const) {
-			const value = Reflect.get(error, key);
-			if (typeof value === "number" && Number.isSafeInteger(value)) return value;
-		}
-	} catch {
-		return undefined;
-	}
-	return undefined;
-}

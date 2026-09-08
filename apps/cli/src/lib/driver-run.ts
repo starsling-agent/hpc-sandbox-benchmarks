@@ -545,7 +545,7 @@ export async function runDriverSuite(options: RunSuiteOptions): Promise<void> {
 				);
 				return sessionHandle(session);
 			},
-			// Typed DriverError rule (code + retryable mark and/or vendorExitCode 429). Do not regex
+			// Typed DriverError rule (code + retryable mark and/or vendorHttpStatus 429). Do not regex
 			// vendor prose here — that is the legacy drift ADR-0008 dropped retryableCreatePatterns to end.
 			isRetryable: isRetryableDriverCreate,
 			destroy: (destroy, destroyOptions) => destroy(destroyOptions),

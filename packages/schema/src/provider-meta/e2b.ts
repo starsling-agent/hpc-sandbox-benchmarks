@@ -4,7 +4,7 @@ export default defineProviderMeta("e2b", {
 	displayName: "E2B",
 	vendor: "E2B",
 	website: "https://e2b.dev",
-	sdkPackage: "@computesdk/e2b",
+	sdkPackage: "e2b",
 	artifact: { kind: "baked" },
 	inputs: ["E2B_API_KEY", { name: "E2B_TEMPLATE", source: { kind: "variable" }, required: false }],
 	isolation: {
@@ -49,10 +49,9 @@ export default defineProviderMeta("e2b", {
 	maturity: { status: "ga", notes: "Custom images via e2b template build." },
 	specPinning: "fixed",
 	transport: {
-		// The providers package replaces `@computesdk/e2b`'s stock command method so onStdout and
-		// onStderr reach the native E2B SDK. Its synchronous command connection still defaults to a
-		// 60s timeout, so longer steps must use E2B's filesystem + background detached/poll path.
-		streaming: true,
+		// The native driver returns completed command envelopes. Commands budgeted at or beyond
+		// the 60-second synchronous cap use filesystem polling and native background launch.
+		streaming: false,
 		syncCapMs: 60_000,
 		detachedPoll: true,
 	},

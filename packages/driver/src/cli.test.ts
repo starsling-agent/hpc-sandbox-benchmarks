@@ -659,13 +659,7 @@ describe("cliDriver", () => {
 	});
 
 	test("a rate-limited create with no module classifier stays terminal on this lane", async () => {
-		// The shared rule's other arm reads `vendorExitCode === 429`, but on this lane that field is the
-		// child's PROCESS exit status, which POSIX bounds to 0-255 — so a CLI cannot deliver an HTTP
-		// status there no matter what its stderr says. Forging a 429 exit from a stub runner would
-		// assert a scenario `defaultRunner` (Bun.spawn's `exited`) can never produce; the arm itself is
-		// unit-tested against a directly constructed DriverError in `lib/errors.test.ts`. What IS true
-		// here is the negative: without a module classifier, rate-limit PROSE leaves the create
-		// terminal. `CliSpec.isRetryableCreate` is the lane's only channel — see the test below.
+		// Process failures cannot enter the HTTP status retry channel.
 		const prose = (await cliDriver(
 			tamaLikeSpec({
 				cleanupCreated: {
@@ -696,6 +690,41 @@ describe("cliDriver", () => {
 			vendorMessage: "429 Too Many Requests",
 		});
 		expect(isRetryableDriverCreate(prose)).toBe(false);
+	});
+
+	test("a readiness retry verdict is released only after confirmed cleanup", async () => {
+		for (const cleanupFails of [false, true]) {
+			let name = "";
+			const spec = tamaLikeSpec({
+				create: (_request, generated) => {
+					name = generated;
+					return ["new", name];
+				},
+				ready: {
+					poll: ["list"],
+					parse: machineRows,
+					select: (rows) => rows[0] ?? null,
+					classify: () => ({ terminal: "typed transient refusal", retryable: true }),
+				},
+			});
+			const error = await cliDriver(spec, {
+				run: async (_binary, args) => {
+					if (args[0] === "list")
+						return {
+							code: 0,
+							stderr: "",
+							stdout: JSON.stringify([{ id: "m-1", name, status: "failed" }]),
+						};
+					if (args[0] === "rm-name" && cleanupFails)
+						return { code: 1, stderr: "cleanup unavailable", stdout: "" };
+					return { code: 0, stderr: "", stdout: "" };
+				},
+			})
+				.create(request)
+				.catch((caught: unknown) => caught);
+			expect(isRetryableDriverCreate(error)).toBe(!cleanupFails);
+			if (cleanupFails) expect(error).toBeInstanceOf(FailedCreateCleanupError);
+		}
 	});
 
 	test("a module isRetryableCreate hook can mark a create after confirmed cleanup", async () => {

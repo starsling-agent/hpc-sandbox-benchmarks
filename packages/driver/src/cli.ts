@@ -76,7 +76,10 @@ export type CliFailedCreateCleanup<Row> =
 	  };
 
 /** Provider classification of one selected readiness row; the kit owns the resulting control flow. */
-export type CliReadinessStatus = "ready" | "pending" | { readonly terminal: string };
+export type CliReadinessStatus =
+	| "ready"
+	| "pending"
+	| { readonly terminal: string; readonly retryable?: boolean };
 
 function sanitizedCliCallbackCause(): Error {
 	// Author callbacks close over provider credentials that need not appear in any argv. Never retain
@@ -375,8 +378,10 @@ function normalizeCliReadinessStatus(
 	if (value === "ready" || value === "pending") return value;
 	if ((typeof value === "object" || typeof value === "function") && value !== null) {
 		let terminal: unknown;
+		let retryable: unknown;
 		try {
 			terminal = Reflect.get(value, "terminal");
+			retryable = Reflect.get(value, "retryable");
 		} catch {
 			throw new DriverError(
 				"vendor-contract-violation",
@@ -388,8 +393,15 @@ function normalizeCliReadinessStatus(
 				},
 			);
 		}
-		if (typeof terminal === "string" && terminal.trim() !== "") {
-			return { terminal: redact(terminal.trim()) };
+		if (
+			typeof terminal === "string" &&
+			terminal.trim() !== "" &&
+			(retryable === undefined || typeof retryable === "boolean")
+		) {
+			return {
+				terminal: redact(terminal.trim()),
+				...(retryable === undefined ? {} : { retryable }),
+			};
 		}
 	}
 	throw new DriverError(
@@ -493,11 +505,8 @@ export interface CliSpec<Row> {
 	 * has confirmed the generated name is gone. True marks the `create-failed` {@link DriverError}
 	 * for the harness; a throw or any other value leaves it terminal.
 	 *
-	 * This hook is the CLI lane's ONLY create-retry channel. The shared rule's other arm reads
-	 * `vendorExitCode === 429`, but on this lane that field is the child's PROCESS exit status, which
-	 * POSIX truncates to 0-255 — a CLI cannot exit 429, so nothing arrives that way. A module with no
-	 * typed signal to classify (a CLI whose only capacity evidence is stderr prose) leaves this unset
-	 * and its creates stay terminal: guessing from wording is the drift ADR-0008 exists to end.
+	 * CLI process exit codes never act as HTTP retry signals. Readiness classifiers may also
+	 * return an explicit retryable verdict; either channel marks the error only after cleanup.
 	 */
 	readonly isRetryableCreate?: (error: DriverError) => boolean;
 }
@@ -1386,6 +1395,7 @@ export function cliMethodTable<Row>(
 	return {
 		async create(context, request, operationOptions) {
 			const signal = operationOptions?.signal;
+			let retryableReadiness = false;
 			const name = `bench-${randomUUID()}`;
 			const deadlineMs = Math.min(
 				request.deadlineMs,
@@ -1486,6 +1496,7 @@ export function cliMethodTable<Row>(
 							if (status === "ready") return row;
 							if (status === "pending") return null;
 							const detail = status.terminal;
+							retryableReadiness = status.retryable === true;
 							throw new DriverError(
 								"create-failed",
 								`${provider} sandbox entered a terminal state: ${detail}`,
@@ -1711,6 +1722,7 @@ export function cliMethodTable<Row>(
 				// the refusal. Same boundary as every other spec-owned callback on this lane; a throwing
 				// classifier leaves the create terminal rather than failing it a second way.
 				if (isDriverError(primary) && primary.code === "create-failed") {
+					if (retryableReadiness) markRetryableDriverCreate(primary);
 					try {
 						const retryable = providerCallback("retryable-create classifier", () =>
 							isRetryableCreate?.(primary),

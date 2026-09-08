@@ -1,11 +1,8 @@
-// The two Modal variants share one wrapper-backed implementation. The wrapper keeps its maintained
-// image, command, and filesystem translations; this module owns the benchmark-specific request
-// mapping and the lifecycle semantics the wrapper currently swallows.
+// Both Modal variants use the pinned native SDK for allocation and execution. The shared bridge
+// owns request validation, error normalization, recovery, and session assembly.
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
-import type { ModalCreateSandboxOptions } from "@computesdk/modal";
-import { modal } from "@computesdk/modal";
 import type {
 	CreateRequest,
 	DriverContext,
@@ -32,6 +29,7 @@ import type {
 } from "./_computesdk.ts";
 import { computeSdkSpec, defineComputeSdkDriver } from "./_computesdk.ts";
 import { matchesAnyCause } from "./_errors.ts";
+import { nativeSdkCompute } from "./_native.ts";
 import { MODAL_NATIVE_PROVENANCE, MODAL_PROVENANCE } from "./_provenance.ts";
 
 export { MODAL_NATIVE_PROVENANCE, MODAL_PROVENANCE };
@@ -39,8 +37,8 @@ export { MODAL_NATIVE_PROVENANCE, MODAL_PROVENANCE };
 export type ModalProviderId = "modal-gvisor" | "modal-vm";
 export type ModalVariant = "gvisor" | "vm";
 
-type ModalCompute = ReturnType<typeof lazyModalCompute>;
-type ModalWrapperSandbox = ComputeSdkSandboxOf<ModalCompute>;
+type ModalCompute = ReturnType<typeof nativeModalCompute>;
+type ModalSandboxHandle = ComputeSdkSandboxOf<ModalCompute>;
 
 interface ModalControlSandbox {
 	poll(): Promise<number | null>;
@@ -60,10 +58,10 @@ interface ModalControlPlane {
 	};
 }
 
-export interface ModalControlRunner {
+export interface ModalControlRunner<Control = ModalControlPlane> {
 	run<T>(
 		options: DriverOperationOptions,
-		operation: (control: ModalControlPlane) => Promise<T>,
+		operation: (control: Control) => Promise<T>,
 		onAbort?: () => void,
 	): Promise<T>;
 }
@@ -109,22 +107,6 @@ export const MODAL_REQUEST_COVERAGE = {
 	env: "mapped",
 } as const satisfies ComputeSdkCreateRequestCoverage;
 
-/**
- * The complete capacity envelope the pinned `@computesdk/modal` build throws in place of the gRPC
- * error. A whole literal authored by a catalog-pinned wrapper, matched by equality and drift-guarded
- * by a test that reads the installed package — not vendor prose, and not a regex.
- *
- * Matching it inherits the wrapper's classification: its create catch routes any message containing
- * `quota` or `limit` here once the auth branch has claimed credential failures. Coarser than the
- * gRPC status, and the finest signal that survives the wrapper's class-and-cause erasure.
- *
- * A compromise, not the destination — see the same note on e2b's constant. Creating against the SDK
- * directly would let the typed `RESOURCE_EXHAUSTED` arm above carry this alone; here that is the
- * harder half of the change, because the wrapper vendors its own older `modal` copy.
- */
-export const MODAL_WRAPPER_CAPACITY_CREATE_MESSAGE =
-	"Modal quota exceeded. Please check your usage at https://modal.com/";
-
 const MODAL_SANDBOX_NOT_FOUND_PATHS = new Set([
 	"/modal.client.ModalClient/SandboxGetFromName",
 	"/modal.client.ModalClient/SandboxGetFromNameV2",
@@ -146,24 +128,11 @@ function isModalNotFound(caught: unknown): boolean {
 	}
 }
 
-/**
- * Modal capacity/rate-limit refusals the harness may retry after reconciliation.
- *
- * gRPC `RESOURCE_EXHAUSTED` is the typed signal, and the only one when a boundary preserves the
- * error. The pinned `@computesdk/modal` create catch does not: it rethrows a bare `new Error` whose
- * class and cause are gone, so its one complete capacity envelope is matched by equality against a
- * catalog-pinned literal (drift-guarded in `_modal.test.ts`). Without that, this classifier could
- * never answer true on the path the driver actually creates through.
- *
- * `UNAVAILABLE` stays terminal — a transport failure is not evidence of capacity — and a message
- * that merely mentions a quota is never matched.
- */
+/** Native gRPC capacity refusal; transport failures and vendor prose stay terminal. */
 export function isModalRetryableCreate(error: unknown): boolean {
 	return matchesAnyCause(
 		error,
-		(link) =>
-			(link instanceof ClientError && link.code === Status.RESOURCE_EXHAUSTED) ||
-			(link instanceof Error && link.message === MODAL_WRAPPER_CAPACITY_CREATE_MESSAGE),
+		(link) => link instanceof ClientError && link.code === Status.RESOURCE_EXHAUSTED,
 	);
 }
 
@@ -207,10 +176,10 @@ export function modalControlPlane(client: ModalClient): ModalControlPlane {
  * retry middleware on every control-plane RPC. The outer timer spans multi-RPC loops such as
  * terminate({wait:true}).
  */
-export function createModalControlRunner(
-	createControl: (middleware: ClientMiddleware) => ModalControlPlane,
+export function createModalControlRunner<Control>(
+	createControl: (middleware: ClientMiddleware) => Control,
 	timeoutMs = MODAL_CONTROL_TIMEOUT_MS,
-): ModalControlRunner {
+): ModalControlRunner<Control> {
 	const operationSignals = new AsyncLocalStorage<AbortSignal>();
 	const deadlineMiddleware: ClientMiddleware = async function* (call, options) {
 		const signal = operationSignals.getStore();
@@ -326,32 +295,58 @@ function modalVariant(provider: ModalProviderId): ModalVariant {
 	return provider === "modal-gvisor" ? "gvisor" : "vm";
 }
 
-/**
- * The wrapper resolves/creates its Modal app while `modal()` runs. Defer that construction until
- * `sandbox.create()` so app and image control-plane work stays inside the harness-owned create
- * transaction instead of starting during composition-root module loading.
- */
-export function lazyModalCompute(
-	config: Parameters<typeof modal>[0],
-	factory: typeof modal = modal,
+const MODAL_CREATE_OPTIONS = type({
+	templateId: "string >= 1",
+	name: "string >= 1",
+	timeout: "number.integer > 0",
+	cpu: "number > 0",
+	cpuLimit: "number > 0",
+	memoryMiB: "number.integer > 0",
+	memoryLimitMiB: "number.integer > 0",
+	"envs?": { "[string]": "string" },
+	"experimentalOptions?": { vm_runtime: "true" },
+});
+
+/** App/image resolution and allocation all run inside the cancellable create transaction. */
+export function nativeModalCompute(
+	variant: ModalVariant,
+	credentials: { readonly tokenId: string; readonly tokenSecret: string },
+	clientFactory = (middleware: ClientMiddleware) =>
+		new ModalClient({ ...credentials, grpcMiddleware: [middleware] }),
 ) {
-	let compute: ReturnType<typeof modal> | undefined;
-	const instance = () => (compute ??= factory(config));
-	return {
-		sandbox: {
-			create: async (options?: Record<string, unknown>) => {
-				const current = instance();
-				try {
-					return await current.sandbox.create(options as ModalCreateSandboxOptions);
-				} catch (caught) {
-					// modal() captures its eager App lookup in the wrapper instance. A transient
-					// rejection must not poison every later create in this long-lived CLI process.
-					if (compute === current) compute = undefined;
-					throw caught;
-				}
-			},
-		},
-	};
+	const runner = createModalControlRunner(clientFactory, 300_000);
+	return nativeSdkCompute(
+		(options) => MODAL_CREATE_OPTIONS.assert(options),
+		(options, operation) =>
+			runner.run(operation, async (client) => {
+				const app = await client.apps.fromName(MODAL_APP_NAME, { createIfMissing: true });
+				const image = client.images.fromRegistry(options.templateId);
+				const params = {
+					name: options.name,
+					timeoutMs: options.timeout,
+					cpu: options.cpu,
+					cpuLimit: options.cpuLimit,
+					memoryMiB: options.memoryMiB,
+					memoryLimitMiB: options.memoryLimitMiB,
+					...(options.envs === undefined ? {} : { env: options.envs }),
+					...(options.experimentalOptions === undefined
+						? {}
+						: { experimentalOptions: options.experimentalOptions }),
+				};
+				return variant === "gvisor"
+					? client.sandboxes.experimentalCreate(app, image, params)
+					: client.sandboxes.create(app, image, params);
+			}),
+		(native) => ({
+			sandboxId: native.sandboxId,
+			runCommand: async (command) =>
+				modalProcessResult(
+					await native.exec(["sh", "-c", command], { stdout: "pipe", stderr: "pipe" }),
+					() => native.detach(),
+				),
+			destroy: () => native.terminate({ wait: true }),
+		}),
+	);
 }
 
 function recoveryName(createOptions: Readonly<Record<string, unknown>>): string {
@@ -388,8 +383,8 @@ export function modalCreateOptions(
 				memoryLimitMiB: request.spec.memoryGb * 1024,
 				...(request.env === undefined ? {} : { envs: request.env }),
 				// The stable service plus vm_runtime is the VM config validated in #221.
-				...(variant === "vm" ? { experimentalOptions: { vm_runtime: true } } : {}),
-			};
+				...(variant === "vm" ? { experimentalOptions: { vm_runtime: true as const } } : {}),
+			} satisfies typeof MODAL_CREATE_OPTIONS.infer;
 		},
 	};
 }
@@ -404,7 +399,7 @@ function modalSandboxByName(
 		: control.sandboxes.fromName(MODAL_APP_NAME, name);
 }
 
-/** The bounded public control plane surfaces failures that the wrapper's destroy suppresses. */
+/** Waited, bounded teardown preserves transport failures and confirms terminal state. */
 export function modalLifecycle<TCompute extends ComputeSdkLike = ModalCompute>(
 	variant: ModalVariant,
 	runner: ModalControlRunner,
@@ -530,10 +525,10 @@ export function modalProbes(
 	};
 }
 
-/** Bypass the wrapper's fabricated exit-127 catch path and preserve Modal's real process result. */
+/** Preserve the native process result and join output streams before releasing the command. */
 export async function execModalCommand(
 	runner: ModalControlRunner,
-	_sandbox: ModalWrapperSandbox,
+	_sandbox: ModalSandboxHandle,
 	command: string,
 	ref: SandboxRef,
 	options: ExecOptions = {},
@@ -577,7 +572,7 @@ export function modalDetachedCommand(command: string): string {
 
 export async function launchModalCommand(
 	runner: ModalControlRunner,
-	_sandbox: ModalWrapperSandbox,
+	_sandbox: ModalSandboxHandle,
 	command: string,
 	ref: SandboxRef,
 	options: ExecOptions = {},
@@ -605,7 +600,7 @@ export async function launchModalCommand(
 
 export async function verifyModalDiskCapacity(
 	runner: ModalControlRunner,
-	_sandbox: ModalWrapperSandbox,
+	_sandbox: ModalSandboxHandle,
 	request: CreateRequest,
 	options: DriverOperationOptions,
 	ref: SandboxRef,
@@ -663,14 +658,9 @@ function modalSpec<P extends ModalProviderId>(
 		),
 	);
 	return computeSdkSpec(
-		lazyModalCompute({
+		nativeModalCompute(variant, {
 			tokenId: env.MODAL_TOKEN_ID,
 			tokenSecret: env.MODAL_TOKEN_SECRET,
-			// Keep benchmark allocations attributable in their own Modal dashboard app instead
-			// of mixing them into the wrapper's generic `computesdk-modal` namespace.
-			appName: MODAL_APP_NAME,
-			// gVisor uses scalable/V2; VM deliberately omits it to preserve the #221 config.
-			...(variant === "gvisor" ? { scalableSandboxes: true } : {}),
 		}),
 		{
 			sandboxId: modalSandboxId(variant),
@@ -685,8 +675,7 @@ function modalSpec<P extends ModalProviderId>(
 			createRecovery: modalCreateRecovery(variant, runner),
 			prepareAndVerifyCreatedRequest: (sandbox, _native, request, options, ref) =>
 				verifyModalDiskCapacity(runner, sandbox, request, options, ref),
-			// The wrapper's vendored Modal 0.7 filesystem path uses deprecated Sandbox.open,
-			// which fails for V2. Both variants use the uniform, direct-exec shell fallback.
+			// Both variants use the kit's direct-exec filesystem fallback.
 			hasWorkingFilesystem: false,
 			probes: modalProbes(runner),
 		},

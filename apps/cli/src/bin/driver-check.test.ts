@@ -8,6 +8,7 @@ describe("driver-check argv", () => {
 			phase: "version",
 			workloadSeconds: 3,
 			keep: false,
+			requirePass: false,
 		});
 	});
 
@@ -30,7 +31,25 @@ describe("driver-check argv", () => {
 			artifactRef: "ghcr.io/x:v8",
 			workloadSeconds: 10,
 			keep: true,
+			requirePass: false,
 		});
+	});
+
+	test("strict validation requires every clause and refuses retained sandboxes", () => {
+		expect(parseArgs(["--provider", "e2b", "--require-pass"]).requirePass).toBe(true);
+		expect(() => parseArgs(["--provider", "e2b", "--require-pass", "--keep"])).toThrow(
+			/cannot be combined/,
+		);
+		expect(() => parseArgs(["--provider", "e2b", "--require-pas"])).toThrow(/unknown option/);
+		expect(() => parseArgs(["--provider", "e2b", "--provider", "tama"])).toThrow(
+			/duplicate option/,
+		);
+	});
+
+	test("accepts a dedicated machine-readable report path", () => {
+		expect(parseArgs(["--provider", "e2b", "--report-file", "/tmp/report.json"]).reportFile).toBe(
+			"/tmp/report.json",
+		);
 	});
 
 	test("rejects a provider that has no driver module yet", () => {

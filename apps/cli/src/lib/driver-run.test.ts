@@ -513,7 +513,7 @@ describe("driver-lane create retry classification (Phase A unit 2)", () => {
 		expect(existsSync(join(resultsDir, "sandbox-e2b-cpu-node--failed.json"))).toBe(true);
 	});
 
-	test("a structured vendorExitCode 429 retries without a mark", async () => {
+	test("a structured vendorHttpStatus 429 retries without a mark", async () => {
 		const resultsDir = mkdtempSync(join(tmpdir(), "driver-retry-429-"));
 		roots.push(resultsDir);
 		let attempts = 0;
@@ -523,9 +523,9 @@ describe("driver-lane create retry classification (Phase A unit 2)", () => {
 					create: async () => {
 						attempts += 1;
 						if (attempts < 2) {
-							throw new DriverError("create-failed", "fake-cli new bench: exit 429", {
+							throw new DriverError("create-failed", "HTTP create: status 429", {
 								provider: "tama",
-								vendorExitCode: 429,
+								vendorHttpStatus: 429,
 							});
 						}
 						return handle;

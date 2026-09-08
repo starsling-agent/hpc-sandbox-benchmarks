@@ -109,16 +109,25 @@ describe("isRetryableDriverCreate", () => {
 		expect(isRetryableDriverCreate(unmarked)).toBe(false);
 	});
 
-	test("a structured vendor exit of 429 is retryable without a mark", () => {
-		// Shaped like a driver that built its failure straight from an HTTP response — the only
-		// producer that can put a status here. A CLI driver's vendorExitCode is a process exit status.
+	test("a structured HTTP status of 429 is retryable without a mark", () => {
+		// An HTTP response status cannot be confused with a subprocess exit code.
 		const error = new DriverError("create-failed", "POST /sandboxes: 429 Too Many Requests", {
 			provider: "tama",
-			vendorExitCode: 429,
+			vendorHttpStatus: 429,
 			vendorMessage: "capacity",
 		});
 		expect(error.retryable).toBe(false);
 		expect(isRetryableDriverCreate(error)).toBe(true);
+	});
+
+	test("process exit codes cannot enter the HTTP retry channel", () => {
+		expect(
+			isRetryableDriverCreate(
+				new DriverError("create-failed", "process failed", {
+					vendorExitCode: 429,
+				}),
+			),
+		).toBe(false);
 	});
 
 	test("non-create codes stay terminal even when a caller asks to mark them", () => {
@@ -133,7 +142,7 @@ describe("isRetryableDriverCreate", () => {
 				new DriverError("readiness-timeout", "never ready", {
 					provider: "e2b",
 					retryable: true,
-					vendorExitCode: 429,
+					vendorHttpStatus: 429,
 				}),
 			),
 		).toBe(false);

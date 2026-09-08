@@ -1,6 +1,6 @@
 // The ComputeSDK bridge (ADR-0007 §6): computesdk keeps all its real value — maintained vendor
-// translations — as ONE driver among several, and stops being the substrate every provider
-// must impersonate.
+// translations — as ONE driver among several. Native SDK modules reuse this structural session
+// machinery through _native.ts, preserving their own native handle and typed errors.
 //
 // The bridge is a MethodTable, not a hand-assembled driver, so it flows through the same
 // assembly layer as every other driver (table.ts) and inherits its session invariants for free:
@@ -50,7 +50,10 @@ import { type } from "arktype";
 /** The structural slice of a computesdk provider instance this bridge consumes. */
 export interface ComputeSdkLike<TSandbox extends ComputeSdkSandboxLike = ComputeSdkSandboxLike> {
 	readonly sandbox: {
-		create(options?: Record<string, unknown>): Promise<TSandbox>;
+		create(
+			options?: Record<string, unknown>,
+			operationOptions?: DriverOperationOptions,
+		): Promise<TSandbox>;
 		list?(): Promise<unknown>;
 	};
 }
@@ -508,12 +511,15 @@ function wrapperFailure(
 		const message = redact(safeThrownMessage(caught) ?? "driver failure diagnostic omitted");
 		let vendorMessage: unknown;
 		let vendorExitCode: unknown;
+		let vendorHttpStatus: unknown;
 		try {
 			vendorMessage = Reflect.get(caught, "vendorMessage");
 			vendorExitCode = Reflect.get(caught, "vendorExitCode");
+			vendorHttpStatus = Reflect.get(caught, "vendorHttpStatus");
 		} catch {
 			vendorMessage = undefined;
 			vendorExitCode = undefined;
+			vendorHttpStatus = undefined;
 		}
 		return new DriverError(code, message, {
 			provider,
@@ -521,6 +527,9 @@ function wrapperFailure(
 			...(typeof vendorMessage === "string" ? { vendorMessage: redact(vendorMessage) } : {}),
 			...(typeof vendorExitCode === "number" && Number.isSafeInteger(vendorExitCode)
 				? { vendorExitCode }
+				: {}),
+			...(typeof vendorHttpStatus === "number" && Number.isSafeInteger(vendorHttpStatus)
+				? { vendorHttpStatus }
 				: {}),
 			...(code === "create-failed" && isRetryableDriverCreate(caught) ? { retryable: true } : {}),
 			cause: new Error(message),
@@ -961,7 +970,10 @@ function computeSdkMethodTable<TCompute extends ComputeSdkLike>(
 			};
 			let created: ComputeSdkSandboxOf<TCompute>;
 			try {
-				created = (await compute.sandbox.create(createOptions)) as ComputeSdkSandboxOf<TCompute>;
+				created = (await compute.sandbox.create(
+					createOptions,
+					operationOptions,
+				)) as ComputeSdkSandboxOf<TCompute>;
 			} catch (caught) {
 				const primary = wrapperFailure(
 					"create-failed",

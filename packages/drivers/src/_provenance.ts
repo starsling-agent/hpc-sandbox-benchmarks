@@ -2,13 +2,13 @@
 // Versions come from the root provider catalog and the checksum-pinned Tama setup action.
 
 export const E2B_PROVENANCE = Object.freeze({
-	packageName: "@computesdk/e2b",
-	version: "1.7.51",
+	packageName: "e2b",
+	version: "2.27.1",
 });
 
 export const MODAL_PROVENANCE = Object.freeze({
-	packageName: "@computesdk/modal",
-	version: "1.9.3",
+	packageName: "modal",
+	version: "0.9.0",
 });
 
 export const MODAL_NATIVE_PROVENANCE = Object.freeze({

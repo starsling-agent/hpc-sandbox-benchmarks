@@ -5,7 +5,7 @@ export default defineProviderMeta("modal-vm", {
 	displayName: "Modal (VM)",
 	vendor: "Modal",
 	website: "https://modal.com",
-	sdkPackage: "@computesdk/modal",
+	sdkPackage: "modal",
 	artifact: { kind: "image" },
 	inputs: ["MODAL_TOKEN_ID", "MODAL_TOKEN_SECRET"],
 	isolation: {

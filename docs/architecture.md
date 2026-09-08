@@ -74,6 +74,20 @@ docs/       methodology, ADRs, CI & secrets
 | `@repo/tsconfig`            | —                                               | —                                   |
 | `@repo/repo-checks`         | —                                               | —                                   |
 
+## Native SDK driver configuration
+
+E2B and both Modal variants allocate through the catalog-pinned native SDKs. `_native.ts` projects
+those exact SDK handles into the shared driver session machinery; it does not invoke ComputeSDK
+wrappers or cast between vendored SDK copies. Provider create-option schemas validate the boundary,
+and each request mapper must satisfy its schema's inferred type. Native SDK error classes reach the
+provider's retry predicate before the shared bridge normalizes and redacts the error.
+
+`DriverError.vendorHttpStatus` carries HTTP response status; `vendorExitCode` carries process exit
+status. Only the HTTP field participates in the 429 retry rule. CLI readiness can return
+`{ terminal, retryable }`; the kit releases a retry mark only after failed-create cleanup succeeds.
+Tama 0.1.17 exposes a status and diagnostic detail, but no documented capacity reason code. Its
+terminal rows explicitly decline retry rather than interpreting `status_detail` as a typed signal.
+
 ## Driver end-to-end validation (`driver-check`)
 
 `apps/cli/src/lib/driver-run.ts` is the ADR-0007 composition root: it loads a driver module, parses
@@ -94,10 +108,15 @@ convergence, then prints a JSON conformance report. It writes **no Run document*
 contract check, not a benchmark measurement; the benchmark harness is the Run v6 artifact-evidence
 producer.
 
-The durable step is the point of the lane. `--workload-seconds` runs a real command past the
-module's declared `syncCapMs`, which forces `StepRunner` onto the detached transport and proves the
-declared `durable` route actually reaches an observable done-file. Those two values were previously
-asserted by no execution at all.
+The durable step uses a timeout at or above the module's declared `syncCapMs`, forcing
+`StepRunner` onto the detached transport. The actual workload lasts `--workload-seconds` and must
+produce an observable done-file. The short default proves transport routing and completion; it does
+not claim to prove a workload outlives the sync cap. Increase the workload duration for that check.
+
+Use `--require-pass` for release validation: any failed or skipped check exits nonzero, and `--keep`
+is rejected so an intentionally retained sandbox cannot produce passing release evidence. Use
+`--report-file <path>` for machine-readable JSON: StepRunner emits workload logs to stdout, so the
+default stdout stream contains those logs followed by the final report.
 
 A provider whose credentials are absent SKIPS with exit 0. A provider that has not migrated yet
 (see `packages/drivers/migration-waivers.json`) is rejected outright rather than silently falling

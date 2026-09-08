@@ -1,10 +1,9 @@
-// E2B is the ComputeSDK proof module: one registry-joined file owns credentials, artifact mapping,
+// E2B is a native SDK module: one registry-joined file owns credentials, artifact mapping,
 // sandbox identity, lifecycle truth, and the few vendor-specific projections the universal wrapper
 // cannot express safely. The shared bridge still owns request validation, error normalization,
 // redaction, ambiguous-create ownership, output caps, and session assembly.
 
 import { randomUUID } from "node:crypto";
-import { e2b } from "@computesdk/e2b";
 import type {
 	CreateRequest,
 	DriverContext,
@@ -30,14 +29,15 @@ import type {
 	ComputeSdkSandboxOf,
 } from "./_computesdk.ts";
 import { computeSdkSpec, defineComputeSdkDriver } from "./_computesdk.ts";
-import { matchesAnyCause, vendorHttpStatus } from "./_errors.ts";
+import { matchesAnyCause } from "./_errors.ts";
+import { nativeSdkCompute } from "./_native.ts";
 import { E2B_PROVENANCE } from "./_provenance.ts";
 
 export { E2B_PROVENANCE };
 
-type E2bCompute = ReturnType<typeof e2b>;
-type E2bWrapperSandbox = ComputeSdkSandboxOf<E2bCompute>;
-type E2bNativeSandbox = ComputeSdkNativeOf<E2bWrapperSandbox>;
+type E2bCompute = ReturnType<typeof nativeE2bCompute>;
+type E2bSandboxHandle = ComputeSdkSandboxOf<E2bCompute>;
+type E2bNativeSandbox = ComputeSdkNativeOf<E2bSandboxHandle>;
 
 export const E2B_SANDBOX_ID = type(/^i[a-z0-9]+$/);
 export const E2B_SANDBOX_LIFETIME_MS = 3 * 60 * 60_000;
@@ -51,39 +51,42 @@ export const E2B_EXECUTION = Object.freeze({
 	durable: "native-launch" as const,
 });
 const E2B_RECOVERY_MAX_PAGES = 100;
-/**
- * Complete envelopes the pinned `@computesdk/e2b` build throws in place of the SDK's typed errors.
- *
- * These are not vendor prose: they are whole string literals authored by a catalog-pinned wrapper
- * (`workspaces.catalogs.computesdk`), matched by equality, and `e2b.test.ts` reads the installed
- * package to prove each one is still emitted — so a wrapper bump that reworded them fails a test
- * instead of silently reclassifying a create. Recognizing them is what keeps classification typed at
- * all: the wrapper's create catch discards the SDK error class AND its cause, so `instanceof` alone
- * decides nothing on the only path this driver actually creates through.
- */
-export const E2B_WRAPPER_DEFINITIVE_CREATE_MESSAGES = new Set([
-	"Missing E2B API key. Provide 'apiKey' in config or set E2B_API_KEY environment variable.",
-	"Invalid E2B API key format. E2B API keys should start with 'e2b_'.",
-	"E2B authentication failed. Please check your E2B_API_KEY environment variable.",
-]);
-/**
- * The same wrapper's single capacity envelope. Matching it inherits the wrapper's own classification
- * (its create catch routes any SDK message containing `quota` or `limit` here, after the auth branch
- * has already claimed credential failures), which is coarser than a status code but is the finest
- * signal that survives it. Over-matching costs a bounded retry of an allocation the driver proved is
- * absent; under-matching is the hard-fail on attempt 1 this constant exists to prevent. A rate limit
- * whose message also mentions an API key is claimed by that earlier auth branch and stays terminal —
- * a real limitation of classifying downstream of someone else's `String.includes`.
- *
- * This is a compromise, not the destination. The steady-state fix is the seam this module already
- * uses for exec, destroy, recovery and probes: perform the allocation against the SDK directly, so
- * the typed `RateLimitError` reaches the first arm above and both wrapper constants (plus their
- * drift guards) delete. That needs a `create` projection on `ComputeSdkDriverSpec` and a filesystem
- * projection to go with it, which is its own change — and for Modal it also has to clear ADR-0007
- * §9's bar on casting across the wrapper's separately vendored SDK copy.
- */
-export const E2B_WRAPPER_CAPACITY_CREATE_MESSAGE =
-	"E2B quota exceeded. Please check your usage at https://e2b.dev/";
+const E2B_CREATE_OPTIONS = type({
+	snapshotId: "string >= 1",
+	timeout: "number.integer > 0",
+	metadata: { "[string]": "string" },
+});
+
+/** Allocate with the pinned SDK so typed refusals survive until reconciliation/classification. */
+export function nativeE2bCompute(apiKey: string) {
+	return nativeSdkCompute(
+		(options) => E2B_CREATE_OPTIONS.assert(options),
+		(options, operation) =>
+			Sandbox.create(options.snapshotId, {
+				apiKey,
+				timeoutMs: options.timeout,
+				metadata: options.metadata,
+				...(operation.signal === undefined ? {} : { signal: operation.signal }),
+			}),
+		(native) => ({
+			sandboxId: native.sandboxId,
+			runCommand: (command, options) =>
+				native.commands.run(command, {
+					user: "root",
+					background: false,
+					...(options?.signal === undefined ? {} : { signal: options.signal }),
+				}),
+			destroy: () => native.kill(),
+			filesystem: {
+				readFile: (path) => native.files.read(path, { user: "root" }),
+				exists: (path) => native.files.exists(path, { user: "root" }),
+				writeFile: async (path, content) => {
+					await native.files.write(path, content, { user: "root" });
+				},
+			},
+		}),
+	);
+}
 
 export const E2B_REQUEST_COVERAGE = {
 	spec: {
@@ -125,7 +128,7 @@ function foreignCommandExit(
 
 /** Foreground root execution preserves E2B's public nonzero exit envelope for kit normalization. */
 export async function execE2bCommandAsRoot(
-	sandbox: E2bWrapperSandbox,
+	sandbox: E2bSandboxHandle,
 	command: string,
 	options?: ExecOptions,
 ): Promise<unknown> {
@@ -145,7 +148,7 @@ export async function execE2bCommandAsRoot(
 
 /** Background execution succeeds only after E2B returns a genuine positive process handle. */
 export async function launchE2bCommandAsRoot(
-	sandbox: E2bWrapperSandbox,
+	sandbox: E2bSandboxHandle,
 	command: string,
 	options?: ExecOptions,
 ): Promise<void> {
@@ -234,45 +237,20 @@ export function e2bLifecycle(apiKey: string): ComputeSdkLifecycle<E2bCompute> {
 	};
 }
 
-/**
- * E2B rejections that happen before the control plane can allocate need no recovery lookup. The
- * locked ComputeSDK wrapper erases SDK error classes and causes, so also recognize only its exact
- * missing/invalid/authentication envelopes. Its generic "Failed to create" envelope is deliberately
- * excluded because it is shared by invalid arguments, transport loss, and timeouts. A bounded cause
- * walk still supports boundaries that preserve the original typed SDK error.
- */
+/** Typed rejections made before allocation need no recovery lookup. */
 export function isE2bDefinitiveCreateRejection(error: unknown): boolean {
 	return matchesAnyCause(
 		error,
 		(link) =>
 			link instanceof AuthenticationError ||
 			link instanceof InvalidArgumentError ||
-			(link instanceof Error && E2B_WRAPPER_DEFINITIVE_CREATE_MESSAGES.has(link.message)),
+			link instanceof RateLimitError,
 	);
 }
 
-/**
- * E2B capacity/rate-limit refusals the harness may retry after reconciliation.
- *
- * Three signals, in descending order of directness: the typed SDK class, its class name (which a
- * boundary that copies an error preserves), and an HTTP 429 status field. None of them survives the
- * pinned wrapper's create catch, which rethrows a bare `new Error` with no class and no cause, so
- * the wrapper's own complete capacity envelope is the fourth — matched by equality against a
- * catalog-pinned literal and drift-guarded in `e2b.test.ts`, exactly as the definitive classifier
- * above already matches that wrapper's auth envelope. Without it this classifier is decorative: it
- * would answer "not retryable" for every rate limit E2B actually returns through this driver.
- *
- * Still never a regex over vendor prose — a message that merely mentions a quota does not retry.
- */
+/** Only the installed SDK's rate-limit class establishes a transient refusal. */
 export function isE2bRetryableCreate(error: unknown): boolean {
-	return matchesAnyCause(
-		error,
-		(link) =>
-			link instanceof RateLimitError ||
-			vendorHttpStatus(link) === 429 ||
-			(link instanceof Error &&
-				(link.name === "RateLimitError" || link.message === E2B_WRAPPER_CAPACITY_CREATE_MESSAGE)),
-	);
+	return matchesAnyCause(error, (link) => link instanceof RateLimitError);
 }
 
 /**
@@ -433,7 +411,7 @@ export async function verifyE2bDiskCapacity(
 /** Extracted through the joined context type so tests can pin the actual one-file authoring shape. */
 export function e2bSpec({ env, resolvedArtifact }: DriverContext<"e2b">) {
 	const apiKey = env.E2B_API_KEY;
-	return computeSdkSpec(e2b({ apiKey, timeout: E2B_SANDBOX_LIFETIME_MS }), {
+	return computeSdkSpec(nativeE2bCompute(apiKey), {
 		sandboxId: E2B_SANDBOX_ID,
 		createOptions: {
 			coverage: E2B_REQUEST_COVERAGE,
@@ -445,7 +423,7 @@ export function e2bSpec({ env, resolvedArtifact }: DriverContext<"e2b">) {
 					snapshotId: resolvedArtifact.ref,
 					timeout: E2B_SANDBOX_LIFETIME_MS,
 					metadata: { [E2B_ATTEMPT_METADATA_KEY]: `benchmark-${randomUUID()}` },
-				};
+				} satisfies typeof E2B_CREATE_OPTIONS.infer;
 			},
 		},
 		commands: {

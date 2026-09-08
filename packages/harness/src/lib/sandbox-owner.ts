@@ -12,6 +12,7 @@ import type { EventEmitter } from "node:events";
 
 interface DestroyableSandbox {
 	readonly sandboxId?: string;
+	readonly sandboxRef?: { readonly id: string };
 	destroy(): Promise<unknown>;
 }
 
@@ -296,7 +297,7 @@ export function createOwnedSandbox<T extends DestroyableSandbox>(
 		.then(() => create(createCancellation.signal))
 		.then(
 			(sandbox) => {
-				entry.sandboxId = sandbox.sandboxId;
+				entry.sandboxId = sandbox.sandboxRef?.id ?? sandbox.sandboxId;
 				const originalDestroy = sandbox.destroy;
 				const providerDestroy = (operationOptions?: OwnedOperationOptions): Promise<unknown> =>
 					Reflect.apply(

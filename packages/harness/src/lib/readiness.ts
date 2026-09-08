@@ -92,6 +92,17 @@ export async function waitUntilReady(
 	sandbox: ReadinessProbeSandbox,
 	options: WaitUntilReadyOptions = {},
 ): Promise<ReadinessResult> {
+	return waitForReadiness(
+		async () => (await sandbox.runCommand(READINESS_CMD)).exitCode === 0,
+		options,
+	);
+}
+
+/** Shared bounded first-success loop; operational driver readiness remains a separate policy. */
+export async function waitForReadiness(
+	probeReady: () => Promise<boolean>,
+	options: WaitUntilReadyOptions = {},
+): Promise<ReadinessResult> {
 	const maxAttempts = finiteOr(options.maxAttempts, DEFAULT_READINESS_ATTEMPTS, 1);
 	const retryDelayMs = finiteOr(options.retryDelayMs, DEFAULT_READINESS_RETRY_DELAY_MS, 0);
 	const probeTimeoutMs = finiteOr(options.probeTimeoutMs, DEFAULT_READINESS_PROBE_TIMEOUT_MS, 1);
@@ -99,7 +110,7 @@ export async function waitUntilReady(
 
 	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
 		try {
-			const probe = sandbox.runCommand(READINESS_CMD);
+			const probe = probeReady();
 			// A timed-out probe leaves its exec dangling: swallow a late rejection here so an abandoned
 			// attempt can't surface as an unhandled rejection while the loop is still retrying.
 			probe.catch(() => {});
@@ -108,7 +119,7 @@ export async function waitUntilReady(
 				probeTimeoutMs,
 				`readiness probe timed out after ${Math.round(probeTimeoutMs / 1000)}s`,
 			);
-			if (result.exitCode === 0) return { ready: true, attempts: maxAttempts };
+			if (result) return { ready: true, attempts: maxAttempts };
 		} catch {
 			// Not ready — fall through to the retry.
 		}

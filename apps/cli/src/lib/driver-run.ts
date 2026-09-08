@@ -1,3 +1,4 @@
+import { executeSuite, measureLifecycleOperation } from "@sandbox-benchmarks/harness";
 // The driver composition root (ADR-0007 §1).
 //
 // The kit deliberately splits three trust boundaries that a single `config` object used to blur:
@@ -244,26 +245,17 @@ export async function createOwnedDriverSession(
 	driver: SandboxDriver,
 	request: CreateRequest,
 ): Promise<OwnedDriverSession> {
-	const owned = await createOwnedSandbox(
-		async (signal) => {
-			const session = await driver.create(request, { signal });
-			return {
-				sandboxId: session.sandboxRef.id,
-				session,
-				destroy: (options?: { readonly signal?: AbortSignal }) => session.destroy(options),
-			};
-		},
-		{ destroy: (providerDestroy, options) => providerDestroy(options) },
-	);
-	const session = owned.session;
+	const session = await createOwnedSandbox((signal) => driver.create(request, { signal }), {
+		destroy: (providerDestroy, options) => providerDestroy(options),
+	});
 	const launch = session.launch?.bind(session);
 	return {
 		sandboxRef: session.sandboxRef,
 		artifact: session.artifact,
 		native: session.native,
 		exec: (command, options) => session.exec(command, options),
-		destroy: (options) => owned.destroy(options),
-		releaseOwnership: () => releaseOwnedSandbox(owned),
+		destroy: (options) => session.destroy(options),
+		releaseOwnership: () => releaseOwnedSandbox(session),
 		...(session.files === undefined ? {} : { files: session.files }),
 		...(launch === undefined ? {} : { launch }),
 	};
@@ -463,6 +455,15 @@ export async function benchmarkDriverLifecycle(
 	options: BenchmarkLifecycleOptions = {},
 ): Promise<LifecycleBenchmark> {
 	const opened = await openDriver(id);
+	if (id === "e2b")
+		return measureLifecycleOperation(
+			{
+				module: opened.module,
+				driver: opened.driver,
+				request: { spec: TARGET_SPEC, artifact: opened.artifact },
+			},
+			options,
+		);
 	return benchmarkLifecycleCompute(id, driverLifecycleCompute(opened), options);
 }
 
@@ -531,6 +532,21 @@ export async function runDriverSuite(options: RunSuiteOptions): Promise<void> {
 			);
 		}
 		throw error;
+	}
+
+	if (providerName === "e2b") {
+		await executeSuite({
+			allocation: {
+				module: opened.module,
+				driver: opened.driver,
+				request: { spec: TARGET_SPEC, artifact: opened.artifact },
+			},
+			runId: options.runId,
+			...(options.replicateIndex === undefined ? {} : { replicateIndex: options.replicateIndex }),
+			suiteName,
+			resultsDir,
+		});
+		return;
 	}
 
 	const suite = SUITES[suiteName];

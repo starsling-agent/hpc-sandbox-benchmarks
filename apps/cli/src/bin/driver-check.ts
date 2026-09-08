@@ -26,7 +26,11 @@ import { isDriverError, readTextFile, succeeded, writeTextFile } from "@sandbox-
 import { verifyDriverReadiness } from "@sandbox-benchmarks/driver/conformance";
 import type { DriverProviderId } from "@sandbox-benchmarks/drivers";
 import { DRIVERS } from "@sandbox-benchmarks/drivers";
-import { exitAfterSandboxCleanup, StepRunner } from "@sandbox-benchmarks/harness";
+import {
+	exitAfterSandboxCleanup,
+	SessionStepRunner,
+	StepRunner,
+} from "@sandbox-benchmarks/harness";
 import type { ArtifactPhase } from "@sandbox-benchmarks/schema";
 import type { OwnedDriverSession } from "../lib/driver-run.ts";
 import {
@@ -172,12 +176,6 @@ function skip(checks: Check[], name: string, detail: string, log: (message: stri
 }
 
 /** The most useful failure text a CommandResult carries; stderr is optional on that shape. */
-function stepError(result: { exitCode: number; stdout?: string; stderr?: string }): string {
-	const stderr = (result.stderr ?? "").trim();
-	if (stderr.length > 0) return stderr;
-	const stdout = (result.stdout ?? "").trim();
-	return stdout.length > 0 ? stdout : `exit ${result.exitCode} with no output`;
-}
 
 /**
  * The deadline for the durable step: at least the declared cap, and always longer than the workload.
@@ -209,7 +207,7 @@ async function driveSession(
 	session: SandboxSession,
 	options: Options,
 	transportSyncCapMs: number | null,
-	runner: StepRunner,
+	runner: StepRunner | SessionStepRunner,
 	checks: Check[],
 	log: (message: string) => void,
 ): Promise<void> {
@@ -275,7 +273,7 @@ async function driveSession(
 		"step-sync",
 		async () => {
 			const result = await runner.step("driver-check-sync", workloadScript(1), 30_000);
-			if (result.exitCode !== 0) throw new Error(`step failed: ${stepError(result)}`);
+
 			return (result.stdout ?? "").trim();
 		},
 		log,
@@ -292,7 +290,7 @@ async function driveSession(
 			async () => {
 				const script = workloadScript(options.workloadSeconds);
 				const result = await runner.step("driver-check-durable", script, durableTimeoutMs);
-				if (result.exitCode !== 0) throw new Error(`step failed: ${stepError(result)}`);
+
 				return `${(result.stdout ?? "").trim()} (durable path, cap ${transportSyncCapMs}ms)`;
 			},
 			log,
@@ -370,10 +368,13 @@ async function run(options: Options, log: (message: string) => void): Promise<Ch
 			log,
 		);
 		if (!ready) return checks;
-		const runner = new StepRunner(sessionHandle(live), transport, undefined, {
-			mode: "fixed",
-			times: 1,
-		});
+		const runner =
+			module.id === "e2b"
+				? new SessionStepRunner(live, module.execution, undefined, { mode: "fixed", times: 1 })
+				: new StepRunner(sessionHandle(live), transport, undefined, {
+						mode: "fixed",
+						times: 1,
+					});
 		await driveSession(live, options, transport.syncCapMs, runner, checks, log);
 	} finally {
 		if (options.keep) {

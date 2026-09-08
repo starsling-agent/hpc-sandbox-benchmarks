@@ -2,11 +2,12 @@
 // body that both `bench-smoke` (boot the published image) and `bake` (boot the just-baked candidate)
 // feed to {@link forEachProviderWithCreds}. The probe results are captured INSIDE the lifecycle so a
 // teardown-only failure still reports which probes passed instead of looking like nothing ran.
-import { withSandbox } from "@sandbox-benchmarks/harness";
+import { withSandbox, withSandboxWork } from "@sandbox-benchmarks/harness";
+import { TARGET_SPEC } from "@sandbox-benchmarks/schema";
 import type { SmokeResult } from "@sandbox-benchmarks/templates/smoke";
 import { runSmoke } from "@sandbox-benchmarks/templates/smoke";
 import type { ArtifactResolution } from "./driver-run.ts";
-import { withDriverSandbox } from "./driver-run.ts";
+import { openDriver, withDriverSandbox } from "./driver-run.ts";
 import type { ProviderTarget } from "./providers-run.ts";
 
 /** A smoke run's outcome: the probe results, plus the lifecycle error if boot/teardown threw. */
@@ -41,6 +42,25 @@ export async function bootAndSmoke(
 		}
 		switch (target.kind) {
 			case "driver":
+				if (target.id === "e2b") {
+					const opened = await openDriver(target.id, options);
+					await withSandboxWork(
+						{
+							module: opened.module,
+							driver: opened.driver,
+							request: { spec: TARGET_SPEC, artifact: opened.artifact },
+						},
+						async ({ session }) => {
+							checks = await runSmoke(async (command) => {
+								const result = await session.exec(command);
+								if (result.exit.kind !== "exited")
+									throw new Error(`Smoke command returned ${JSON.stringify(result.exit)}`);
+								return { stdout: result.stdout, stderr: result.stderr, exitCode: result.exit.code };
+							});
+						},
+					);
+					return { checks };
+				}
 				await withDriverSandbox(
 					target.id,
 					async (sandbox) => {

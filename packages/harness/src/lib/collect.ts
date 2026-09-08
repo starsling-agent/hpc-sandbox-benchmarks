@@ -83,7 +83,12 @@ class CollectedResultsEmptyError extends Error {}
 class ReservedCollectedFileError extends Error {}
 
 /** Pull the sandbox's benchmark-results/ into `resultsDir` on the host. */
-export async function collectResults(runner: StepRunner, resultsDir: string): Promise<void> {
+export async function collectResults(
+	runner: Pick<StepRunner, "phase"> & {
+		step: (...args: Parameters<StepRunner["step"]>) => Promise<{ stdout?: string }>;
+	},
+	resultsDir: string,
+): Promise<void> {
 	runner.phase = "collect";
 	// One retry boundary wraps the ENTIRE idempotent collect — the in-sandbox tar|base64 step, the
 	// marker scan, AND the host-side decode + tar extract. A read-back transport failure, a marker

@@ -18,3 +18,4 @@ here changes, supersede the ADR (leave it in place, note what replaced it) rathe
 | [0006](./0006-declarative-provider-onboarding.md) | Declarative provider onboarding |
 | [0007](./0007-sandbox-driver-port.md) | Sandbox driver kit: one port, one file per provider; ComputeSDK as one driver |
 | [0008](./0008-driver-conformance-gate.md) | Driver conformance: the behavioral drift gate |
+| [0009](./0009-harness-operations-and-gpu-allocation.md) | Separate harness operations and typed provider-specific GPU allocation |

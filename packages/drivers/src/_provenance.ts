@@ -25,3 +25,8 @@ export const NOVITA_PROVENANCE = Object.freeze({
 	packageName: "novita-sandbox",
 	version: "2.0.6",
 });
+
+export const DAYTONA_PROVENANCE = Object.freeze({
+	packageName: "@daytona/sdk",
+	version: "0.211.2",
+});

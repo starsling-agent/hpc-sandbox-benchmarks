@@ -454,6 +454,7 @@ export function renderDriversProvenance(root = REPO_ROOT): string {
 		["MODAL_NATIVE", "modal", catalogVersion(catalog, "modal")],
 		["TAMA", "tama CLI", tamaCliVersion(root)],
 		["NOVITA", "novita-sandbox", catalogVersion(catalog, "novita-sandbox")],
+		["DAYTONA", "@daytona/sdk", catalogVersion(catalog, "@daytona/sdk")],
 	] as const;
 	const constants = entries
 		.map(

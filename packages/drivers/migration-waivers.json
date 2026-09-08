@@ -1,9 +1,4 @@
 {
-  "daytona-vm": {
-    "owner": "@dbworku",
-    "reason": "The Daytona VM adapter has not yet migrated from packages/providers to DriverModule.",
-    "expires": "2026-12-31"
-  },
   "daytona-container": {
     "owner": "@dbworku",
     "reason": "The Daytona container adapter has not yet migrated from packages/providers to DriverModule.",

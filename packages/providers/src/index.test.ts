@@ -192,9 +192,9 @@ describe("@sandbox-benchmarks/providers", () => {
 	});
 
 	it("keeps Daytona alive for long suites and pins region off createOptions", () => {
-		const daytona = providers.find((p) => p.name === "daytona-vm");
+		const daytona = providers.find((p) => p.name === "daytona-container");
 		expect(daytona).toBeDefined();
-		expect(daytona?.createOptions?.snapshotId).toBe(config.daytonaVm.snapshot);
+		expect(daytona?.createOptions?.snapshotId).toBe(config.daytonaContainer.snapshot);
 		// ComputeSDK maps its universal timeout to the Daytona SDK's create-operation timeout, not the
 		// sandbox lifetime. Pass the native option through so an 8+ minute detached suite is not stopped
 		// underneath the harness; runSuite's finally block remains the cleanup authority.

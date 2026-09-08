@@ -1,0 +1,18 @@
+{
+  "baseCommit": "c210325272edf5c036eccc492d0ae684e907d67b",
+  "sourceFileCount": 294,
+  "testedSourceSha256": "f88a0ce077f22f5c9c7e4a6f5c99b022b0c9d2700806327ea41bba50474ad0a8",
+  "fingerprintAlgorithm": "SHA-256 of compact, sorted-key JSON mapping repo-relative source paths to SHA-256 file digests. Includes .ts and .json files under packages/{driver,drivers,schema,harness,providers,templates} and apps/cli (excluding node_modules), plus package.json and bun.lock.",
+  "environment": {
+    "bun": "1.4.0",
+    "e2b": "2.27.1",
+    "modal": "0.9.0",
+    "tama": "0.1.17"
+  },
+  "reportsSha256": {
+    "e2b.json": "3201caedd0a17507bf4fdbb1a4ffdb05f5912aa73f48b89980f285c5becd7788",
+    "modal-gvisor.json": "7807fb18193fa5effc0d4252fe1f5c40d8ac9cd4b4c3fe271cccafa491ee5957",
+    "modal-vm.json": "9719df84b32a3689416d5990b2dccb53bab6fcce16238f45a1eae9ab5867188e",
+    "tama.json": "2dfbcd2fc4048122337d25a61363bcc566ef2428d98443e5853caf679150f9ef"
+  }
+}

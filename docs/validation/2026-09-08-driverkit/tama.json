@@ -1,0 +1,81 @@
+{
+  "provider": "tama",
+  "phase": "version",
+  "startedAt": "2026-09-08T19:01:17.608Z",
+  "completedAt": "2026-09-08T19:02:42.929Z",
+  "workloadSeconds": 65,
+  "checks": [
+    {
+      "name": "resolve",
+      "status": "pass",
+      "detail": "artifact image ghcr.io/starslingdev/sandbox-benchmarks-toolchain:v8, sdk tama CLI@0.1.17",
+      "durationMs": 0
+    },
+    {
+      "name": "create",
+      "status": "pass",
+      "detail": "tama/machine-tuksrb0oo062, booted image ghcr.io/starslingdev/sandbox-benchmarks-toolchain:v8",
+      "durationMs": 2430.169417
+    },
+    {
+      "name": "readiness",
+      "status": "pass",
+      "detail": "create-returns-ready: exec succeeded with no polling",
+      "durationMs": 2046.4711250000005
+    },
+    {
+      "name": "exec-success",
+      "status": "pass",
+      "detail": "exit 0 reported as exited/0",
+      "durationMs": 828.3611250000004
+    },
+    {
+      "name": "exec-exit-code",
+      "status": "pass",
+      "detail": "exit 7 preserved",
+      "durationMs": 837.0034169999999
+    },
+    {
+      "name": "exec-streams",
+      "status": "pass",
+      "detail": "stdout and stderr stayed separate",
+      "durationMs": 815.5123750000002
+    },
+    {
+      "name": "files-roundtrip",
+      "status": "pass",
+      "detail": "kit exec fallback round-tripped",
+      "durationMs": 3358.791624999999
+    },
+    {
+      "name": "step-sync",
+      "status": "pass",
+      "detail": "workload ok after 1s",
+      "durationMs": 1922.3345840000002
+    },
+    {
+      "name": "step-durable",
+      "status": "pass",
+      "detail": "workload ok after 65s (durable path, cap 60000ms)",
+      "durationMs": 70720.939291
+    },
+    {
+      "name": "destroy",
+      "status": "pass",
+      "detail": "destroyed",
+      "durationMs": 2060.901582999999
+    },
+    {
+      "name": "destroy-idempotent",
+      "status": "pass",
+      "detail": "second destroy succeeded",
+      "durationMs": 0.06912499999452848
+    },
+    {
+      "name": "destroy-converged",
+      "status": "pass",
+      "detail": "observed absent",
+      "durationMs": 292.72883300000103
+    }
+  ]
+}

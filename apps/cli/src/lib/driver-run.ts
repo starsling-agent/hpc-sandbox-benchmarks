@@ -343,7 +343,7 @@ export function usesDriverSuite(providerId: string, driverPathFlag = false): boo
 
 /** Providers whose consumers have moved to declarative session operations in the migration stack. */
 export function usesSessionOperations(id: DriverProviderId): boolean {
-	return id === "e2b" || id === "tama" || id === "modal-gvisor";
+	return id === "e2b" || id === "tama" || id === "modal-gvisor" || id === "modal-vm";
 }
 
 /**

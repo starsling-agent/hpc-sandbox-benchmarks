@@ -453,6 +453,7 @@ export function renderDriversProvenance(root = REPO_ROOT): string {
 		// Cost-evidence consumers retain their explicit native-SDK provenance alias.
 		["MODAL_NATIVE", "modal", catalogVersion(catalog, "modal")],
 		["TAMA", "tama CLI", tamaCliVersion(root)],
+		["NOVITA", "novita-sandbox", catalogVersion(catalog, "novita-sandbox")],
 	] as const;
 	const constants = entries
 		.map(

@@ -12,7 +12,7 @@ type Expect<Condition extends true> = Condition;
 
 describe("generated driver loader", () => {
 	test("exposes exactly the unwaived provider modules without eager vendor evaluation", () => {
-		expect(Object.keys(DRIVERS)).toEqual(["e2b", "modal-gvisor", "modal-vm", "tama"]);
+		expect(Object.keys(DRIVERS)).toEqual(["e2b", "modal-gvisor", "modal-vm", "novita", "tama"]);
 		expect(Object.values(DRIVERS).every((load) => typeof load === "function")).toBe(true);
 		expect(Object.isFrozen(DRIVERS)).toBe(true);
 	});

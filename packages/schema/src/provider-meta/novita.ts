@@ -4,10 +4,8 @@ export default defineProviderMeta("novita", {
 	displayName: "Novita",
 	vendor: "Novita",
 	website: "https://novita.ai/sandbox",
-	// Novita's control plane speaks the E2B protocol, so the harness drives it through the e2b
-	// wrapper with its connection methods backed by novita-sandbox (Novita's fork of the e2b SDK)
-	// — see the novita adapter's compat module.
-	sdkPackage: "@computesdk/e2b",
+	// Native SDK with the regional control plane and its dedicated API-key channel.
+	sdkPackage: "novita-sandbox",
 	artifact: { kind: "baked" },
 	inputs: [
 		"NOVITA_API_KEY",
@@ -17,7 +15,7 @@ export default defineProviderMeta("novita", {
 		class: "microVM",
 		technology: "microVM",
 		notes:
-			"Dedicated microVM per sandbox; E2B-protocol-compatible control plane (us-phx-1.sandbox.novita.ai) driven through @computesdk/e2b with novita-sandbox-backed connection methods.",
+			"Dedicated microVM per sandbox; E2B-protocol-compatible control plane (us-phx-1.sandbox.novita.ai) driven through the native novita-sandbox SDK.",
 	},
 	pricing: {
 		model: "published",

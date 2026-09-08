@@ -14,7 +14,6 @@ import { runcloudCostEvidence } from "./cost-evidence.ts";
 import { daytonaActivateSnapshot } from "./daytona-snapshot.ts";
 import { daytonaClientTarget } from "./daytona-target.ts";
 import { microsandboxCloudCompute } from "./microsandbox.ts";
-import { novitaCompute } from "./novita.ts";
 import { RUNCLOUD_CREATE_CEILING_MS, runcloudCompute } from "./runcloud.ts";
 import { runloopCompute } from "./runloop.ts";
 import type { ProviderAdapter } from "./types.ts";
@@ -35,6 +34,7 @@ export const MIGRATED_DRIVER_IDS = [
 	"modal-gvisor",
 	"modal-vm",
 	"tama",
+	"novita",
 ] as const satisfies readonly ProviderId[];
 
 /** A schema id served by a registered DriverModule. Derived from the list, so the two cannot drift. */
@@ -150,15 +150,6 @@ export const adapters: Record<LegacyAdapterId, ProviderAdapter> = {
 			}),
 		createOptions: { templateId: config.toolchainImage },
 		createTimeoutMs: MICROSANDBOX_CREATE_TIMEOUT_MS,
-	},
-	novita: {
-		artifact: { kind: "baked", ref: config.novitaTemplate },
-		// The e2b wrapper re-pointed at Novita's E2B-compatible control plane (sandbox.novita.ai) —
-		// see novita.ts for exactly what is swapped and why. Boots the pre-baked toolchain template
-		// the bake pipeline creates on Novita via the same e2b CLI (computesdk maps snapshotId → the
-		// template name); cpu/memory are pinned at template create, not per-sandbox.
-		createCompute: () => novitaCompute(config.novita.apiKey),
-		createOptions: { snapshotId: config.novitaTemplate },
 	},
 	runloop: {
 		artifact: { kind: "baked", ref: config.runloopBlueprint },

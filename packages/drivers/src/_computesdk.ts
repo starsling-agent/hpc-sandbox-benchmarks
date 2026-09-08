@@ -151,9 +151,13 @@ export interface ComputeSdkCreateRecovery<TCompute extends ComputeSdkLike> {
 	 */
 	isDefinitive?(error: unknown): boolean;
 	/**
-	 * True when the vendor error is a transient capacity/rate-limit refusal the harness may retry
-	 * after reconciliation. The bridge copies that answer onto {@link DriverError.retryable}; it
-	 * never regexes vendor prose. Definitive rejections win and stay unmarked.
+	 * True when the vendor error is a transient capacity/rate-limit refusal the harness may retry.
+	 * The bridge copies that answer onto {@link DriverError.retryable}; it never regexes vendor prose.
+	 *
+	 * The mark also asserts that nothing remains allocated, and either proof satisfies that: the
+	 * reconciliation lookup this bridge runs, or an {@link isDefinitive} rejection — which is the
+	 * stronger proof, since the control plane refused before allocating. So classifying one refusal
+	 * as both is not a contradiction and does not cost the retry; answer each question on its own.
 	 */
 	isRetryableCreate?(error: unknown): boolean;
 }

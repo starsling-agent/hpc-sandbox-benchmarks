@@ -110,7 +110,9 @@ describe("isRetryableDriverCreate", () => {
 	});
 
 	test("a structured vendor exit of 429 is retryable without a mark", () => {
-		const error = new DriverError("create-failed", "fake-cli new bench: exit 429", {
+		// Shaped like a driver that built its failure straight from an HTTP response — the only
+		// producer that can put a status here. A CLI driver's vendorExitCode is a process exit status.
+		const error = new DriverError("create-failed", "POST /sandboxes: 429 Too Many Requests", {
 			provider: "tama",
 			vendorExitCode: 429,
 			vendorMessage: "capacity",

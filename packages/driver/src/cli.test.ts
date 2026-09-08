@@ -658,53 +658,40 @@ describe("cliDriver", () => {
 		expect(isRetryableDriverCreate(error)).toBe(false);
 	});
 
-	test("a 429 create exit is retryable after cleanup; 429 prose with another exit is not", async () => {
-		const run = async (_binary: string, args: readonly string[]): Promise<CliRunResult> => {
-			if (args[0] === "new") {
-				return {
-					stdout: "",
-					stderr: "429 Too Many Requests",
-					code: args.includes("--quota") ? 429 : 7,
-				};
-			}
-			if (args[0] === "list") return { stdout: "[]", stderr: "", code: 0 };
-			if (args[0] === "rm-name") {
-				return { stdout: "", stderr: "machine not found", code: 1 };
-			}
-			return { stdout: "", stderr: "unexpected", code: 2 };
-		};
-
-		const limited = (await cliDriver(
-			tamaLikeSpec({
-				create: (_request, name) => ["new", name, "--quota"],
-				cleanupCreated: {
-					kind: "command",
-					command: (name) => ["rm-name", "-y", name],
-					absenceConfirmationMs: 5,
-				},
-			}),
-			{ run },
-		)
-			.create(request)
-			.catch((caught: unknown) => caught)) as DriverError;
-		expect(limited).toMatchObject({ code: "create-failed", vendorExitCode: 429, provider: "tama" });
-		expect(isRetryableDriverCreate(limited)).toBe(true);
-
+	test("a rate-limited create with no module classifier stays terminal on this lane", async () => {
+		// The shared rule's other arm reads `vendorExitCode === 429`, but on this lane that field is the
+		// child's PROCESS exit status, which POSIX bounds to 0-255 — so a CLI cannot deliver an HTTP
+		// status there no matter what its stderr says. Forging a 429 exit from a stub runner would
+		// assert a scenario `defaultRunner` (Bun.spawn's `exited`) can never produce; the arm itself is
+		// unit-tested against a directly constructed DriverError in `lib/errors.test.ts`. What IS true
+		// here is the negative: without a module classifier, rate-limit PROSE leaves the create
+		// terminal. `CliSpec.isRetryableCreate` is the lane's only channel — see the test below.
 		const prose = (await cliDriver(
 			tamaLikeSpec({
-				create: (_request, name) => ["new", name],
 				cleanupCreated: {
 					kind: "command",
 					command: (name) => ["rm-name", "-y", name],
 					absenceConfirmationMs: 5,
 				},
 			}),
-			{ run },
+			{
+				run: async (_binary, args) => {
+					if (args[0] === "new") {
+						return { stdout: "", stderr: "429 Too Many Requests", code: 7 };
+					}
+					if (args[0] === "list") return { stdout: "[]", stderr: "", code: 0 };
+					if (args[0] === "rm-name") {
+						return { stdout: "", stderr: "machine not found", code: 1 };
+					}
+					return { stdout: "", stderr: "unexpected", code: 2 };
+				},
+			},
 		)
 			.create(request)
 			.catch((caught: unknown) => caught)) as DriverError;
 		expect(prose).toMatchObject({
 			code: "create-failed",
+			provider: "tama",
 			vendorExitCode: 7,
 			vendorMessage: "429 Too Many Requests",
 		});

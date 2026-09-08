@@ -460,14 +460,12 @@ describe("runSuite (resolution + credential gate)", () => {
 		// Empty env → daytona's required key is absent, so the suite skips before any sandbox is created.
 		await runSuite({
 			runId: "test",
-			providerName: "daytona-container",
+			providerName: "runloop",
 			suiteName: "cpu-node",
 			resultsDir,
 			env: {},
 		});
-		expect(existsSync(join(resultsDir, "sandbox-daytona-container-cpu-node--skipped.json"))).toBe(
-			true,
-		);
+		expect(existsSync(join(resultsDir, "sandbox-runloop-cpu-node--skipped.json"))).toBe(true);
 	});
 });
 

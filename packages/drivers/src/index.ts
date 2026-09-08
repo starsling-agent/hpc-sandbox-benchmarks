@@ -6,6 +6,7 @@ import type { DriverModule, ProviderId } from "@sandbox-benchmarks/driver";
 export interface DriverModuleMap {
 	e2b: typeof import("./e2b.ts").default;
 	"daytona-vm": typeof import("./daytona-vm.ts").default;
+	"daytona-container": typeof import("./daytona-container.ts").default;
 	"modal-gvisor": typeof import("./modal-gvisor.ts").default;
 	"modal-vm": typeof import("./modal-vm.ts").default;
 	novita: typeof import("./novita.ts").default;
@@ -28,6 +29,7 @@ export const DRIVERS: {
 } = Object.freeze({
 	e2b: () => import("./e2b.ts").then((module) => module.default),
 	"daytona-vm": () => import("./daytona-vm.ts").then((module) => module.default),
+	"daytona-container": () => import("./daytona-container.ts").then((module) => module.default),
 	"modal-gvisor": () => import("./modal-gvisor.ts").then((module) => module.default),
 	"modal-vm": () => import("./modal-vm.ts").then((module) => module.default),
 	novita: () => import("./novita.ts").then((module) => module.default),

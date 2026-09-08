@@ -20,7 +20,6 @@ import { DRIVERS } from "@sandbox-benchmarks/drivers";
 import type { SandboxHandle } from "@sandbox-benchmarks/harness";
 import { cleanupOwnedSandboxes, createSuiteSandboxFromPlan } from "@sandbox-benchmarks/harness";
 import type { LegacyAdapterId } from "@sandbox-benchmarks/providers";
-import { isLegacyAdapterId, providers } from "@sandbox-benchmarks/providers";
 import type { ProviderId } from "@sandbox-benchmarks/schema";
 import { PROVIDERS, REGISTRY, SUITES, TOOLCHAIN_VERSION } from "@sandbox-benchmarks/schema";
 import type { OpenedDriver } from "./driver-run.ts";
@@ -77,7 +76,8 @@ type Equal<Left, Right> =
 type Expect<Condition extends true> = Condition;
 
 describe("bench-suite driver vs legacy selection (Phase A unit 1)", () => {
-	test("registered DriverModule ids and leftover adapters partition ProviderId", () => {
+	test("registered DriverModule ids and leftover adapters partition ProviderId", async () => {
+		const { isLegacyAdapterId, providers } = await import("@sandbox-benchmarks/providers");
 		type _complete = Expect<Equal<ProviderId, DriverProviderId | LegacyAdapterId>>;
 		type _disjoint = Expect<
 			Extract<DriverProviderId, LegacyAdapterId> extends never ? true : false
@@ -85,6 +85,7 @@ describe("bench-suite driver vs legacy selection (Phase A unit 1)", () => {
 		const driverIds = Object.keys(DRIVERS);
 		const adapterIds: string[] = providers.map((provider) => provider.name);
 		expect(driverIds.sort()).toEqual([
+			"daytona-container",
 			"daytona-vm",
 			"e2b",
 			"modal-gvisor",
@@ -113,10 +114,10 @@ describe("bench-suite driver vs legacy selection (Phase A unit 1)", () => {
 	});
 
 	test("waived ids stay on the legacy path unless --driver-path forces the driver lane", () => {
-		expect(usesDriverSuite("daytona-container")).toBe(false);
+		expect(usesDriverSuite("runloop")).toBe(false);
 		expect(usesDriverSuite("runcloud")).toBe(false);
 		expect(usesDriverSuite("blaxel", false)).toBe(false);
-		expect(usesDriverSuite("daytona-container", true)).toBe(true);
+		expect(usesDriverSuite("runloop", true)).toBe(true);
 		expect(isDriverProviderId("runcloud")).toBe(false);
 	});
 
@@ -216,6 +217,18 @@ describe("resolveDriverArtifact", () => {
 });
 
 describe("driverArtifactResolution", () => {
+	test("honors each Daytona variant's own snapshot override", () => {
+		expect(driverArtifactResolution("daytona-vm", { DAYTONA_SNAPSHOT: "vm-debug" })).toEqual({
+			ref: "vm-debug",
+		});
+		expect(
+			driverArtifactResolution("daytona-container", {
+				DAYTONA_CONTAINER_SNAPSHOT: "container-debug",
+				DAYTONA_SNAPSHOT: "wrong-vm",
+			}),
+		).toEqual({ ref: "container-debug" });
+	});
+
 	test("honors the operator's registry-declared artifact override", () => {
 		// The leftover lane read E2B_TEMPLATE through its config gatekeeper and CI still forwards it on
 		// every e2b cell, so defaulting e2b to the driver lane must not silently boot the published

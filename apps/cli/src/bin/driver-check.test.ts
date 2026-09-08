@@ -78,7 +78,7 @@ describe("driver-check argv", () => {
 	test("rejects a provider that has no driver module yet", () => {
 		// The waived providers are still on packages/providers; driving them here would silently
 		// exercise the legacy path and report it as driver-path evidence.
-		expect(() => parseArgs(["--provider", "daytona-container"])).toThrow(/has no driver module/);
+		expect(() => parseArgs(["--provider", "runloop"])).toThrow(/has no driver module/);
 		expect(() => parseArgs(["--provider", "nope"])).toThrow(/has no driver module/);
 	});
 

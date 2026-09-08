@@ -221,13 +221,13 @@ describe("provider wiring projections", () => {
 		expect(fleet.moduleIds).toEqual([
 			"e2b",
 			"daytona-vm",
+			"daytona-container",
 			"modal-gvisor",
 			"modal-vm",
 			"novita",
 			"tama",
 		]);
 		expect([...PROVIDER_IDS].filter((id) => fleet.waivers[id] !== undefined)).toEqual([
-			"daytona-container",
 			"blaxel",
 			"microsandbox-cloud",
 			"runloop",
@@ -291,6 +291,7 @@ describe("provider wiring projections", () => {
 		expect(exports).toEqual({
 			".": "./src/index.ts",
 			"./daytona-vm": "./src/daytona-vm.ts",
+			"./daytona-container": "./src/daytona-container.ts",
 			"./e2b": "./src/e2b.ts",
 			"./modal-gvisor": "./src/modal-gvisor.ts",
 			"./modal-vm": "./src/modal-vm.ts",

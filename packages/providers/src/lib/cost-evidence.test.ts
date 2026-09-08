@@ -3,18 +3,16 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-	MODAL_SDK_PROVENANCE,
-	modalCostEvidence,
 	RUNCLOUD_SDK_PROVENANCE,
 	runcloudCostEvidence,
 	sanitizeEvidenceDetail,
 	sanitizeProviderResponse,
 } from "./cost-evidence.ts";
 
-const input = (providerId: "modal-gvisor" | "runcloud", completed = true) =>
+const input = (completed = true) =>
 	({
-		cell: { runId: "run-1", providerId, suite: "cpu-node", replicateIndex: 2 },
-		providerId,
+		cell: { runId: "run-1", providerId: "runcloud", suite: "cpu-node", replicateIndex: 2 },
+		providerId: "runcloud",
 		sandboxId: "sb-123",
 		teardown: {
 			completed,
@@ -23,13 +21,8 @@ const input = (providerId: "modal-gvisor" | "runcloud", completed = true) =>
 		},
 	}) as const;
 
-function installedVersion(packageName: string, resolveFrom?: string): string {
-	// Resolve from the dependent that actually loads the SDK rather than from this test file.
-	// apps/cli declares its own `modal` for the GPU lane, which hoists to the workspace root and
-	// would otherwise shadow the copy `@computesdk/modal` pins for the provider path measured here.
-	const entry = resolveFrom
-		? Bun.resolveSync(packageName, dirname(fileURLToPath(import.meta.resolve(resolveFrom))))
-		: fileURLToPath(import.meta.resolve(packageName));
+function installedVersion(packageName: string): string {
+	const entry = fileURLToPath(import.meta.resolve(packageName));
 	let directory = dirname(entry);
 	for (;;) {
 		const manifest = join(directory, "package.json");
@@ -158,34 +151,21 @@ describe("provider cost evidence", () => {
 		}
 	});
 
-	it("pins provenance to the installed native SDK packages", () => {
-		expect(String(MODAL_SDK_PROVENANCE.version)).toBe(
-			installedVersion("modal", "@computesdk/modal"),
-		);
+	it("pins provenance to the installed native SDK package", () => {
 		expect(String(RUNCLOUD_SDK_PROVENANCE.version)).toBe(installedVersion("@run-cloud/sdk"));
 	});
 
-	it("returns explicit missing evidence without calling private or organization-wide APIs", async () => {
-		const modal = await modalCostEvidence.captureAfterTeardown(input("modal-gvisor"));
-		expect(modal).toMatchObject({
-			kind: "missing",
-			reason: "unsupported_public_api",
-			subject: { kind: "sandbox", sandboxId: "sb-123", appName: "sandbox-benchmarks" },
-		});
-		if (modal.kind !== "missing") throw new Error("Modal hook returned observed evidence");
-		expect(modal.detail).toContain("was not invoked");
-		const runcloud = await runcloudCostEvidence.captureAfterTeardown(input("runcloud"));
+	it("returns explicit missing evidence without calling organization-wide APIs", async () => {
+		const runcloud = await runcloudCostEvidence.captureAfterTeardown(input());
 		expect(runcloud).toMatchObject({ kind: "missing", reason: "not_sandbox_scoped" });
 		if (runcloud.kind !== "missing") throw new Error("run.cloud hook returned observed evidence");
 		expect(runcloud.detail).toContain("was not called or delta-attributed");
 	});
 
 	it("reports unconfirmed teardown before considering provider usage", async () => {
-		expect(
-			await modalCostEvidence.captureAfterTeardown(input("modal-gvisor", false)),
-		).toMatchObject({ kind: "missing", reason: "sandbox_teardown_unconfirmed" });
-		expect(await runcloudCostEvidence.captureAfterTeardown(input("runcloud", false))).toMatchObject(
-			{ kind: "missing", reason: "sandbox_teardown_unconfirmed" },
-		);
+		expect(await runcloudCostEvidence.captureAfterTeardown(input(false))).toMatchObject({
+			kind: "missing",
+			reason: "sandbox_teardown_unconfirmed",
+		});
 	});
 });

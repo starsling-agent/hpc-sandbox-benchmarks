@@ -112,7 +112,7 @@ export const harnessMetrics: MetricDef[] = [
 		headline: false,
 		label: "Snapshot",
 		description:
-			"Wall time to capture a snapshot/image from a running sandbox. Recorded as a skip for providers whose SDK exposes no snapshot operation.",
+			"Wall time to capture a snapshot/image from a running sandbox. Recorded as a skip when the provider integration under measurement exposes no snapshot operation.",
 	},
 	{
 		id: HARNESS_METRIC_IDS.teardown,
@@ -142,7 +142,7 @@ export const harnessMetrics: MetricDef[] = [
 		headline: false,
 		label: "List sandboxes",
 		description:
-			"Round-trip latency of listing the account's sandboxes — the control-plane enumeration path. Recorded as a skip for providers whose SDK exposes no list operation.",
+			"Round-trip latency of listing the account's sandboxes — the control-plane enumeration path. Recorded as a skip when the provider integration under measurement exposes no list operation.",
 	},
 	{
 		id: HARNESS_METRIC_IDS.execPayload64k,

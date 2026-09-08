@@ -4,28 +4,44 @@
 
 import { blaxel } from "@computesdk/blaxel";
 import { daytona } from "@computesdk/daytona";
-import { e2b } from "@computesdk/e2b";
-import { modal } from "@computesdk/modal";
 import { namespace } from "@computesdk/namespace";
 import type { ProviderId } from "@sandbox-benchmarks/schema";
-import { TARGET_SPEC } from "@sandbox-benchmarks/schema";
-import type { CreateSandboxOptions } from "computesdk";
+import { PROVIDER_IDS, TARGET_SPEC } from "@sandbox-benchmarks/schema";
 import type { DaytonaConfig } from "../config.ts";
 import { config } from "../config.ts";
 import { blaxelWithVolumeAndKeepAlive } from "./blaxel-volume.ts";
-import { MODAL_APP_NAME, modalCostEvidence, runcloudCostEvidence } from "./cost-evidence.ts";
+import { runcloudCostEvidence } from "./cost-evidence.ts";
 import { daytonaActivateSnapshot } from "./daytona-snapshot.ts";
 import { daytonaClientTarget } from "./daytona-target.ts";
-import { e2bCommandsAsRoot } from "./e2b-root.ts";
 import { microsandboxCloudCompute, microsandboxLocalCompute } from "./microsandbox.ts";
 import { novitaCompute } from "./novita.ts";
 import { RUNCLOUD_CREATE_CEILING_MS, runcloudCompute } from "./runcloud.ts";
 import { runloopCompute } from "./runloop.ts";
-import { TAMA_CREATE_CEILING_MS, tamaCompute } from "./tama.ts";
 import type { ProviderAdapter } from "./types.ts";
 import { vercelCompute } from "./vercel.ts";
 
-// This project's dedicated Modal app — the namespace all sandbox-benchmarks sandboxes boot under.
+/**
+ * Provider ids whose production path is a registered DriverModule, not a `packages/providers`
+ * adapter. Must stay in lockstep with `Object.keys(DRIVERS)` — the CLI partition test proves it.
+ *
+ * Deliberately a standalone list rather than anything derived from {@link adapters}: this is the
+ * only reason an id may be absent from the join below, so reading it off the adapter table would
+ * make {@link assertProviderJoin} tautological and hide the missing-adapter drift it exists to
+ * catch. `packages/drivers` cannot be imported here either — the dependency DAG (ADR-0002) points
+ * the other way, and this package must not pull a fleet of vendor SDKs into its load.
+ */
+export const MIGRATED_DRIVER_IDS = [
+	"e2b",
+	"modal-gvisor",
+	"modal-vm",
+	"tama",
+] as const satisfies readonly ProviderId[];
+
+/** A schema id served by a registered DriverModule. Derived from the list, so the two cannot drift. */
+export type MigratedDriverId = (typeof MIGRATED_DRIVER_IDS)[number];
+/** Schema ids still served by this package's ComputeSDK adapters. */
+export type LegacyAdapterId = Exclude<ProviderId, MigratedDriverId>;
+
 /**
  * The Daytona VM and container variants share one adapter shape — the same account API key and the
  * same create-time policy — and differ only in the account config the config gatekeeper resolved:
@@ -53,41 +69,6 @@ function daytonaAdapter(cfg: DaytonaConfig): ProviderAdapter {
 		},
 	};
 }
-
-/**
- * Shared Modal create-time options. Both Modal variants boot the SAME pushed toolchain image at the
- * target spec via `Image.fromRegistry`; the only difference is that `modal-vm` adds
- * `experimentalOptions {vm_runtime:true}` to select Modal's VM runtime (a gVisor-free microVM). The
- * `@computesdk/modal` wrapper spreads any option key it doesn't recognise straight through to
- * `experimentalCreate`, so `experimentalOptions` reaches the native Modal SDK unchanged.
- */
-function modalCreateOptions(experimentalOptions?: Record<string, unknown>): CreateSandboxOptions {
-	return {
-		templateId: config.toolchainImage,
-		// Modal's docs call `cpu` physical cores ("this value corresponds to physical cores, not
-		// vCPUs" — modal.com/docs/guide/resources), but measured behavior contradicts that reading:
-		// cpu=1/cpuLimit=1 exposes nproc=1 and delivers exactly half the dual-worker throughput of
-		// cpu=2/cpuLimit=2 (probed 2026-07-10: 264 vs 512 MB hashed/worker/8s). In practice `cpu` is
-		// the schedulable-CPU count the guest sees, so halving TARGET_SPEC.vcpus benchmarked Modal on
-		// half the CPU of every other provider (which all expose nproc=2). Pass the vCPU spec through.
-		cpu: TARGET_SPEC.vcpus,
-		cpuLimit: TARGET_SPEC.vcpus,
-		// `memoryMiB` is only a RESERVATION — on its own the guest still sees the host's RAM (a live
-		// sandbox reported 464 GB), and PTS sizes STREAM's arrays from that, so the memory suite never
-		// converged. `memoryLimitMiB` is the hard cap that makes /proc/meminfo report the target spec.
-		memoryMiB: TARGET_SPEC.memoryGb * 1024,
-		memoryLimitMiB: TARGET_SPEC.memoryGb * 1024,
-		...(experimentalOptions ? { experimentalOptions } : {}),
-	};
-}
-
-/** Boot sandboxes under this project's own Modal app (auto-created via apps.fromName on first
- *  create), not the wrapper's generic `computesdk-modal` default — so this project's sandboxes are
- *  namespaced/attributable in the Modal dashboard, separate from any other computesdk usage. The two
- *  variants differ in one client flag: modal-gvisor enables scalableSandboxes (the gVisor path);
- *  modal-vm omits it to match the VM-runtime config validated in #221 (VM sandboxes drop it). */
-const modalGvisorCompute = () => modal({ scalableSandboxes: true, appName: MODAL_APP_NAME });
-const modalVmCompute = () => modal({ appName: MODAL_APP_NAME });
 
 /** The longest suite has a 155-minute budget. Give Microsandbox enough lifetime for setup and
  * teardown as well, while keeping leaked benchmark sandboxes self-expiring. */
@@ -122,21 +103,14 @@ function microsandboxCloudCredentials(): { kind: "cloud"; url?: string; apiKey: 
 }
 
 /**
- * Harness adapters, keyed by the schema {@link ProviderId}. The `Record<ProviderId, …>` type is what
- * keeps the two registries honest: it forces exactly one adapter per schema provider, so a provider
- * added to the schema without an adapter here — or an adapter with a typo'd / unknown id — is a
- * compile error, no runtime reconciliation required.
+ * Harness adapters for providers not yet on DriverModule. The `Record<LegacyAdapterId, …>` type
+ * forces exactly one adapter per unmigrated schema id, so a waived provider added to the schema
+ * without an adapter here — or an adapter with a typo'd / unknown id — is a compile error. The four
+ * registered DriverModule ids are omitted on purpose; default bench-suite loads them via
+ * `loadDriverModule`, and a CLI partition test proves this set and `DRIVERS` are disjoint and
+ * jointly complete.
  */
-export const adapters: Record<ProviderId, ProviderAdapter> = {
-	// Boot the e2b template built from the toolchain image (computesdk maps snapshotId → the e2b
-	// template id/name). cpu/memory are pinned in the template's e2b.toml, not per-create. The raw
-	// E2B SDK's root user keeps apt fallbacks, PTS config, and the root-baked registry on one runtime
-	// identity; ComputeSDK does not expose that native command option, so patch this instance.
-	e2b: {
-		artifact: { kind: "baked", ref: config.e2bTemplate },
-		createCompute: () => e2bCommandsAsRoot(e2b({})),
-		createOptions: { snapshotId: config.e2bTemplate },
-	},
+export const adapters: Record<LegacyAdapterId, ProviderAdapter> = {
 	// Both Daytona variants share the account API key (the schema meta owns DAYTONA_API_KEY); they
 	// differ only in region + the class-specific snapshot resolved by the config gatekeeper.
 	"daytona-vm": daytonaAdapter(config.daytonaVm),
@@ -196,21 +170,6 @@ export const adapters: Record<ProviderId, ProviderAdapter> = {
 			}),
 		createOptions: { templateId: config.toolchainImage },
 		createTimeoutMs: MICROSANDBOX_CREATE_TIMEOUT_MS,
-	},
-	// Modal's default runtime = gVisor. Both variants boot the same pushed image; modal-vm adds the
-	// vm_runtime experimental flag to select Modal's gVisor-free VM runtime and drops scalableSandboxes
-	// to match the VM config validated in #221 (see modalGvisorCompute/modalVmCompute above).
-	"modal-gvisor": {
-		artifact: { kind: "image", ref: config.toolchainImage },
-		createCompute: modalGvisorCompute,
-		createOptions: modalCreateOptions(),
-		costEvidence: modalCostEvidence,
-	},
-	"modal-vm": {
-		artifact: { kind: "image", ref: config.toolchainImage },
-		createCompute: modalVmCompute,
-		createOptions: modalCreateOptions({ vm_runtime: true }),
-		costEvidence: modalCostEvidence,
 	},
 	novita: {
 		artifact: { kind: "baked", ref: config.novitaTemplate },
@@ -289,22 +248,18 @@ export const adapters: Record<ProviderId, ProviderAdapter> = {
 		createAttemptCeilingMs: RUNCLOUD_CREATE_CEILING_MS,
 		costEvidence: runcloudCostEvidence,
 	},
-	tama: {
-		artifact: { kind: "image", ref: config.toolchainImage },
-		// tama publishes no SDK, so the adapter drives the `tama` CLI as a subprocess (tama.ts). The
-		// toolchain image is booted by ref — `tama new --image` pulls an arbitrary OCI image, so there is
-		// no provider-side artifact to bake. Disk is deliberately absent: tama exposes no disk knob, and
-		// the observed root filesystem is a large shared overlay that clears the 40 GB workload gate.
-		createCompute: () => tamaCompute(),
-		createOptions: {
-			image: config.toolchainImage,
-			cpu: TARGET_SPEC.vcpus,
-			memory: TARGET_SPEC.memoryGb * 1024,
-		},
-		// `tama new` does not return until the machine is ready, so the ~1.5 GiB cold image pull happens
-		// inside create (2m10s observed). Disable the harness race: the adapter owns a bounded readiness
-		// wait plus failed-create cleanup, and abandoning it mid-teardown would strand a billable machine.
-		createTimeoutMs: null,
-		createAttemptCeilingMs: TAMA_CREATE_CEILING_MS,
-	},
 };
+
+/**
+ * Whether `id` is a schema provider this package is still expected to serve.
+ *
+ * Answers from the schema registry and the migrated-id list — never from `adapters` itself. A
+ * membership test against the table would report "not ours" for a waived provider whose adapter is
+ * simply MISSING, which is exactly the drift {@link assertProviderJoin} must still be able to see.
+ */
+export function isLegacyAdapterId(id: string): id is LegacyAdapterId {
+	return (
+		(PROVIDER_IDS as readonly string[]).includes(id) &&
+		!(MIGRATED_DRIVER_IDS as readonly string[]).includes(id)
+	);
+}

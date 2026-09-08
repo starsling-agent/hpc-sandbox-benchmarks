@@ -139,7 +139,6 @@
         "@computesdk/blaxel": "catalog:computesdk",
         "@computesdk/daytona": "catalog:computesdk",
         "@computesdk/e2b": "catalog:computesdk",
-        "@computesdk/modal": "catalog:computesdk",
         "@computesdk/namespace": "catalog:computesdk",
         "@computesdk/provider": "catalog:computesdk",
         "@computesdk/runloop": "catalog:computesdk",
@@ -702,7 +701,6 @@
     "@renovatebot/pep440": ["@renovatebot/pep440@4.2.1", "", {}, "sha512-2FK1hF93Fuf1laSdfiEmJvSJPVIDHEUTz68D3Fi9s0IZrrpaEcj6pTFBTbYvsgC5du4ogrtf5re7yMMvrKNgkw=="],
 
     "@repo/repo-checks": ["@repo/repo-checks@workspace:tooling/repo-checks"],
-
 
     "@repo/tsconfig": ["@repo/tsconfig@workspace:tooling/tsconfig"],
 

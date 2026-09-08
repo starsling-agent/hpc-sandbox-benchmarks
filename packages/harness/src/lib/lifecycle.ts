@@ -50,19 +50,28 @@ const READINESS_PROBE_TIMEOUT_MS = 2_000;
  * exists to prevent.
  */
 const PAYLOAD_DISABLED = "64KiB payload exec disabled for this run";
-const NO_LIST_OP = "provider SDK exposes no sandbox list operation";
+// Scoped to the integration under measurement — a leftover ComputeSDK adapter or a DriverModule
+// projection — never to the vendor SDK as a whole. Two different integrations of one provider can
+// expose different control-plane calls, and this benchmark only ever observes the one it was handed;
+// "the vendor has no such API" is a claim about the vendor that the absent method is no evidence for.
+const NO_LIST_OP = "the provider integration under measurement exposes no sandbox list operation";
+const NO_INFO_OP = "the provider integration under measurement exposes no sandbox info operation";
 const SNAPSHOT_DISABLED = "snapshot measurement disabled for this run";
-const NO_SNAPSHOT_OP = "provider SDK exposes no snapshot operation";
+const NO_SNAPSHOT_OP = "the provider integration under measurement exposes no snapshot operation";
 /**
  * A measurement this RUN turned off. Deliberately not `unsupported-operation`: the provider can do it,
  * we chose not to time it, and publishing a config toggle as a missing capability would be a claim
  * about the provider we have no evidence for.
  */
 const DISABLED_CAUSE = { kind: "measurement-disabled" } as const satisfies GapCause;
-/** The provider's SDK exposes no such call — a capability statement, unlike {@link DISABLED_CAUSE}. */
+/** The measured integration exposes no such call — a capability statement, unlike {@link DISABLED_CAUSE}. */
 const NO_LIST_CAUSE = {
 	kind: "unsupported-operation",
 	detail: NO_LIST_OP,
+} as const satisfies GapCause;
+const NO_INFO_CAUSE = {
+	kind: "unsupported-operation",
+	detail: NO_INFO_OP,
 } as const satisfies GapCause;
 const NO_SNAPSHOT_CAUSE = {
 	kind: "unsupported-operation",
@@ -79,7 +88,8 @@ const realDelay = (ms: number): Promise<void> => new Promise((resolve) => setTim
 export interface LifecycleSandbox {
 	readonly sandboxId: string;
 	runCommand(command: string, options?: { background?: boolean }): Promise<{ exitCode: number }>;
-	getInfo(): Promise<unknown>;
+	/** Present when the provider exposes a control-plane info/describe/observe call. */
+	getInfo?(): Promise<unknown>;
 	destroy(): Promise<unknown>;
 }
 
@@ -252,7 +262,8 @@ export async function measureLifecycle(
 			fail(HARNESS_METRIC_IDS.exec, reason);
 			// One gap, not `controlPlaneSamples` of them: the live path records a gap per failed probe, but
 			// no probe ran here and N copies of one fact is noise, not fidelity.
-			fail(HARNESS_METRIC_IDS.controlPlaneInfo, reason);
+			if (sandbox.getInfo) fail(HARNESS_METRIC_IDS.controlPlaneInfo, reason);
+			else skip(HARNESS_METRIC_IDS.controlPlaneInfo, NO_INFO_OP, NO_INFO_CAUSE);
 			if (wantPayload) fail(HARNESS_METRIC_IDS.execPayload64k, reason);
 			else skip(HARNESS_METRIC_IDS.execPayload64k, PAYLOAD_DISABLED, DISABLED_CAUSE);
 			if (compute.sandbox.list) fail(HARNESS_METRIC_IDS.controlPlaneList, reason);
@@ -278,9 +289,15 @@ export async function measureLifecycle(
 		}
 
 		// Control-plane read: getInfo, sampled within this one (cheap) sandbox to build a distribution
-		// without paying a fresh spawn/teardown per Sample.
-		for (let i = 0; i < controlPlaneSamples; i++) {
-			await step(HARNESS_METRIC_IDS.controlPlaneInfo, () => sandbox.getInfo());
+		// without paying a fresh spawn/teardown per Sample. Absent on a DriverModule that only exposes
+		// observe/list/snapshot through optional port members — skip rather than invent a probe.
+		const getInfo = sandbox.getInfo?.bind(sandbox);
+		if (getInfo) {
+			for (let i = 0; i < controlPlaneSamples; i++) {
+				await step(HARNESS_METRIC_IDS.controlPlaneInfo, () => getInfo());
+			}
+		} else {
+			skip(HARNESS_METRIC_IDS.controlPlaneInfo, NO_INFO_OP, NO_INFO_CAUSE);
 		}
 
 		// Control-plane enumeration: list, when the SDK exposes it. Bind `this` so the captured method

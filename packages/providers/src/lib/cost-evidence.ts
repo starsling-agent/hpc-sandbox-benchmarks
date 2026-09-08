@@ -3,17 +3,11 @@ import type { MissingProviderCostEvidence, SdkProvenance } from "@sandbox-benchm
 import { canonicalJsonString, PROVIDER_RESPONSE_LIMITS } from "@sandbox-benchmarks/schema";
 import type { CostEvidenceCaptureInput, ProviderCostEvidenceCapability } from "./types.ts";
 
-export const MODAL_SDK_PROVENANCE = {
-	packageName: "modal",
-	version: "0.7.6",
-} as const satisfies SdkProvenance;
-
 export const RUNCLOUD_SDK_PROVENANCE = {
 	packageName: "@run-cloud/sdk",
 	version: "0.9.0",
 } as const satisfies SdkProvenance;
 
-export const MODAL_APP_NAME = "sandbox-benchmarks";
 const REDACTED = "[REDACTED]";
 const CREDENTIAL_KEYS = new Set([
 	"authorization",
@@ -202,25 +196,6 @@ function baseMissing(
 	};
 }
 
-async function modalCapture(input: CostEvidenceCaptureInput): Promise<MissingProviderCostEvidence> {
-	if (!input.teardown.completed) {
-		return baseMissing(
-			input,
-			MODAL_SDK_PROVENANCE,
-			"sandbox_teardown_unconfirmed",
-			"Sandbox teardown was not confirmed; no provider usage was considered.",
-			{ appName: MODAL_APP_NAME },
-		);
-	}
-	return baseMissing(
-		input,
-		MODAL_SDK_PROVENANCE,
-		"unsupported_public_api",
-		"The generated SandboxGetResourceUsage RPC is private and was not invoked; the installed public Modal SDK exposes no trustworthy sandbox-scoped billed usage endpoint.",
-		{ appName: MODAL_APP_NAME },
-	);
-}
-
 async function runcloudCapture(
 	input: CostEvidenceCaptureInput,
 ): Promise<MissingProviderCostEvidence> {
@@ -239,12 +214,6 @@ async function runcloudCapture(
 		"The installed public run.cloud usage API is organization-wide cumulative usage and was not called or delta-attributed to this sandbox.",
 	);
 }
-
-/** Shared object: both Modal isolation variants have exactly one public cost capability. */
-export const modalCostEvidence: ProviderCostEvidenceCapability = {
-	sdk: MODAL_SDK_PROVENANCE,
-	captureAfterTeardown: modalCapture,
-};
 
 export const runcloudCostEvidence: ProviderCostEvidenceCapability = {
 	sdk: RUNCLOUD_SDK_PROVENANCE,

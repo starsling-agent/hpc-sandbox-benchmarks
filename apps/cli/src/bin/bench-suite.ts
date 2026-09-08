@@ -45,7 +45,7 @@ import {
 	writeJobSummary,
 } from "../lib/actions-log.ts";
 import { handleDiscovery } from "../lib/discovery.ts";
-import { runDriverSuite } from "../lib/driver-run.ts";
+import { runDriverSuite, usesDriverSuite } from "../lib/driver-run.ts";
 import { installLineTagging, withLineTag } from "../lib/log-prefix.ts";
 import {
 	fleetBudgetError,
@@ -119,8 +119,9 @@ usage: bench-suite [provider] [suite] [runId]
                           un-suffixed data/runs/<runId>.json — the single-sandbox/local form.
   --require <ids>         Comma-separated providers that MUST reach "validated"; exit 1 otherwise.
                           Also read from REQUIRE_PROVIDERS. CI sets this so a missing secret fails loudly.
-  --driver-path           Use the provider's registered DriverModule. Unmigrated providers fail as a
-                          usage error; this never falls back to packages/providers.
+  --driver-path           Force the DriverModule path. Registered ids (e2b, tama, modal-gvisor,
+                          modal-vm) already use it by default; unmigrated providers fail as a
+                          usage error rather than falling back to packages/providers.
   --list-providers        List the registered providers.
   --list-suites           List the registered suites and their dimensions/metrics.
   --json                  Emit --list-* output as JSON instead of human-readable lines.
@@ -133,7 +134,8 @@ examples:
   bench-suite daytona-vm cpu-node                 # one suite locally, auto runId
   bench-suite modal-vm memory ci-1234             # a specific cell + runId
   bench-suite e2b memory --require e2b            # fail (don't skip) if E2B_API_KEY is absent
-  bench-suite e2b system spike-1 --driver-path    # exercise the port-native benchmark path
+  bench-suite e2b system spike-1                  # registered ids use DriverModule by default
+  bench-suite e2b system spike-1 --driver-path    # redundant for registered ids; errors if unmigrated
   bench-suite e2b memory ci-1 --replicates 0,1,2  # 3 replicate sandboxes from this one process
   bench-suite --list-suites                       # discover the suite names first
 
@@ -449,7 +451,7 @@ interface ReplicateContext {
 	outFile: string;
 	indexFile: string;
 	replicateIndex?: number;
-	/** Explicit migration lane: load packages/drivers and never fall back to the legacy adapter. */
+	/** Force the DriverModule path. Registered ids already take that path; waived ids error. */
 	driverPath?: boolean;
 	/** Providers that must reach "validated" for this replicate to count as a success. */
 	required: readonly string[];
@@ -490,7 +492,9 @@ export async function runReplicate(ctx: ReplicateContext): Promise<ReplicateOutc
 	let usageError: string | undefined;
 	await withGroup(`Run suite ${suite} on ${provider}`, async () => {
 		try {
-			const executeSuite = ctx.driverPath === true ? runDriverSuite : runSuite;
+			const executeSuite = usesDriverSuite(provider, ctx.driverPath === true)
+				? runDriverSuite
+				: runSuite;
 			await executeSuite({
 				runId,
 				replicateIndex,

@@ -133,6 +133,15 @@ export interface LifecycleBenchmark {
 	gaps: ResultGap[];
 }
 
+export interface BenchmarkLifecycleComputeOptions extends BenchmarkLifecycleOptions {
+	/**
+	 * Vendor create options forwarded verbatim to `compute.sandbox.create`. A leftover adapter passes
+	 * its registry policy here; a DriverModule projection pins the create request inside its own
+	 * `create` and leaves this unset.
+	 */
+	readonly createOptions?: unknown;
+}
+
 /**
  * Benchmark a provider's lifecycle and control-plane timings: run `iterations` cold-start cycles
  * (spawn → readiness probe → exec → control-plane probes → payload exec → snapshot → teardown) via
@@ -140,28 +149,29 @@ export interface LifecycleBenchmark {
  * sandbox, so spawn/cold-start/teardown yield one Sample per iteration; the cheap control-plane reads
  * are sampled within each sandbox.
  *
- * The provider's `createCompute()` returns a computesdk `DirectProvider`, which structurally satisfies
- * {@link LifecycleCompute} (the minimal create/list/snapshot/destroy slice the driver times). A spawn
- * failure rejects (no sandbox to tear down); every other per-op failure is recorded as a FAILED gap, so
- * a single flaky probe can't sink the whole benchmark — while still being published as the outage it is.
+ * `compute` is the minimal create/list/snapshot/destroy slice this loop times — satisfied structurally
+ * by a computesdk `DirectProvider` and by the composition root's DriverModule projection, so both
+ * lanes share one spawn-failure and gap-accounting policy rather than drifting apart. A spawn failure
+ * rejects (no sandbox to tear down); every other per-op failure is recorded as a FAILED gap, so a
+ * single flaky probe can't sink the whole benchmark — while still being published as the outage it is.
  */
-export async function benchmarkLifecycle(
-	config: ProviderConfig,
-	options: BenchmarkLifecycleOptions = {},
+export async function benchmarkLifecycleCompute(
+	provider: string,
+	compute: LifecycleCompute,
+	options: BenchmarkLifecycleComputeOptions = {},
 ): Promise<LifecycleBenchmark> {
 	// `?? 5` only catches undefined; a non-finite iterations would make `i < iterations` never run
 	// (NaN) or never stop (Infinity), so it falls back to a single cycle.
 	const rawIterations = options.iterations ?? 5;
 	const iterations = Number.isFinite(rawIterations) ? Math.max(1, Math.floor(rawIterations)) : 1;
-	const compute: LifecycleCompute = config.createCompute();
 
 	const samples: RawRun[] = [];
 	const gaps: ResultGap[] = [];
 	for (let i = 0; i < iterations; i++) {
 		try {
 			const pass = await measureLifecycle(compute, {
-				provider: config.name,
-				createOptions: config.createOptions,
+				provider,
+				createOptions: options.createOptions,
 				execCommand: options.execCommand,
 				controlPlaneSamples: options.controlPlaneSamples ?? 5,
 				snapshot: options.snapshot,
@@ -201,11 +211,26 @@ export async function benchmarkLifecycle(
 	});
 
 	return {
-		provider: config.name,
+		provider,
 		samples,
 		aggregates: aggregateLifecycle(samples),
 		gaps: dedupedGaps,
 	};
+}
+
+/**
+ * {@link benchmarkLifecycleCompute} for a leftover `packages/providers` adapter: construct the
+ * adapter's computesdk provider and hand the loop its registry-owned create policy. Registered
+ * DriverModule ids do not come through here — the composition root projects them onto the same loop.
+ */
+export async function benchmarkLifecycle(
+	config: ProviderConfig,
+	options: BenchmarkLifecycleOptions = {},
+): Promise<LifecycleBenchmark> {
+	return benchmarkLifecycleCompute(config.name, config.createCompute(), {
+		...options,
+		createOptions: config.createOptions,
+	});
 }
 
 /** An unknown provider or suite is a usage error, distinct from an operational failure mid-run. */

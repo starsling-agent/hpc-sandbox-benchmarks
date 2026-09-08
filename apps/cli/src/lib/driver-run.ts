@@ -341,6 +341,11 @@ export function usesDriverSuite(providerId: string, driverPathFlag = false): boo
 	return driverPathFlag || isDriverProviderId(providerId);
 }
 
+/** Providers whose consumers have moved to declarative session operations in the migration stack. */
+export function usesSessionOperations(id: DriverProviderId): boolean {
+	return id === "e2b" || id === "tama";
+}
+
 /**
  * Split a module's declared create budget into the three numbers the harness and the request need.
  *
@@ -455,7 +460,7 @@ export async function benchmarkDriverLifecycle(
 	options: BenchmarkLifecycleOptions = {},
 ): Promise<LifecycleBenchmark> {
 	const opened = await openDriver(id);
-	if (id === "e2b")
+	if (usesSessionOperations(id))
 		return measureLifecycleOperation(
 			{
 				module: opened.module,
@@ -534,7 +539,7 @@ export async function runDriverSuite(options: RunSuiteOptions): Promise<void> {
 		throw error;
 	}
 
-	if (providerName === "e2b") {
+	if (usesSessionOperations(providerName)) {
 		await executeSuite({
 			allocation: {
 				module: opened.module,

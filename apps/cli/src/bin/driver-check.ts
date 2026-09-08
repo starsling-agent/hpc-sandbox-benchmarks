@@ -38,6 +38,7 @@ import {
 	createOwnedDriverSession,
 	openDriver,
 	sessionHandle,
+	usesSessionOperations,
 } from "../lib/driver-run.ts";
 
 type CheckStatus = "pass" | "fail" | "skip";
@@ -368,13 +369,12 @@ async function run(options: Options, log: (message: string) => void): Promise<Ch
 			log,
 		);
 		if (!ready) return checks;
-		const runner =
-			module.id === "e2b"
-				? new SessionStepRunner(live, module.execution, undefined, { mode: "fixed", times: 1 })
-				: new StepRunner(sessionHandle(live), transport, undefined, {
-						mode: "fixed",
-						times: 1,
-					});
+		const runner = usesSessionOperations(options.provider)
+			? new SessionStepRunner(live, module.execution, undefined, { mode: "fixed", times: 1 })
+			: new StepRunner(sessionHandle(live), transport, undefined, {
+					mode: "fixed",
+					times: 1,
+				});
 		await driveSession(live, options, transport.syncCapMs, runner, checks, log);
 	} finally {
 		if (options.keep) {

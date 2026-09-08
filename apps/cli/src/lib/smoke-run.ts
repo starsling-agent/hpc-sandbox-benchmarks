@@ -7,7 +7,7 @@ import { TARGET_SPEC } from "@sandbox-benchmarks/schema";
 import type { SmokeResult } from "@sandbox-benchmarks/templates/smoke";
 import { runSmoke } from "@sandbox-benchmarks/templates/smoke";
 import type { ArtifactResolution } from "./driver-run.ts";
-import { openDriver, withDriverSandbox } from "./driver-run.ts";
+import { openDriver, usesSessionOperations, withDriverSandbox } from "./driver-run.ts";
 import type { ProviderTarget } from "./providers-run.ts";
 
 /** A smoke run's outcome: the probe results, plus the lifecycle error if boot/teardown threw. */
@@ -42,7 +42,7 @@ export async function bootAndSmoke(
 		}
 		switch (target.kind) {
 			case "driver":
-				if (target.id === "e2b") {
+				if (usesSessionOperations(target.id)) {
 					const opened = await openDriver(target.id, options);
 					await withSandboxWork(
 						{

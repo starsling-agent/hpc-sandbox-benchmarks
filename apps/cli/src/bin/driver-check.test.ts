@@ -1,5 +1,27 @@
 import { describe, expect, test } from "bun:test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { durableStepTimeoutMs, parseArgs, workloadScript } from "./driver-check.ts";
+
+const CLI = join(import.meta.dir, "driver-check.ts");
+
+/**
+ * Drive the bin as a subprocess with every E2B variable stripped, so `openDriver` skips on
+ * missing credentials and no sandbox is ever allocated by a unit test — including on the
+ * CI-with-secrets lanes, where the ambient key would otherwise make this hit the real control plane.
+ */
+async function runCli(...args: string[]) {
+	const env = Object.fromEntries(
+		Object.entries(process.env).filter(([name]) => !name.startsWith("E2B_")),
+	);
+	const proc = Bun.spawn(["bun", CLI, ...args], { env, stdout: "pipe", stderr: "pipe" });
+	const [stdout, stderr, exitCode] = await Promise.all([
+		new Response(proc.stdout).text(),
+		new Response(proc.stderr).text(),
+		proc.exited,
+	]);
+	return { stdout, stderr, exitCode };
+}
 
 describe("driver-check argv", () => {
 	test("defaults to the published version phase and a short workload", () => {
@@ -107,5 +129,37 @@ describe("workloadScript", () => {
 		expect(script).toContain("sleep 7");
 		// `set -eu` matters: without it a failing step still exits 0 and the check would pass falsely.
 		expect(script.startsWith("set -eu;")).toBe(true);
+	});
+});
+
+describe("report emission", () => {
+	// `exitAfterSandboxCleanup` is the only thing that retries a sandbox whose `destroy` already
+	// failed during the run. An unguarded write threw past it as an unhandled rejection — `beforeExit`
+	// does not fire on that path — so an unwritable `--report-file` leaked a billable sandbox.
+	test("an unwritable report path is diagnosed and never escapes past cleanup", async () => {
+		const unwritable = join(tmpdir(), "driver-check-no-such-dir", "report.json");
+		const { stderr, exitCode } = await runCli(
+			"--provider",
+			"e2b",
+			"--report-file",
+			unwritable,
+			"--workload-seconds",
+			"1",
+		);
+
+		// The skip proves no sandbox was created, so this exercises the emit guard in isolation.
+		expect(stderr).toContain("missing-credentials");
+		expect(stderr).toContain("could not emit the report");
+		// The crash banner is the regression: it means the throw escaped instead of being folded in.
+		expect(stderr).not.toContain("Bun v");
+		expect(exitCode).toBe(1);
+	});
+
+	test("a writable report path still exits on the check outcome alone", async () => {
+		const { stderr, exitCode } = await runCli("--provider", "e2b", "--workload-seconds", "1");
+
+		// Skips are not failures without --require-pass, so a clean emit leaves the lane green.
+		expect(stderr).not.toContain("could not emit the report");
+		expect(exitCode).toBe(0);
 	});
 });

@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { collectResults, withCleanupPreservingPrimaryError } from "@sandbox-benchmarks/harness";
+import { succeeded } from "@sandbox-benchmarks/driver";
+import { collectResults } from "@sandbox-benchmarks/harness";
 import type { App, Image, ModalClient, Volume } from "modal";
 import { installLineTagging, withLineTag } from "../log-prefix.ts";
 import { runPooled } from "../replicates.ts";
@@ -8,12 +9,12 @@ import type { GpuArgs } from "./args.ts";
 import { GPU_BENCHMARK } from "./config.ts";
 import { cudaGraphEvidenceFromLog, cudaGraphEvidencePassed } from "./cuda-graphs.ts";
 import {
-	createGpuSandbox,
 	gpuSandboxResources,
 	observeGpuSandbox,
 	stageCollectedEvidence,
 	stageGpuProducer,
 	vllmEnvironment,
+	withGpuSandbox,
 } from "./modal.ts";
 import { validateModelAssets } from "./prepare-models.ts";
 import type { GpuFleetFailure, GpuFleetReplicate } from "./report.ts";
@@ -51,18 +52,23 @@ async function runGpuReplicate(options: {
 	const outputDirectory = join(options.outputRoot, "replicates", `r${index}`);
 	mkdirSync(outputDirectory, { recursive: true });
 	const startedAt = new Date();
-	const sandbox = await createGpuSandbox(options.client, () =>
-		options.client.sandboxes.create(options.app, options.kernelImage, {
-			...gpuSandboxResources(args),
-			env: vllmEnvironment(args),
-			volumes: {
-				[GPU_BENCHMARK.paths.modelMount]: options.modelVolume.withMountOptions({ readOnly: true }),
+	return withGpuSandbox(
+		{
+			client: options.client,
+			app: options.app,
+			image: options.kernelImage,
+			options: {
+				...gpuSandboxResources(args),
+				env: vllmEnvironment(args),
+				volumes: {
+					[GPU_BENCHMARK.paths.modelMount]: options.modelVolume.withMountOptions({
+						readOnly: true,
+					}),
+				},
 			},
-		}),
-	);
-	return withCleanupPreservingPrimaryError(
-		async () => {
-			await sandbox.sdk.setTags({
+		},
+		async (sandbox) => {
+			await sandbox.session.native.setTags({
 				"gpu-benchmark-role": "benchmark-replicate",
 				"gpu-benchmark-replicate": String(index),
 				profile: GPU_BENCHMARK.profile.name,
@@ -70,7 +76,7 @@ async function runGpuReplicate(options: {
 				"model-volume": args.modelVolume,
 				"kernel-snapshot-image": options.kernelImage.imageId,
 			});
-			console.error(`Modal GPU sandbox r${index}: ${sandbox.sandboxId}`);
+			console.error(`Modal GPU sandbox r${index}: ${sandbox.session.sandboxRef.id}`);
 			await validateModelAssets(sandbox);
 			await stageGpuProducer(sandbox);
 			sandbox.runner.phase = "benchmark";
@@ -96,14 +102,14 @@ async function runGpuReplicate(options: {
 			} catch (error) {
 				artifactErrors.push(error);
 			}
-			if (benchmark.exitCode !== 0) {
+			if (!succeeded(benchmark.exit)) {
 				if (artifactErrors.length > 0) {
 					console.error(
-						`Artifact collection also failed after the PTS workload exited ${benchmark.exitCode}: ${artifactErrors.map(errorDetail).join("; ")}`,
+						`Artifact collection also failed after the PTS workload exited ${JSON.stringify(benchmark.exit)}: ${artifactErrors.map(errorDetail).join("; ")}`,
 					);
 				}
 				throw new Error(
-					`PTS vLLM workload exited ${benchmark.exitCode}; partial artifacts were retained`,
+					`PTS vLLM workload exited ${JSON.stringify(benchmark.exit)}; partial artifacts were retained`,
 				);
 			}
 			if (artifactErrors.length > 0) {
@@ -120,7 +126,7 @@ async function runGpuReplicate(options: {
 				replicateIndex: index,
 				baseImageId: options.baseImage.imageId,
 				kernelSnapshotImageId: options.kernelImage.imageId,
-				sandboxId: sandbox.sandboxId,
+				sandboxId: sandbox.session.sandboxRef.id,
 				startedAt,
 				finishedAt,
 				cudaGraphs,
@@ -132,22 +138,7 @@ async function runGpuReplicate(options: {
 			}
 			return { index, xml: readFileSync(xmlPath, "utf8"), metadata };
 		},
-		async () => {
-			await sandbox.destroy();
-			writeJson(join(outputDirectory, "lifecycle.json"), {
-				schemaVersion: "1.0",
-				replicateIndex: index,
-				sandboxId: sandbox.sandboxId,
-				terminatedAndUnlisted: true,
-				verifiedAt: new Date().toISOString(),
-			});
-		},
-		(error) => {
-			console.error(
-				`Modal GPU sandbox r${index} cleanup also failed after the operation failed:`,
-				error,
-			);
-		},
+		{ path: join(outputDirectory, "lifecycle.json"), replicateIndex: index },
 	);
 }
 

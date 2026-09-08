@@ -362,7 +362,7 @@ describe("Modal enforced control deadline", () => {
 			const state = neverSettlingRunner(phase);
 			const operation =
 				phase === "lookup"
-					? modalLifecycle("vm", state.runner).destroy(
+					? modalLifecycle("v1", state.runner).destroy(
 							{} as never,
 							undefined,
 							{},
@@ -374,7 +374,7 @@ describe("Modal enforced control deadline", () => {
 					: phase === "poll"
 						? modalProbes(state.runner).observe({} as never, modalRef)
 						: phase === "terminate"
-							? modalLifecycle("vm", state.runner).destroy({} as never, modalRef, {})
+							? modalLifecycle("v1", state.runner).destroy({} as never, modalRef, {})
 							: launchModalCommand(state.runner, {} as never, "sleep 1", modalRef);
 			await expect(operation).rejects.toThrow(/exceeded 10ms/);
 			expect(state.settled()).toBe(1);
@@ -389,7 +389,7 @@ describe("Modal enforced control deadline", () => {
 	it("forwards caller cancellation through the same settling boundary", async () => {
 		const state = neverSettlingRunner("terminate");
 		const controller = new AbortController();
-		const operation = modalLifecycle("vm", state.runner).destroy({} as never, modalRef, {
+		const operation = modalLifecycle("v1", state.runner).destroy({} as never, modalRef, {
 			signal: controller.signal,
 		});
 		controller.abort(new Error("caller cancelled Modal teardown"));
@@ -516,7 +516,7 @@ describe("Modal truthful lifecycle and recovery projections", () => {
 				},
 			},
 		};
-		const lifecycle = modalLifecycle("vm", directRunner(control));
+		const lifecycle = modalLifecycle("v1", directRunner(control));
 		await lifecycle.destroy(
 			{} as never,
 			{ provider: "modal-vm", id: "sb-rxWrDWGgOCJXeCSavkiDL6" },
@@ -555,10 +555,11 @@ describe("Modal truthful lifecycle and recovery projections", () => {
 		};
 		for (const provider of ["modal-gvisor", "modal-vm"] as const) {
 			await expect(
-				modalLifecycle(
-					provider === "modal-gvisor" ? "gvisor" : "vm",
-					directRunner(control),
-				).destroy({} as never, { provider, id: "sb-rxWrDWGgOCJXeCSavkiDL6" }, {}),
+				modalLifecycle(provider === "modal-gvisor" ? "v2" : "v1", directRunner(control)).destroy(
+					{} as never,
+					{ provider, id: "sb-rxWrDWGgOCJXeCSavkiDL6" },
+					{},
+				),
 			).resolves.toBeUndefined();
 		}
 	});
@@ -580,7 +581,7 @@ describe("Modal truthful lifecycle and recovery projections", () => {
 				},
 			};
 			await expect(
-				modalLifecycle("vm", directRunner(control)).destroy({} as never, modalRef, {}),
+				modalLifecycle("v1", directRunner(control)).destroy({} as never, modalRef, {}),
 			).rejects.toMatchObject({ path, code: Status.NOT_FOUND });
 		}
 	});
@@ -603,7 +604,7 @@ describe("Modal truthful lifecycle and recovery projections", () => {
 		expect(isModalRetryableCreate(new Error("quota|rate limit|capacity"))).toBe(false);
 		expect(isModalRetryableCreate(new Error("Modal quota exceeded somewhere else"))).toBe(false);
 		expect(
-			modalCreateRecovery("vm", directRunner({ sandboxes: {} })).isRetryableCreate?.(exhausted),
+			modalCreateRecovery("v1", directRunner({ sandboxes: {} })).isRetryableCreate?.(exhausted),
 		).toBe(true);
 	});
 
@@ -627,7 +628,7 @@ describe("Modal truthful lifecycle and recovery projections", () => {
 			},
 		} as unknown as ModalClient;
 		await expect(
-			modalCreateRecovery("vm", directRunner(modalControlPlane(client))).cleanup(
+			modalCreateRecovery("v1", directRunner(modalControlPlane(client))).cleanup(
 				{} as never,
 				{ kind: "name", value: "benchmark-12345678-1234-1234-1234-123456789abc" },
 				{},
@@ -689,7 +690,7 @@ describe("Modal truthful lifecycle and recovery projections", () => {
 			},
 		};
 		await expect(
-			modalLifecycle("vm", directRunner(control)).destroy(
+			modalLifecycle("v1", directRunner(control)).destroy(
 				hostileNative as never,
 				undefined,
 				{},
@@ -717,7 +718,7 @@ describe("Modal truthful lifecycle and recovery projections", () => {
 			},
 		};
 		await expect(
-			modalLifecycle("vm", directRunner(control)).destroy(
+			modalLifecycle("v1", directRunner(control)).destroy(
 				{} as never,
 				undefined,
 				{},
@@ -760,10 +761,10 @@ describe("Modal truthful lifecycle and recovery projections", () => {
 			value: "benchmark-12345678-1234-1234-1234-123456789abc",
 		};
 		expect(
-			await modalCreateRecovery("gvisor", directRunner(control)).cleanup({} as never, locator, {}),
+			await modalCreateRecovery("v2", directRunner(control)).cleanup({} as never, locator, {}),
 		).toEqual({ status: "destroyed" });
 		expect(
-			await modalCreateRecovery("vm", directRunner(control)).cleanup({} as never, locator, {}),
+			await modalCreateRecovery("v1", directRunner(control)).cleanup({} as never, locator, {}),
 		).toEqual({ status: "destroyed" });
 		expect(lookups).toEqual([
 			`v2:${MODAL_APP_NAME}:benchmark-12345678-1234-1234-1234-123456789abc`,
@@ -836,8 +837,8 @@ describe("Modal truthful lifecycle and recovery projections", () => {
 					},
 					map: () => ({ name }),
 				},
-				lifecycle: modalLifecycle<typeof compute>("gvisor", runner),
-				createRecovery: modalCreateRecovery<typeof compute>("gvisor", runner),
+				lifecycle: modalLifecycle<typeof compute>("v2", runner),
+				createRecovery: modalCreateRecovery<typeof compute>("v2", runner),
 				prepareAndVerifyCreatedRequest: async () => ({ status: "honored" }),
 				hasWorkingFilesystem: false,
 			}),

@@ -13,7 +13,7 @@ import {
 	VLLM_IMAGE_COMMANDS,
 } from "./config.ts";
 import { cudaGraphEvidenceFromLog } from "./cuda-graphs.ts";
-import { createGpuSandbox, gpuSandboxResources, vllmEnvironment } from "./modal.ts";
+import { gpuSandboxResources, vllmEnvironment } from "./modal.ts";
 import { kernelSeedManifest, kernelSnapshotPointerFromText } from "./prepare-kernels.ts";
 import { modelAssetConfig } from "./prepare-models.ts";
 
@@ -230,23 +230,7 @@ describe("CUDA graph evidence", () => {
 	});
 });
 
-describe("Modal lifecycle adapter", () => {
-	test("terminates with wait and verifies the sandbox is absent", async () => {
-		const terminateCalls: unknown[] = [];
-		const sdk = {
-			sandboxId: "sb-test",
-			terminate: async (options: unknown) => terminateCalls.push(options),
-		};
-		const client = {
-			sandboxes: {
-				list: async function* () {},
-			},
-		};
-		const sandbox = await createGpuSandbox(client as never, async () => sdk as never);
-		await sandbox.destroy();
-		expect(terminateCalls).toEqual([{ wait: true }]);
-	});
-
+describe("Modal allocation configuration", () => {
 	test("shares resource and vLLM environment policy across seed and benchmark sandboxes", () => {
 		const args = parseGpuArgs([]);
 		expect(gpuSandboxResources(args)).toEqual({

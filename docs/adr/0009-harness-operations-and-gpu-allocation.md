@@ -18,6 +18,12 @@ the common driver and harness interfaces. Future GPU runners reuse the session s
 own typed allocation configuration. This preserves provider-specific resource and artifact
 semantics without an arbitrary vendor-options bag on every request.
 
+Modal GPU allocation uses the stable V1 gVisor service. The CPU gVisor DriverModule uses V2;
+prepared GPU resources resolve through a separate typed allocation factory for the same provider.
+[Modal VM sandboxes](https://modal.com/docs/guide/vm-sandboxes) and
+[Sandbox V2](https://modal.com/docs/guide/sandbox-v2) do not support GPUs. Built or restored SDK
+image IDs remain the session artifact identity, and mounted volumes retain SDK mount options.
+
 CLI composition owns environment and artifact resolution; harness owns workload execution,
 measurement, and evidence persistence; drivers own provider behavior. Migrate all existing
 providers and callers before removing the legacy package and exports. ComputeSDK may remain

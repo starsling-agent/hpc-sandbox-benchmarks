@@ -248,7 +248,7 @@ interface ModalTextProcess {
 	wait(): Promise<unknown>;
 }
 
-async function modalProcessResult(
+export async function modalProcessResult(
 	process: ModalTextProcess,
 	onFailure: () => void,
 ): Promise<{
@@ -391,18 +391,20 @@ export function modalCreateOptions(
 
 function modalSandboxByName(
 	control: ModalControlPlane,
-	variant: ModalVariant,
+	backend: "v1" | "v2",
 	name: string,
+	appName: string,
 ): Promise<ModalControlSandbox> {
-	return variant === "gvisor"
-		? control.sandboxes.experimentalFromName(MODAL_APP_NAME, name)
-		: control.sandboxes.fromName(MODAL_APP_NAME, name);
+	return backend === "v2"
+		? control.sandboxes.experimentalFromName(appName, name)
+		: control.sandboxes.fromName(appName, name);
 }
 
 /** Waited, bounded teardown preserves transport failures and confirms terminal state. */
 export function modalLifecycle<TCompute extends ComputeSdkLike = ModalCompute>(
-	variant: ModalVariant,
+	backend: "v1" | "v2",
 	runner: ModalControlRunner,
+	appName = MODAL_APP_NAME,
 ): ComputeSdkLifecycle<TCompute> {
 	return {
 		destroy: async (_sandbox, ref, options, recoveryLocator) => {
@@ -417,7 +419,7 @@ export function modalLifecycle<TCompute extends ComputeSdkLike = ModalCompute>(
 							if (recoveryLocator === undefined) {
 								throw new Error("Modal failed-create cleanup has no stable recovery name");
 							}
-							attached = await modalSandboxByName(control, variant, recoveryLocator.value);
+							attached = await modalSandboxByName(control, backend, recoveryLocator.value, appName);
 						}
 						await attached.terminate({ wait: true });
 					},
@@ -436,8 +438,9 @@ export function modalLifecycle<TCompute extends ComputeSdkLike = ModalCompute>(
 
 /** Stable create names let the bridge reconcile an accepted allocation whose response was lost. */
 export function modalCreateRecovery<TCompute extends ComputeSdkLike = ModalCompute>(
-	variant: ModalVariant,
+	backend: "v1" | "v2",
 	runner: ModalControlRunner,
+	appName = MODAL_APP_NAME,
 ): ComputeSdkCreateRecovery<TCompute> {
 	return {
 		absenceConfirmationMs: MODAL_RECOVERY_CONFIRMATION_MS,
@@ -451,14 +454,14 @@ export function modalCreateRecovery<TCompute extends ComputeSdkLike = ModalCompu
 				options,
 				async (control) => {
 					const lookups =
-						variant === "gvisor"
+						backend === "v2"
 							? [
-									() => control.sandboxes.experimentalFromName(MODAL_APP_NAME, name),
-									() => control.sandboxes.fromName(MODAL_APP_NAME, name),
+									() => control.sandboxes.experimentalFromName(appName, name),
+									() => control.sandboxes.fromName(appName, name),
 								]
 							: [
-									() => control.sandboxes.fromName(MODAL_APP_NAME, name),
-									() => control.sandboxes.experimentalFromName(MODAL_APP_NAME, name),
+									() => control.sandboxes.fromName(appName, name),
+									() => control.sandboxes.experimentalFromName(appName, name),
 								];
 					let found = false;
 					let destroyed = false;
@@ -671,8 +674,8 @@ function modalSpec<P extends ModalProviderId>(
 				launch: (sandbox, command, options, ref) =>
 					launchModalCommand(runner, sandbox, command, ref, options),
 			},
-			lifecycle: modalLifecycle(variant, runner),
-			createRecovery: modalCreateRecovery(variant, runner),
+			lifecycle: modalLifecycle(variant === "gvisor" ? "v2" : "v1", runner),
+			createRecovery: modalCreateRecovery(variant === "gvisor" ? "v2" : "v1", runner),
 			prepareAndVerifyCreatedRequest: (sandbox, _native, request, options, ref) =>
 				verifyModalDiskCapacity(runner, sandbox, request, options, ref),
 			// Both variants use the kit's direct-exec filesystem fallback.

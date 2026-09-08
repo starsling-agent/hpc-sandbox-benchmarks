@@ -218,9 +218,15 @@ describe("provider wiring projections", () => {
 
 	test("generates one correlated lazy loader from every unwaived registry id", () => {
 		const fleet = driverFleetProjection();
-		expect(fleet.moduleIds).toEqual(["e2b", "modal-gvisor", "modal-vm", "novita", "tama"]);
-		expect([...PROVIDER_IDS].filter((id) => fleet.waivers[id] !== undefined)).toEqual([
+		expect(fleet.moduleIds).toEqual([
+			"e2b",
 			"daytona-vm",
+			"modal-gvisor",
+			"modal-vm",
+			"novita",
+			"tama",
+		]);
+		expect([...PROVIDER_IDS].filter((id) => fleet.waivers[id] !== undefined)).toEqual([
 			"daytona-container",
 			"blaxel",
 			"microsandbox-cloud",
@@ -284,6 +290,7 @@ describe("provider wiring projections", () => {
 		expect(dependencies.arktype).toBe("catalog:");
 		expect(exports).toEqual({
 			".": "./src/index.ts",
+			"./daytona-vm": "./src/daytona-vm.ts",
 			"./e2b": "./src/e2b.ts",
 			"./modal-gvisor": "./src/modal-gvisor.ts",
 			"./modal-vm": "./src/modal-vm.ts",

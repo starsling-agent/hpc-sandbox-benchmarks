@@ -34,7 +34,7 @@ describe("forEachProviderWithCreds `only`", () => {
 		expect(runs.map((r) => r.provider)).toEqual(["daytona-vm"]);
 		expect(runs[0]?.status).toBe("ok");
 		expect(runs[0]?.value).toBe("smoked");
-		expect(kinds).toEqual(["legacy"]);
+		expect(kinds).toEqual(["driver"]);
 	});
 
 	test("without `only`, drives every schema provider in registry order", async () => {
@@ -94,8 +94,8 @@ describe("forEachProviderWithCreds `only`", () => {
 			},
 		);
 		expect(runs.map((r) => r.provider)).toEqual(["daytona-vm", "tama"]);
-		expect(kinds).toEqual({ "daytona-vm": "legacy", tama: "driver" });
+		expect(kinds).toEqual({ "daytona-vm": "driver", tama: "driver" });
 		expect(usesDriverSuite("tama")).toBe(true);
-		expect(usesDriverSuite("daytona-vm")).toBe(false);
+		expect(usesDriverSuite("daytona-vm")).toBe(true);
 	});
 });

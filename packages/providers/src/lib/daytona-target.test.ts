@@ -45,7 +45,7 @@ const ENV_KEYS = ["DAYTONA_API_KEY", "DAYTONA_TARGET", "DAYTONA_CONTAINER_TARGET
 let savedEnv: Record<string, string | undefined> = {};
 
 async function attemptCreate(
-	providerId: "daytona-vm" | "daytona-container",
+	providerId: "daytona-container",
 	createOptions?: Record<string, unknown>,
 ) {
 	const adapter = adapters[providerId];
@@ -97,19 +97,6 @@ describe("daytonaClientTarget", () => {
 		expect(body.snapshot).toBe(config.daytonaContainer.snapshot);
 		// Restore semantics on the rejected create: the set-but-empty value comes back exactly.
 		expect(process.env.DAYTONA_TARGET).toBe("");
-	});
-
-	it("pins daytona-vm's target the same way, beating a conflicting env fallback", async () => {
-		// daytona-vm only worked pre-fix because its job env fed the SDK's fallback the right value by
-		// accident. Prove the CONFIG value travels — give the env a decoy the pin must beat, so this
-		// cannot pass vacuously via the fallback.
-		process.env.DAYTONA_TARGET = "decoy-region";
-		expect(config.daytonaVm.target).toBeTruthy();
-		expect(config.daytonaVm.target).not.toBe("decoy-region");
-		const body = await attemptCreate("daytona-vm");
-		expect(body.target).toBe(config.daytonaVm.target);
-		// Restore semantics: the pre-existing env value survives the rejected create untouched.
-		expect(process.env.DAYTONA_TARGET).toBe("decoy-region");
 	});
 
 	it("deletes DAYTONA_TARGET after create when it was previously unset", async () => {

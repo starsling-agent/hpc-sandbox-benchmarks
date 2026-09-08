@@ -35,3 +35,14 @@ before its PR is opened; missing credentials or infrastructure block that submis
 commits preserve the existing paths for unmigrated providers, and the final migration removes
 legacy compatibility. This keeps each change reviewable without declaring the whole fleet migrated
 or validated on the strength of one provider's result.
+
+Daytona uses the native SDK session API for separate stdout/stderr and asynchronous command
+acceptance. Each sandbox lazily creates one reusable control session; durable jobs use independent
+sessions so polling remains responsive. Commands execute in child Bash shells to avoid leaking
+working-directory or shell state across calls.
+
+First exec includes control-session creation in time-to-first-exec and cold-start measurements.
+Subsequent exec samples use the session transport. VM snapshot timing includes the service-required
+stop, snapshot, and restart sequence, and stopping invalidates the cached control session. These
+transport and timing differences must be considered when comparing older Daytona runs. Metric IDs,
+Run schema, probe counts, and artifact identity remain unchanged.

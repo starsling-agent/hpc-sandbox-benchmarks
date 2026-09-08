@@ -35,6 +35,7 @@ export const MIGRATED_DRIVER_IDS = [
 	"modal-vm",
 	"tama",
 	"novita",
+	"daytona-vm",
 ] as const satisfies readonly ProviderId[];
 
 /** A schema id served by a registered DriverModule. Derived from the list, so the two cannot drift. */
@@ -113,7 +114,6 @@ function microsandboxCloudCredentials(): { kind: "cloud"; url?: string; apiKey: 
 export const adapters: Record<LegacyAdapterId, ProviderAdapter> = {
 	// Both Daytona variants share the account API key (the schema meta owns DAYTONA_API_KEY); they
 	// differ only in region + the class-specific snapshot resolved by the config gatekeeper.
-	"daytona-vm": daytonaAdapter(config.daytonaVm),
 	"daytona-container": daytonaAdapter(config.daytonaContainer),
 	blaxel: {
 		artifact: { kind: "none" },

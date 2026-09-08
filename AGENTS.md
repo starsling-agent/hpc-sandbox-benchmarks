@@ -56,3 +56,20 @@ directly:
 - Mise PTS leaves that lack `phoronix-test-suite` (or a leaf-specific tool like `stress-ng` /
   `nc`) call `skip_result` and exit 0 — a green task exit does **not** prove the benchmark ran.
   Check for `benchmark-results/<prefix>.xml` (success) vs `benchmark-results/<prefix>--skipped.json`.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live in GitHub Issues. Read
+`docs/agents/issue-tracker.md` before tracker operations.
+
+### Triage labels
+
+Use the five canonical triage labels. Read
+`docs/agents/triage-labels.md` before applying triage labels.
+
+### Domain docs
+
+Use a multi-context layout with a root `CONTEXT-MAP.md` linking
+to package contexts. Read `docs/agents/domain.md` before exploring.

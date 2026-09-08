@@ -275,6 +275,13 @@ export function isE2bRetryableCreate(error: unknown): boolean {
 	);
 }
 
+/**
+ * What the bridge needs to reconcile — and classify — a create whose outcome E2B left ambiguous.
+ *
+ * The locator is an attempt marker written into create metadata, so a sandbox the wrapper never
+ * returned a handle for is still findable by listing. Both classifiers answer independently: whether
+ * the refusal happened before allocation, and whether it is worth retrying.
+ */
 export function e2bCreateRecovery(apiKey: string): ComputeSdkCreateRecovery<E2bCompute> {
 	return {
 		absenceConfirmationMs: E2B_RECOVERY_CONFIRMATION_MS,

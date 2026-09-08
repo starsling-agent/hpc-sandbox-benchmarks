@@ -46,6 +46,12 @@ export const TAMA_REQUEST_COVERAGE = {
 	env: "unsupported",
 } as const satisfies CliCreateRequestCoverage;
 
+/**
+ * Build the table from one already-parsed context, so nothing here reads ambient env or resolves an
+ * artifact: `env` arrives validated by the registry's declared input slice, and `resolvedArtifact` is
+ * the ref the composition root chose for this lane. That is why `create` can assert the request's
+ * artifact matches rather than deciding which image to boot.
+ */
 export function tamaSpec({ env, resolvedArtifact }: DriverContext<"tama">) {
 	return defineCliSpec(TAMA_MACHINES, {
 		binary: env.TAMA_CLI ?? "tama",

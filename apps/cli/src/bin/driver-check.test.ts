@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { durableStepTimeoutMs, parseArgs, workloadScript } from "./driver-check.ts";
@@ -155,11 +156,34 @@ describe("report emission", () => {
 		expect(exitCode).toBe(1);
 	});
 
-	test("a writable report path still exits on the check outcome alone", async () => {
-		const { stderr, exitCode } = await runCli("--provider", "e2b", "--workload-seconds", "1");
+	test("a writable report path receives the report and exits on the checks alone", async () => {
+		const directory = mkdtempSync(join(tmpdir(), "driver-check-report-"));
+		const reportFile = join(directory, "report.json");
+		try {
+			const { stdout, stderr, exitCode } = await runCli(
+				"--provider",
+				"e2b",
+				"--report-file",
+				reportFile,
+				"--workload-seconds",
+				"1",
+			);
 
-		// Skips are not failures without --require-pass, so a clean emit leaves the lane green.
-		expect(stderr).not.toContain("could not emit the report");
-		expect(exitCode).toBe(0);
+			// The guard must not swallow a write that succeeded: the file is the deliverable, and CI
+			// consumes it as the artifact for this lane.
+			expect(stderr).not.toContain("could not emit the report");
+			expect(JSON.parse(readFileSync(reportFile, "utf8"))).toMatchObject({
+				provider: "e2b",
+				phase: "version",
+				workloadSeconds: 1,
+				checks: [{ name: "resolve", status: "skip" }],
+			});
+			// --report-file redirects the report off stdout so provider chatter cannot corrupt it.
+			expect(stdout).toBe("");
+			// Skips are not failures without --require-pass, so a clean emit leaves the lane green.
+			expect(exitCode).toBe(0);
+		} finally {
+			rmSync(directory, { recursive: true, force: true });
+		}
 	});
 });

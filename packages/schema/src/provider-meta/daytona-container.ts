@@ -5,7 +5,7 @@ export default defineProviderMeta("daytona-container", {
 	displayName: "Daytona (container)",
 	vendor: "Daytona",
 	website: "https://daytona.io",
-	sdkPackage: "@computesdk/daytona",
+	sdkPackage: "@daytona/sdk",
 	artifact: { kind: "baked", nameSuffix: "-container" },
 	inputs: [
 		"DAYTONA_API_KEY",

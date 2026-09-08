@@ -187,6 +187,17 @@ export function daytonaSpec<P extends DaytonaId>(
 			},
 		},
 		prepareAndVerifyCreatedRequest: async (_sandbox, native, request) => {
+			const expectedClass = "DAYTONA_CONTAINER_TARGET" in env ? "container" : "linux-vm";
+			if (native.sandboxClass !== expectedClass)
+				return {
+					status: "unsupported",
+					detail: `requested ${expectedClass} but snapshot allocates ${native.sandboxClass ?? "unknown"}`,
+				};
+			if (native.cpu !== request.spec.vcpus || native.memory !== request.spec.memoryGb)
+				return {
+					status: "unsupported",
+					detail: "Daytona snapshot resources differ from the requested CPU or memory",
+				};
 			if (request.spec.diskGb === undefined) return { status: "honored" };
 			return native.disk >= request.spec.diskGb
 				? { status: "honored" }

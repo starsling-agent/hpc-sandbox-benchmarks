@@ -273,6 +273,8 @@ export async function createOwnedDriverSession(
  */
 const ARTIFACT_REF_OVERRIDE_ENV = {
 	e2b: "E2B_TEMPLATE",
+	"daytona-vm": "DAYTONA_SNAPSHOT",
+	"daytona-container": "DAYTONA_CONTAINER_SNAPSHOT",
 } as const satisfies Partial<Record<DriverProviderId, string>>;
 
 /**
@@ -349,7 +351,8 @@ export function usesSessionOperations(id: DriverProviderId): boolean {
 		id === "modal-gvisor" ||
 		id === "modal-vm" ||
 		id === "novita" ||
-		id === "daytona-vm"
+		id === "daytona-vm" ||
+		id === "daytona-container"
 	);
 }
 

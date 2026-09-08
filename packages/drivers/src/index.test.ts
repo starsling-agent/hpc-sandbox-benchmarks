@@ -15,6 +15,7 @@ describe("generated driver loader", () => {
 		expect(Object.keys(DRIVERS)).toEqual([
 			"e2b",
 			"daytona-vm",
+			"daytona-container",
 			"modal-gvisor",
 			"modal-vm",
 			"novita",

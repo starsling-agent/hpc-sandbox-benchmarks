@@ -76,7 +76,7 @@ docs/       methodology, ADRs, CI & secrets
 
 ## Native SDK driver configuration
 
-E2B, Novita, Daytona VM, and both Modal variants allocate through the catalog-pinned native SDKs. `_native.ts` projects
+E2B, Novita, both Daytona variants, and both Modal variants allocate through the catalog-pinned native SDKs. `_native.ts` projects
 those exact SDK handles into the shared driver session machinery; it does not invoke ComputeSDK
 wrappers or cast between vendored SDK copies. Provider create-option schemas validate the boundary,
 and each request mapper must satisfy its schema's inferred type. Native SDK error classes reach the

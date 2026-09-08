@@ -3,16 +3,12 @@
 // pins Sandbox v1; run.cloud also uses its native SDK because no @computesdk wrapper is published.
 
 import { blaxel } from "@computesdk/blaxel";
-import { daytona } from "@computesdk/daytona";
 import { namespace } from "@computesdk/namespace";
 import type { ProviderId } from "@sandbox-benchmarks/schema";
 import { PROVIDER_IDS, TARGET_SPEC } from "@sandbox-benchmarks/schema";
-import type { DaytonaConfig } from "../config.ts";
 import { config } from "../config.ts";
 import { blaxelWithVolumeAndKeepAlive } from "./blaxel-volume.ts";
 import { runcloudCostEvidence } from "./cost-evidence.ts";
-import { daytonaActivateSnapshot } from "./daytona-snapshot.ts";
-import { daytonaClientTarget } from "./daytona-target.ts";
 import { microsandboxCloudCompute } from "./microsandbox.ts";
 import { RUNCLOUD_CREATE_CEILING_MS, runcloudCompute } from "./runcloud.ts";
 import { runloopCompute } from "./runloop.ts";
@@ -36,40 +32,13 @@ export const MIGRATED_DRIVER_IDS = [
 	"tama",
 	"novita",
 	"daytona-vm",
+	"daytona-container",
 ] as const satisfies readonly ProviderId[];
 
 /** A schema id served by a registered DriverModule. Derived from the list, so the two cannot drift. */
 export type MigratedDriverId = (typeof MIGRATED_DRIVER_IDS)[number];
 /** Schema ids still served by this package's ComputeSDK adapters. */
 export type LegacyAdapterId = Exclude<ProviderId, MigratedDriverId>;
-
-/**
- * The Daytona VM and container variants share one adapter shape — the same account API key and the
- * same create-time policy — and differ only in the account config the config gatekeeper resolved:
- * region target and which pre-baked snapshot to boot. The sandbox class (LINUX_VM vs CONTAINER) is
- * fixed inside each variant's snapshot at bake time, so nothing selects it here. The region CANNOT
- * ride createOptions: the native SDK's create() honors only the CLIENT-level target (constructor
- * config or the DAYTONA_TARGET env fallback), and the wrapper builds its client from the apiKey
- * alone — so daytonaClientTarget's env-pin around create is the only channel through this wrapper
- * (race-free: each CI job runs exactly one provider). autoStopInterval does ride the wrapper's
- * provider-options passthrough into Daytona's native createParams; the universal `timeout` is only
- * the create-call deadline, so disable native auto-stop and rely on the harness's guaranteed
- * teardown. Never read process.env here.
- */
-function daytonaAdapter(cfg: DaytonaConfig): ProviderAdapter {
-	return {
-		artifact: { kind: "baked", ref: cfg.snapshot },
-		createCompute: () =>
-			daytonaActivateSnapshot(
-				daytonaClientTarget(daytona({ apiKey: cfg.apiKey }), cfg.target),
-				cfg,
-			),
-		createOptions: {
-			snapshotId: cfg.snapshot,
-			autoStopInterval: 0,
-		},
-	};
-}
 
 /** The longest suite has a 155-minute budget. Give Microsandbox enough lifetime for setup and
  * teardown as well, while keeping leaked benchmark sandboxes self-expiring. */
@@ -112,9 +81,6 @@ function microsandboxCloudCredentials(): { kind: "cloud"; url?: string; apiKey: 
  * jointly complete.
  */
 export const adapters: Record<LegacyAdapterId, ProviderAdapter> = {
-	// Both Daytona variants share the account API key (the schema meta owns DAYTONA_API_KEY); they
-	// differ only in region + the class-specific snapshot resolved by the config gatekeeper.
-	"daytona-container": daytonaAdapter(config.daytonaContainer),
 	blaxel: {
 		artifact: { kind: "none" },
 		// Credentials come from BL_API_KEY/BL_WORKSPACE (the factory's env fallback). Boot the Debian

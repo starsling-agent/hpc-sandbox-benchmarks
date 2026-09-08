@@ -9,6 +9,7 @@
     ".": "./src/index.ts",
     "./e2b": "./src/e2b.ts",
     "./daytona-vm": "./src/daytona-vm.ts",
+    "./daytona-container": "./src/daytona-container.ts",
     "./modal-gvisor": "./src/modal-gvisor.ts",
     "./modal-vm": "./src/modal-vm.ts",
     "./novita": "./src/novita.ts",

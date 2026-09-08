@@ -191,30 +191,6 @@ describe("@sandbox-benchmarks/providers", () => {
 		expect(connection).not.toHaveProperty("headers");
 	});
 
-	it("keeps Daytona alive for long suites and pins region off createOptions", () => {
-		const daytona = providers.find((p) => p.name === "daytona-container");
-		expect(daytona).toBeDefined();
-		expect(daytona?.createOptions?.snapshotId).toBe(config.daytonaContainer.snapshot);
-		// ComputeSDK maps its universal timeout to the Daytona SDK's create-operation timeout, not the
-		// sandbox lifetime. Pass the native option through so an 8+ minute detached suite is not stopped
-		// underneath the harness; runSuite's finally block remains the cleanup authority.
-		expect(daytona?.createOptions?.autoStopInterval).toBe(0);
-
-		// The container variant shares the account key and region but boots its own snapshot. The
-		// region pin must NOT ride createOptions — the native SDK ignores createParams.target (only the
-		// client-level target reaches the wire), so a reintroduced `target` createOption here would be
-		// dead code masquerading as a region pin; daytona-target.ts owns the real channel.
-		const container = providers.find((p) => p.name === "daytona-container");
-		expect(container?.createOptions?.snapshotId).toBe(config.daytonaContainer.snapshot);
-		expect(container?.createOptions).not.toHaveProperty("target");
-
-		// No adapter override — requiredEnvVars falls back to the schema meta's static list. Pin the
-		// concrete value rather than only comparing the two lookups against each other: if both `find`s
-		// missed (provider renamed on one side), `undefined === undefined` would pass — a false green.
-		const daytonaMeta = PROVIDERS.find((m) => m.id === "daytona-vm");
-		expect(daytonaMeta?.requiredEnvVars).toEqual(["DAYTONA_API_KEY"]);
-		expect(daytona?.requiredEnvVars).toEqual(daytonaMeta?.requiredEnvVars);
-	});
 	it("exposes Microsandbox Cloud with its supported capabilities", () => {
 		const base = {
 			image: config.toolchainImage,

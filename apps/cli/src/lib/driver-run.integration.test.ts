@@ -95,12 +95,12 @@ describe("DriverModule benchmark path", () => {
 		await expect(
 			runDriverSuite({
 				runId: "driver-spike-no-fallback",
-				providerName: "daytona-container",
+				providerName: "runloop",
 				suiteName: "cpu-node",
 				resultsDir: freshRoot(),
 				env: { DAYTONA_API_KEY: "must-not-be-used" },
 			}),
-		).rejects.toThrow(/daytona-container has no DriverModule/);
+		).rejects.toThrow(/runloop has no DriverModule/);
 	});
 
 	test("persists verified E2B artifact evidence and normalizes a valid Run v6", async () => {

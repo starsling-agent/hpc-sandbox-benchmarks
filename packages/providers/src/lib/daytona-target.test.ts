@@ -8,7 +8,6 @@ import { daytona } from "@computesdk/daytona";
 import type { SandboxMethods } from "@computesdk/provider";
 import { Daytona } from "@daytonaio/sdk";
 import { config } from "../config.ts";
-import { adapters } from "./adapters.ts";
 import { daytonaClientTarget } from "./daytona-target.ts";
 
 interface CapturedRequest {
@@ -45,13 +44,13 @@ const ENV_KEYS = ["DAYTONA_API_KEY", "DAYTONA_TARGET", "DAYTONA_CONTAINER_TARGET
 let savedEnv: Record<string, string | undefined> = {};
 
 async function attemptCreate(
-	providerId: "daytona-container",
+	_providerId: "daytona-container",
 	createOptions?: Record<string, unknown>,
 ) {
-	const adapter = adapters[providerId];
-	const compute = adapter.createCompute();
+	const cfg = config.daytonaContainer;
+	const compute = daytonaClientTarget(daytona({ apiKey: cfg.apiKey }), cfg.target);
 	await expect(
-		compute.sandbox.create({ ...adapter.createOptions, ...createOptions }),
+		compute.sandbox.create({ snapshotId: cfg.snapshot, autoStopInterval: 0, ...createOptions }),
 	).rejects.toThrow(/Failed to create Daytona sandbox/);
 	const request = captured.find((c) => (c.url ?? "").includes("sandbox"));
 	expect(request).toBeDefined();

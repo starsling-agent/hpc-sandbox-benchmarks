@@ -19,11 +19,6 @@
     "reason": "The Microsandbox cloud adapter has not yet migrated from packages/providers to DriverModule.",
     "expires": "2026-12-31"
   },
-  "novita": {
-    "owner": "@dbworku",
-    "reason": "The Novita adapter has not yet migrated from packages/providers to DriverModule.",
-    "expires": "2026-12-31"
-  },
   "runloop": {
     "owner": "@dbworku",
     "reason": "The Runloop adapter has not yet migrated from packages/providers to DriverModule.",

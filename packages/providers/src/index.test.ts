@@ -191,18 +191,6 @@ describe("@sandbox-benchmarks/providers", () => {
 		expect(connection).not.toHaveProperty("headers");
 	});
 
-	it("boots novita from the configured template, erroring on use — not import — without a key", () => {
-		const novita = providers.find((p) => p.name === "novita");
-		expect(novita).toBeDefined();
-		expect(novita?.requiredEnvVars).toEqual(["NOVITA_API_KEY"]);
-		expect(novita?.createOptions?.snapshotId).toBe(config.novitaTemplate);
-		// The registry module must stay importable without credentials; the factory throws only when
-		// the harness actually selects the provider (after its requiredEnvVars gate).
-		if (!process.env.NOVITA_API_KEY) {
-			expect(() => novita?.createCompute()).toThrow(/NOVITA_API_KEY/);
-		}
-	});
-
 	it("keeps Daytona alive for long suites and pins region off createOptions", () => {
 		const daytona = providers.find((p) => p.name === "daytona-vm");
 		expect(daytona).toBeDefined();

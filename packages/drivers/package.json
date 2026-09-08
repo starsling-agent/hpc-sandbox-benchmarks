@@ -10,6 +10,7 @@
     "./e2b": "./src/e2b.ts",
     "./modal-gvisor": "./src/modal-gvisor.ts",
     "./modal-vm": "./src/modal-vm.ts",
+    "./novita": "./src/novita.ts",
     "./tama": "./src/tama.ts",
     "./package.json": "./package.json"
   },

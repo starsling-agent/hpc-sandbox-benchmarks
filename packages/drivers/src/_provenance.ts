@@ -20,3 +20,8 @@ export const TAMA_PROVENANCE = Object.freeze({
 	packageName: "tama CLI",
 	version: "0.1.17",
 });
+
+export const NOVITA_PROVENANCE = Object.freeze({
+	packageName: "novita-sandbox",
+	version: "2.0.6",
+});

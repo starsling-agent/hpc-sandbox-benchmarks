@@ -84,7 +84,7 @@ describe("bench-suite driver vs legacy selection (Phase A unit 1)", () => {
 		>;
 		const driverIds = Object.keys(DRIVERS);
 		const adapterIds: string[] = providers.map((provider) => provider.name);
-		expect(driverIds.sort()).toEqual(["e2b", "modal-gvisor", "modal-vm", "tama"]);
+		expect(driverIds.sort()).toEqual(["e2b", "modal-gvisor", "modal-vm", "novita", "tama"]);
 		expect([...driverIds, ...adapterIds].sort()).toEqual(PROVIDERS.map((meta) => meta.id).sort());
 		expect(driverIds.filter((id) => adapterIds.includes(id))).toEqual([]);
 		for (const id of driverIds) {
@@ -108,7 +108,7 @@ describe("bench-suite driver vs legacy selection (Phase A unit 1)", () => {
 	test("waived ids stay on the legacy path unless --driver-path forces the driver lane", () => {
 		expect(usesDriverSuite("daytona-vm")).toBe(false);
 		expect(usesDriverSuite("runcloud")).toBe(false);
-		expect(usesDriverSuite("novita", false)).toBe(false);
+		expect(usesDriverSuite("blaxel", false)).toBe(false);
 		expect(usesDriverSuite("daytona-vm", true)).toBe(true);
 		expect(isDriverProviderId("runcloud")).toBe(false);
 	});

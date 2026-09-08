@@ -463,10 +463,20 @@ if (import.meta.main) {
 		null,
 		2,
 	);
-	if (options.reportFile !== undefined) writeFileSync(options.reportFile, `${report}\n`);
-	else console.log(report);
+	// Emitting the report must never be the reason a still-owned sandbox is abandoned. When `destroy`
+	// failed above, the sandbox stays registered with the process owner and `exitAfterSandboxCleanup`
+	// is the only thing that retries it — so a write failure (bad `--report-file` path, full disk,
+	// closed stdout) is caught, reported, and folded into the exit code rather than allowed to escape.
+	let exitCode = failed > 0 || (options.requirePass && skipped > 0) ? 1 : 0;
+	try {
+		if (options.reportFile !== undefined) writeFileSync(options.reportFile, `${report}\n`);
+		else console.log(report);
+	} catch (error) {
+		log(`error: could not emit the report — ${reason(error)}`);
+		exitCode = 1;
+	}
 
-	await exitAfterSandboxCleanup(failed > 0 || (options.requirePass && skipped > 0) ? 1 : 0);
+	await exitAfterSandboxCleanup(exitCode);
 }
 
 export { parseArgs, workloadScript };

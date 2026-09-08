@@ -767,9 +767,9 @@ export async function runSuiteOnSandbox(
 }
 
 /** A resolved integration and allocation inputs. The harness owns budgets and session lifetime. */
-export interface DriverAllocation {
-	readonly module: DriverModule<ProviderId>;
-	readonly driver: SandboxDriver;
+export interface DriverAllocation<Handle = unknown> {
+	readonly module: DriverModule<ProviderId, Handle>;
+	readonly driver: SandboxDriver<Handle>;
 	readonly request: Omit<CreateRequest, "deadlineMs">;
 }
 
@@ -1190,14 +1190,15 @@ export function unmetRequirements(
 }
 
 /** A custom workload borrows a ready session; scope exit always attempts teardown. */
-export interface SandboxWork {
-	readonly session: SandboxSession;
+export interface SandboxWork<Handle = unknown> {
+	readonly session: SandboxSession<Handle>;
 	readonly runner: SessionStepRunner;
 }
 
-export async function withSandboxWork<T>(
-	allocation: DriverAllocation,
-	work: (context: SandboxWork) => Promise<T>,
+export async function withSandboxWork<Handle, T>(
+	allocation: DriverAllocation<Handle>,
+	work: (context: SandboxWork<Handle>) => Promise<T>,
+	options: { readonly ptsPassPolicy?: import("./lib/execute.ts").PtsPassPolicy } = {},
 ): Promise<T> {
 	const { module, driver, request } = allocation;
 	const budget = module.createBudget;
@@ -1209,7 +1210,7 @@ export async function withSandboxWork<T>(
 		(signal) => driver.create({ ...request, deadlineMs }, { signal }),
 		{ destroy: (destroy, options) => destroy(options) },
 	);
-	let session: SandboxSession;
+	let session: SandboxSession<Handle>;
 	try {
 		session =
 			budget?.owner === "driver"
@@ -1234,7 +1235,10 @@ export async function withSandboxWork<T>(
 			});
 			if (!readiness.ready)
 				throw new Error(`Driver readiness verification failed: ${readiness.detail}`);
-			return work({ session, runner: new SessionStepRunner(session, module.execution) });
+			return work({
+				session,
+				runner: new SessionStepRunner(session, module.execution, undefined, options.ptsPassPolicy),
+			});
 		},
 		() => session.destroy(),
 		(error) =>

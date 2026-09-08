@@ -433,8 +433,8 @@ const readinessPass = (detail: string): ReadinessVerification => ({ status: "pas
 const readinessFail = (detail: string): ReadinessVerification => ({ status: "fail", detail });
 
 /** Wall-clock budget the composition root must reserve for the selected module's readiness policy. */
-export function driverReadinessBudgetMs<P extends ProviderId>(
-	module: DriverModule<P, unknown>,
+export function driverReadinessBudgetMs<P extends ProviderId, Handle>(
+	module: DriverModule<P, Handle>,
 ): number {
 	return module.readiness.startup === "create-returns-ready"
 		? CREATE_RETURNS_READY_PROBE_TIMEOUT_MS
@@ -474,9 +474,9 @@ async function settleCancelledReadinessAttempt(
 }
 
 /** Drive one module's declared readiness strategy without running any later lifecycle command. */
-export async function verifyDriverReadiness<P extends ProviderId>(
-	module: DriverModule<P, unknown>,
-	session: SandboxSession,
+export async function verifyDriverReadiness<P extends ProviderId, Handle>(
+	module: DriverModule<P, Handle>,
+	session: SandboxSession<Handle>,
 	options: ReadinessVerificationOptions = {},
 ): Promise<ReadinessVerification> {
 	const readiness = module.readiness;

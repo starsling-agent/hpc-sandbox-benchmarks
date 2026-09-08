@@ -1,3 +1,4 @@
+import { writeTextFile } from "@sandbox-benchmarks/driver";
 import type { App, Image, ModalClient, Volume } from "modal";
 import { GPU_BENCHMARK, MODEL_CACHE_ENV, readSource } from "./config.ts";
 import type { GpuSandbox } from "./modal.ts";
@@ -20,13 +21,15 @@ export function modelAssetConfig() {
 
 async function stageModelPreparation(sandbox: GpuSandbox): Promise<void> {
 	await Promise.all([
-		sandbox.sdk.filesystem.writeText(
-			readSource("apps/cli/src/lib/gpu/prepare-models.py"),
+		writeTextFile(
+			sandbox.session,
 			REMOTE_SCRIPT,
+			readSource("apps/cli/src/lib/gpu/prepare-models.py"),
 		),
-		sandbox.sdk.filesystem.writeText(
-			`${JSON.stringify(modelAssetConfig(), null, 2)}\n`,
+		writeTextFile(
+			sandbox.session,
 			REMOTE_CONFIG,
+			`${JSON.stringify(modelAssetConfig(), null, 2)}\n`,
 		),
 	]);
 }
@@ -59,9 +62,11 @@ export async function prepareModelAssets(options: {
 	timeoutMinutes: number;
 }): Promise<void> {
 	await withGpuSandbox(
-		options.client,
-		() =>
-			options.client.sandboxes.create(options.app, options.image, {
+		{
+			client: options.client,
+			app: options.app,
+			image: options.image,
+			options: {
 				cpu: options.cpu,
 				cpuLimit: options.cpuLimit,
 				memoryMiB: GPU_BENCHMARK.modelPreparation.memoryMiB,
@@ -69,13 +74,14 @@ export async function prepareModelAssets(options: {
 				timeoutMs: options.timeoutMinutes * 60_000,
 				env: { ...MODEL_CACHE_ENV },
 				volumes: { [GPU_BENCHMARK.paths.modelMount]: options.volume },
-			}),
+			},
+		},
 		async (sandbox) => {
-			await sandbox.sdk.setTags({
+			await sandbox.session.native.setTags({
 				"gpu-benchmark-role": "model-cache",
 				"model-volume": options.volumeName,
 			});
-			console.error(`Modal model-cache sandbox: ${sandbox.sandboxId}`);
+			console.error(`Modal model-cache sandbox: ${sandbox.session.sandboxRef.id}`);
 			await runModelPreparation(
 				sandbox,
 				"download",

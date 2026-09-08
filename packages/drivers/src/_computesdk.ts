@@ -2115,3 +2115,17 @@ export function defineComputeSdkDriver<P extends ProviderId, TCompute extends Co
 	});
 	return joined;
 }
+
+/** Bind an explicitly prepared artifact without inventing a registry artifact for custom work. */
+export function driverFromComputeSpec<TCompute extends ComputeSdkLike>(
+	id: ProviderId,
+	binding: ComputeSdkDriverSpec<TCompute>,
+	resolvedArtifact: ResolvedArtifact,
+	sensitiveValues: readonly string[],
+) {
+	const { compute, ...spec } = binding;
+	return driverFromTable(
+		computeSdkMethodTable<TCompute>(id, { ...spec, resolvedArtifact, sensitiveValues }),
+		() => Promise.resolve(compute),
+	);
+}

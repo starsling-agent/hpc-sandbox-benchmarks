@@ -1,6 +1,12 @@
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { createOwnedSandbox, StepRunner, withOwnedSandbox } from "@sandbox-benchmarks/harness";
-import type { ModalClient, ModalReadStream, Sandbox, SandboxCreateParams } from "modal";
+import type { SandboxSession } from "@sandbox-benchmarks/driver";
+import { readTextFile, writeTextFile } from "@sandbox-benchmarks/driver";
+import type { ModalAllocationConfiguration } from "@sandbox-benchmarks/drivers/modal-gvisor";
+import { createModalAllocation } from "@sandbox-benchmarks/drivers/modal-gvisor";
+import type { SandboxWork } from "@sandbox-benchmarks/harness";
+import { withSandboxWork } from "@sandbox-benchmarks/harness";
+import type { Sandbox, SandboxCreateParams } from "modal";
 import type { GpuArgs } from "./args.ts";
 import {
 	GPU_BENCHMARK,
@@ -11,100 +17,46 @@ import {
 	readSource,
 } from "./config.ts";
 
-const MODAL_TRANSPORT = {
-	streaming: true,
-	syncCapMs: null,
-	detachedPoll: false,
-} as const;
+export type GpuSandbox = SandboxWork<Sandbox>;
 
-async function drain(stream: ModalReadStream<string>): Promise<string> {
-	const reader = stream.getReader();
-	const chunks: string[] = [];
-	try {
-		for (;;) {
-			const { done, value } = await reader.read();
-			if (done) return chunks.join("");
-			chunks.push(typeof value === "string" ? value : new TextDecoder().decode(value));
-		}
-	} finally {
-		reader.releaseLock();
-	}
-}
-
-async function exec(sandbox: Sandbox, command: string) {
-	const process = await sandbox.exec(["bash", "-lc", command], {
-		mode: "text",
-		stdout: "pipe",
-		stderr: "pipe",
-	});
-	const [stdout, stderr, exitCode] = await Promise.all([
-		drain(process.stdout),
-		drain(process.stderr),
-		process.wait(),
-	]);
-	return { stdout, stderr, exitCode };
-}
-
-async function stillListed(client: ModalClient, sandboxId: string): Promise<boolean> {
-	for await (const candidate of client.sandboxes.list()) {
-		if (candidate.sandboxId === sandboxId) return true;
-	}
-	return false;
-}
-
-async function terminateAndVerify(client: ModalClient, sandbox: Sandbox): Promise<void> {
-	let lastError: unknown;
-	for (let terminateAttempt = 0; terminateAttempt < 3; terminateAttempt++) {
-		try {
-			await sandbox.terminate({ wait: true });
-		} catch (error) {
-			lastError = error;
-		}
-		for (let listAttempt = 0; listAttempt < 5; listAttempt++) {
-			try {
-				if (!(await stillListed(client, sandbox.sandboxId))) return;
-			} catch (error) {
-				lastError = error;
-				break;
-			}
-			await Bun.sleep(1000);
-		}
-	}
-	const reason = lastError instanceof Error ? `: ${lastError.message}` : "";
-	throw new Error(`Modal sandbox ${sandbox.sandboxId} is still listed after termination${reason}`);
-}
-
-function adaptGpuSandbox(client: ModalClient, sdk: Sandbox) {
-	const adapted = {
-		sandboxId: sdk.sandboxId,
-		sdk,
-		runCommand: (command: string) => exec(sdk, command),
-		destroy: () => terminateAndVerify(client, sdk),
-	};
-	return {
-		...adapted,
-		// One PTS pass per independent sandbox; fleet replication supplies machine-level variance.
-		runner: new StepRunner(adapted, MODAL_TRANSPORT, undefined, { mode: "fixed", times: 1 }),
-	};
-}
-
-async function createAdaptedGpuSandbox(client: ModalClient, create: () => Promise<Sandbox>) {
-	return adaptGpuSandbox(client, await create());
-}
-
-export async function createGpuSandbox(client: ModalClient, create: () => Promise<Sandbox>) {
-	return createOwnedSandbox(() => createAdaptedGpuSandbox(client, create));
-}
-
-export type GpuSandbox = Awaited<ReturnType<typeof createGpuSandbox>>;
-
-/** The shared lifecycle scope for short-lived GPU preparation and validation sandboxes. */
-export function withGpuSandbox<T>(
-	client: ModalClient,
-	create: () => Promise<Sandbox>,
-	fn: (sandbox: GpuSandbox) => Promise<T>,
+/** Native allocation and shared harness lifetime, with optional GPU-specific teardown evidence. */
+export async function withGpuSandbox<T>(
+	configuration: ModalAllocationConfiguration,
+	work: (sandbox: GpuSandbox) => Promise<T>,
+	evidence?: { readonly path: string; readonly replicateIndex: number },
 ): Promise<T> {
-	return withOwnedSandbox(() => createAdaptedGpuSandbox(client, create), fn, "Modal GPU sandbox");
+	type Outcome = { kind: "value"; value: T } | { kind: "error"; error: unknown };
+	let outcome: Outcome | undefined;
+	let sandboxId: string | undefined;
+	try {
+		await withSandboxWork(
+			createModalAllocation(configuration),
+			async (sandbox) => {
+				sandboxId = sandbox.session.sandboxRef.id;
+				try {
+					outcome = { kind: "value", value: await work(sandbox) };
+				} catch (error) {
+					outcome = { kind: "error", error };
+				}
+			},
+			{ ptsPassPolicy: { mode: "fixed", times: 1 } },
+		);
+		if (evidence)
+			writeFileSync(
+				evidence.path,
+				`${JSON.stringify({ schemaVersion: "1.0", replicateIndex: evidence.replicateIndex, sandboxId, terminatedAndUnlisted: true, verifiedAt: new Date().toISOString() }, null, 2)}\n`,
+			);
+	} catch (error) {
+		if (outcome?.kind === "error") {
+			console.error("Modal GPU scope cleanup or evidence also failed:", error);
+			throw outcome.error;
+		}
+		throw error;
+	}
+	if (outcome === undefined)
+		throw new Error("Modal GPU scope returned without running its workload");
+	if (outcome.kind === "error") throw outcome.error;
+	return outcome.value;
 }
 
 /** Resource and lifetime policy shared by the kernel seed and measured benchmark allocations. */
@@ -157,9 +109,10 @@ export async function stageGpuProducer(sandbox: GpuSandbox): Promise<void> {
 	];
 	await Promise.all(
 		files.map((relative) =>
-			sandbox.sdk.filesystem.writeText(
-				readSource(relative),
+			writeTextFile(
+				sandbox.session,
 				join(GPU_BENCHMARK.paths.remoteRoot, relative),
+				readSource(relative),
 			),
 		),
 	);
@@ -251,4 +204,11 @@ export async function observeGpuSandbox(sandbox: GpuSandbox) {
 		cudaSmoke: typeof versions.cuda_smoke === "number" ? String(versions.cuda_smoke) : undefined,
 		vllmVersion: value("vllm"),
 	};
+}
+
+/** GPU artifacts are required inputs; an unreadable file is never silently treated as empty. */
+export async function readGpuFile(session: SandboxSession, path: string): Promise<string> {
+	const text = await readTextFile(session, path);
+	if (text === null) throw new Error(`GPU artifact is unreadable: ${path}`);
+	return text;
 }

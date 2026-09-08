@@ -99,10 +99,11 @@ def resolve_model():
     # revision written as a hex string literal at the call site; a variable is reported as
     # unpinned even though every call here passes `revision=model_revision`. That variable has
     # already been through pinned_revision(), which refuses anything but a full 40-character
-    # commit SHA before any download starts, and validate_model_snapshot() then checks the
-    # bytes on disk against that same SHA. Both controls are stricter than the linter's
-    # 7-hex-character heuristic. Bandit >= 1.9.4 trusts a non-literal revision and reports
-    # nothing here; the markers exist for scanners still on older releases.
+    # commit SHA before any download starts. validate_model_snapshot() then checks that the
+    # resolved snapshot directory is named for that SHA and that the required files and every
+    # weight shard the index names are present and non-empty. Both controls are stricter than
+    # the linter's 7-hex-character heuristic. Bandit >= 1.9.4 trusts a non-literal revision
+    # and reports nothing here; the markers exist for scanners still on older releases.
     try:
         path = snapshot_download(  # nosec B615
             **options, revision=model_revision, local_files_only=True

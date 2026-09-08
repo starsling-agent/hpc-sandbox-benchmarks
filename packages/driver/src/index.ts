@@ -50,6 +50,7 @@ export type {
 	ReadinessSignal,
 	SandboxTeardownResult,
 } from "./lib/policy.ts";
+export { selectExecutionRoute } from "./lib/policy.ts";
 export type { ReadinessStrategy } from "./lib/poll.ts";
 export { pollUntilReady } from "./lib/poll.ts";
 export type {

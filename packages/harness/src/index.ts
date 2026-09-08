@@ -2,6 +2,18 @@
 import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import type {
+	CreateRequest,
+	DriverModule,
+	ProviderId,
+	SandboxDriver,
+	SandboxSession,
+} from "@sandbox-benchmarks/driver";
+import { isRetryableDriverCreate } from "@sandbox-benchmarks/driver";
+import {
+	driverReadinessBudgetMs,
+	verifyDriverReadiness,
+} from "@sandbox-benchmarks/driver/conformance";
+import type {
 	DirectProvider,
 	ProviderConfig,
 	ProviderCostEvidenceCapability,
@@ -9,10 +21,9 @@ import type {
 } from "@sandbox-benchmarks/providers";
 import {
 	isRetryableCreateError,
-	providers,
 	sanitizeEvidenceDetail,
 	sanitizeProviderResponse,
-} from "@sandbox-benchmarks/providers";
+} from "@sandbox-benchmarks/providers/support";
 import type {
 	GapCause,
 	GuestFingerprint,
@@ -45,15 +56,25 @@ import {
 	writeProviderCostEvidence,
 } from "./lib/collect.ts";
 import type { SandboxHandle } from "./lib/execute.ts";
-import { MIN, resolvePtsPassPolicy, StepRunner, withTimeout } from "./lib/execute.ts";
+import {
+	MIN,
+	resolvePtsPassPolicy,
+	SessionStepRunner,
+	StepRunner,
+	withTimeout,
+} from "./lib/execute.ts";
 import { gapCauseOf } from "./lib/gap-cause.ts";
 import { time } from "./lib/internal.ts";
 import type { LifecycleAggregate, LifecycleCompute } from "./lib/lifecycle.ts";
-import { aggregateLifecycle, measureLifecycle } from "./lib/lifecycle.ts";
+import { aggregateLifecycle, measureDriverLifecycle, measureLifecycle } from "./lib/lifecycle.ts";
 import type { WaitUntilReadyOptions } from "./lib/readiness.ts";
 import { neverReadyReason, waitUntilReady } from "./lib/readiness.ts";
 import type { OwnedSandboxOptions } from "./lib/sandbox-owner.ts";
-import { createOwnedSandbox, withOwnedSandbox } from "./lib/sandbox-owner.ts";
+import {
+	createOwnedSandbox,
+	withCleanupPreservingPrimaryError,
+	withOwnedSandbox,
+} from "./lib/sandbox-owner.ts";
 import { DIR, OBSERVED_SPECS_SCRIPT, REPO_REF, REPO_URL, setupSteps } from "./lib/setup.ts";
 
 export { collectResults } from "./lib/collect.ts";
@@ -65,7 +86,7 @@ export type {
 	SandboxFilesystem,
 	SandboxHandle,
 } from "./lib/execute.ts";
-export { StepRunner } from "./lib/execute.ts";
+export { SessionStepRunner, StepRunner } from "./lib/execute.ts";
 // Re-export the lifecycle measurement surface so consumers import it from the package root, never
 // from `src/lib` (the package-boundary rule the other modules follow).
 export type {
@@ -76,7 +97,7 @@ export type {
 	LifecycleSnapshots,
 	MeasureLifecycleOptions,
 } from "./lib/lifecycle.ts";
-export { aggregateLifecycle, measureLifecycle } from "./lib/lifecycle.ts";
+export { aggregateLifecycle, measureDriverLifecycle, measureLifecycle } from "./lib/lifecycle.ts";
 export type { OwnedOperationOptions, OwnedSandboxOptions } from "./lib/sandbox-owner.ts";
 export {
 	cleanupOwnedSandboxes,
@@ -160,6 +181,43 @@ export async function benchmarkLifecycleCompute(
 	compute: LifecycleCompute,
 	options: BenchmarkLifecycleComputeOptions = {},
 ): Promise<LifecycleBenchmark> {
+	return benchmarkCycles(provider, options, () =>
+		measureLifecycle(compute, {
+			...options,
+			provider,
+			controlPlaneSamples: options.controlPlaneSamples ?? 5,
+		}),
+	);
+}
+
+/** Measure repeated cold starts through a resolved driver integration. */
+export function measureLifecycleOperation(
+	allocation: DriverAllocation,
+	options: BenchmarkLifecycleOptions = {},
+): Promise<LifecycleBenchmark> {
+	const budget = allocation.module.createBudget;
+	const deadlineMs =
+		budget?.owner === "driver"
+			? budget.attemptCeilingMs
+			: (budget?.timeoutMs ?? SUITE_CREATE_ATTEMPT_TIMEOUT_MS);
+	return benchmarkCycles(allocation.module.id, options, () =>
+		measureDriverLifecycle(
+			allocation.driver,
+			{ ...allocation.request, deadlineMs },
+			{
+				...options,
+				provider: allocation.module.id,
+				controlPlaneSamples: options.controlPlaneSamples ?? 5,
+			},
+		),
+	);
+}
+
+async function benchmarkCycles(
+	provider: string,
+	options: BenchmarkLifecycleOptions,
+	measure: () => Promise<import("./lib/lifecycle.ts").LifecycleMeasurement>,
+): Promise<LifecycleBenchmark> {
 	// `?? 5` only catches undefined; a non-finite iterations would make `i < iterations` never run
 	// (NaN) or never stop (Infinity), so it falls back to a single cycle.
 	const rawIterations = options.iterations ?? 5;
@@ -169,16 +227,7 @@ export async function benchmarkLifecycleCompute(
 	const gaps: ResultGap[] = [];
 	for (let i = 0; i < iterations; i++) {
 		try {
-			const pass = await measureLifecycle(compute, {
-				provider,
-				createOptions: options.createOptions,
-				execCommand: options.execCommand,
-				controlPlaneSamples: options.controlPlaneSamples ?? 5,
-				snapshot: options.snapshot,
-				readinessMaxAttempts: options.readinessMaxAttempts,
-				readinessRetryDelayMs: options.readinessRetryDelayMs,
-				payload: options.payload,
-			});
+			const pass = await measure();
 			samples.push(...pass.samples);
 			gaps.push(...pass.gaps);
 		} catch (err) {
@@ -272,7 +321,9 @@ export interface RunSuiteOptions {
 	env?: Record<string, string | undefined>;
 }
 
-async function destroySandbox(sandbox: SandboxHandle | undefined): Promise<SandboxTeardownResult> {
+async function destroySandbox(
+	sandbox: Pick<SandboxHandle, "destroy"> | undefined,
+): Promise<SandboxTeardownResult> {
 	const attemptedAt = new Date().toISOString();
 	if (!sandbox) return { completed: false, attemptedAt };
 	try {
@@ -302,6 +353,7 @@ export async function runSuite(options: RunSuiteOptions): Promise<void> {
 	}
 	const suite = SUITES[knownSuiteName];
 
+	const { providers } = await import("@sandbox-benchmarks/providers");
 	const config = providers.find((p) => p.name === providerName);
 	if (!config) {
 		throw new SuiteUsageError(
@@ -430,19 +482,21 @@ export interface CreateSuiteSandboxContext {
  * wrapper and the DriverModule path use this boundary, so timeout ownership, late-handle teardown,
  * retry budgeting, and failure-marker semantics cannot drift between the two transports.
  */
-export interface SuiteSandboxCreatePlan {
+export interface SuiteSandboxCreatePlan<
+	Session extends Pick<SandboxHandle, "destroy"> = SandboxHandle,
+> {
 	/** Create one harness-shaped sandbox. The process owner supplies cooperative cancellation. */
-	readonly create: (signal: AbortSignal) => Promise<SandboxHandle>;
+	readonly create: (signal: AbortSignal) => Promise<Session>;
 	/** Whether the rejected attempt is safe to retry after the shared backoff. */
 	readonly isRetryable: (error: unknown) => boolean;
 	/** Optional cancellation bridge for the handle's captured destroy operation. */
 	readonly destroy?: OwnedSandboxOptions["destroy"];
 }
 
-export async function createSuiteSandboxFromPlan(
-	plan: SuiteSandboxCreatePlan,
+export async function createSuiteSandboxFromPlan<Session extends Pick<SandboxHandle, "destroy">>(
+	plan: SuiteSandboxCreatePlan<Session>,
 	ctx: CreateSuiteSandboxContext,
-): Promise<SandboxHandle> {
+): Promise<Session> {
 	const { suiteName, providerName, resultsDir } = ctx;
 	const createTimeoutMs =
 		ctx.createTimeoutMs === undefined ? SUITE_CREATE_ATTEMPT_TIMEOUT_MS : ctx.createTimeoutMs;
@@ -495,7 +549,7 @@ export async function createSuiteSandboxFromPlan(
 		// Undefined until `sandbox.create` is actually invoked: a factory throw leaves it unset (nothing
 		// was created, so there is nothing to clean up), while a create that outlives the timeout leaves it
 		// a pending promise whose late handle must still be destroyed (see the catch).
-		let createPromise: Promise<SandboxHandle> | undefined;
+		let createPromise: Promise<Session> | undefined;
 		try {
 			createPromise = createOwnedSandbox(
 				plan.create,
@@ -694,8 +748,105 @@ export async function runSuiteOnSandbox(
 	sandbox: SandboxHandle,
 	ctx: SuiteRunContext,
 ): Promise<void> {
-	const { suite, suiteName, providerName, resultsDir, transport } = ctx;
-	const sandboxId = sandbox.sandboxId;
+	return runSuiteWork(
+		sandbox,
+		sandbox.sandboxId,
+		ctx,
+		() => new StepRunner(sandbox, ctx.transport, undefined, resolvePtsPassPolicy(ctx.suite)),
+		async () => {
+			if (ctx.driverReadiness !== undefined) {
+				const readiness = await verifySuiteDriverReadiness(ctx.driverReadiness);
+				if (!readiness.ready)
+					throw new Error(`Driver readiness verification failed: ${readiness.detail}`);
+			} else {
+				const readiness = await waitUntilReady(sandbox, ctx.readiness ?? SUITE_READINESS);
+				if (!readiness.ready) throw new Error(neverReadyReason(readiness.attempts));
+			}
+		},
+	);
+}
+
+/** A resolved integration and allocation inputs. The harness owns budgets and session lifetime. */
+export interface DriverAllocation {
+	readonly module: DriverModule<ProviderId>;
+	readonly driver: SandboxDriver;
+	readonly request: Omit<CreateRequest, "deadlineMs">;
+}
+
+export interface ExecuteSuiteOptions {
+	readonly allocation: DriverAllocation;
+	readonly runId: RunId;
+	readonly replicateIndex?: number;
+	readonly suiteName: SuiteName;
+	readonly resultsDir: string;
+}
+
+/** Allocate, execute, collect evidence and tear down one suite through the driver session seam. */
+export async function executeSuite(options: ExecuteSuiteOptions): Promise<void> {
+	const { allocation, suiteName } = options;
+	const { module, driver, request } = allocation;
+	const suite = SUITES[suiteName];
+	const budget = module.createBudget;
+	const timeoutMs =
+		budget?.owner === "driver" ? null : (budget?.timeoutMs ?? SUITE_CREATE_ATTEMPT_TIMEOUT_MS);
+	const deadlineMs =
+		budget?.owner === "driver"
+			? budget.attemptCeilingMs
+			: (timeoutMs ?? SUITE_CREATE_ATTEMPT_TIMEOUT_MS);
+	const session = await createSuiteSandboxFromPlan(
+		{
+			create: (signal) => driver.create({ ...request, deadlineMs }, { signal }),
+			isRetryable: isRetryableDriverCreate,
+			destroy: (destroy, destroyOptions) => destroy(destroyOptions),
+		},
+		{
+			suite,
+			suiteName,
+			providerName: module.id,
+			resultsDir: options.resultsDir,
+			createTimeoutMs: timeoutMs,
+			...(budget?.owner === "driver" ? { createAttemptCeilingMs: budget.attemptCeilingMs } : {}),
+		},
+	);
+	await runSuiteWork(
+		session,
+		session.sandboxRef.id,
+		{
+			...options,
+			suite,
+			providerName: module.id,
+			artifact: request.artifact,
+			...(module.costEvidence === undefined ? {} : { costEvidence: module.costEvidence }),
+		},
+		() => new SessionStepRunner(session, module.execution, undefined, resolvePtsPassPolicy(suite)),
+		async () => {
+			const readiness = await verifySuiteDriverReadiness({
+				timeoutMs: driverReadinessBudgetMs(module),
+				verify: async ({ signal }) => {
+					const result = await verifyDriverReadiness(module, session, { signal });
+					return { ready: result.status === "pass", detail: result.detail };
+				},
+			});
+			if (!readiness.ready)
+				throw new Error(`Driver readiness verification failed: ${readiness.detail}`);
+		},
+	);
+}
+
+type SuiteWorkContext = Omit<SuiteRunContext, "transport" | "driverReadiness" | "readiness">;
+type SuiteWorkRunner = Pick<StepRunner, "phase" | "stepLog"> & {
+	run: SessionStepRunner["run"] | StepRunner["run"];
+	step: SessionStepRunner["step"] | StepRunner["step"];
+};
+
+async function runSuiteWork(
+	sandbox: Pick<SandboxSession, "destroy"> | Pick<SandboxHandle, "destroy">,
+	sandboxId: string | undefined,
+	ctx: SuiteWorkContext,
+	createRunner: () => SuiteWorkRunner,
+	verifyReadiness: () => Promise<void>,
+): Promise<void> {
+	const { suite, suiteName, providerName, resultsDir } = ctx;
 	let suiteError: unknown;
 	let evidencePersistenceError: unknown;
 	let suiteSkipped = false;
@@ -722,24 +873,9 @@ export async function runSuiteOnSandbox(
 		// count on every other suite) and the BENCH_PTS_PASSES override. Constructed inside the
 		// try so a bad policy (buildPreamble rejects a fixed k < 1) is still torn down by the finally below;
 		// a throw before the try would leak the already-created sandbox.
-		const runner = new StepRunner(sandbox, transport, undefined, resolvePtsPassPolicy(suite));
+		const runner = createRunner();
 		runner.phase = "setup";
-		// Wait for the sandbox to become usable before the first real step. `create()` resolving means
-		// ALLOCATED, not ready: a provider that cold-pulls its image at create time (Namespace takes the
-		// toolchain OCI ref straight through `options.image` — it has no template to pre-bake) is still
-		// fetching image layers when its handle resolves, and an exec against a not-yet-running container
-		// hangs instead of erroring. Without this gate the pull is charged to whatever step happens to run
-		// first, which reports the pull as that step's timeout — a 60s "check free disk" failure that had
-		// nothing to do with disk. Pre-baked providers answer the first probe and pay one round-trip.
-		if (ctx.driverReadiness === undefined) {
-			const readiness = await waitUntilReady(sandbox, ctx.readiness ?? SUITE_READINESS);
-			if (!readiness.ready) throw new Error(neverReadyReason(readiness.attempts));
-		} else {
-			const readiness = await verifySuiteDriverReadiness(ctx.driverReadiness);
-			if (!readiness.ready) {
-				throw new Error(`Driver readiness verification failed: ${readiness.detail}`);
-			}
-		}
+		await verifyReadiness();
 		const expectedFingerprint = expectedToolchainFingerprint(providerName, ctx.artifact);
 		if (expectedFingerprint !== undefined) {
 			const captured = await runner.run(
@@ -1051,4 +1187,60 @@ export function unmetRequirements(
 ): string[] {
 	const passed = new Set(reports.filter((r) => r.status === "ok").map((r) => r.provider));
 	return required.filter((id) => !passed.has(id));
+}
+
+/** A custom workload borrows a ready session; scope exit always attempts teardown. */
+export interface SandboxWork {
+	readonly session: SandboxSession;
+	readonly runner: SessionStepRunner;
+}
+
+export async function withSandboxWork<T>(
+	allocation: DriverAllocation,
+	work: (context: SandboxWork) => Promise<T>,
+): Promise<T> {
+	const { module, driver, request } = allocation;
+	const budget = module.createBudget;
+	const deadlineMs =
+		budget?.owner === "driver"
+			? budget.attemptCeilingMs
+			: (budget?.timeoutMs ?? SUITE_CREATE_ATTEMPT_TIMEOUT_MS);
+	const pending = createOwnedSandbox(
+		(signal) => driver.create({ ...request, deadlineMs }, { signal }),
+		{ destroy: (destroy, options) => destroy(options) },
+	);
+	let session: SandboxSession;
+	try {
+		session =
+			budget?.owner === "driver"
+				? await pending
+				: await withTimeout(pending, deadlineMs, "Sandbox creation timed out");
+	} catch (error) {
+		// The race cannot cancel an accepted create; keep ownership until its late arrival is reclaimed.
+		void pending.then(
+			(late) => destroySandbox(late),
+			() => {},
+		);
+		throw error;
+	}
+	return withCleanupPreservingPrimaryError(
+		async () => {
+			const readiness = await verifySuiteDriverReadiness({
+				timeoutMs: driverReadinessBudgetMs(module),
+				verify: async ({ signal }) => {
+					const result = await verifyDriverReadiness(module, session, { signal });
+					return { ready: result.status === "pass", detail: result.detail };
+				},
+			});
+			if (!readiness.ready)
+				throw new Error(`Driver readiness verification failed: ${readiness.detail}`);
+			return work({ session, runner: new SessionStepRunner(session, module.execution) });
+		},
+		() => session.destroy(),
+		(error) =>
+			console.error(
+				`withSandboxWork (${module.id}): teardown failed after workload failure`,
+				error,
+			),
+	);
 }

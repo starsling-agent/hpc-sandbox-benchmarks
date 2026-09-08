@@ -122,6 +122,7 @@
       "name": "@sandbox-benchmarks/harness",
       "version": "0.0.0",
       "dependencies": {
+        "@sandbox-benchmarks/driver": "workspace:*",
         "@sandbox-benchmarks/providers": "workspace:*",
         "@sandbox-benchmarks/schema": "workspace:*",
       },

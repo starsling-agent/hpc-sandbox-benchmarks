@@ -21,7 +21,13 @@ import {
 	redactDiagnostic,
 } from "./cli.ts";
 import type { CreateRequest } from "./index.ts";
-import { DriverError, driverFromTable, FailedCreateCleanupError, sandboxRef } from "./index.ts";
+import {
+	DriverError,
+	driverFromTable,
+	FailedCreateCleanupError,
+	isRetryableDriverCreate,
+	sandboxRef,
+} from "./index.ts";
 
 const machineRows = type("string.json.parse").to(
 	type({ id: "string", name: "string", status: "string", "status_detail?": "string" }).array(),
@@ -649,6 +655,108 @@ describe("cliDriver", () => {
 			vendorMessage: "status=failed (capacity unavailable)",
 		});
 		expect(calls).toEqual(["new", "list", "list", "rm"]);
+		expect(isRetryableDriverCreate(error)).toBe(false);
+	});
+
+	test("a rate-limited create with no module classifier stays terminal on this lane", async () => {
+		// Process failures cannot enter the HTTP status retry channel.
+		const prose = (await cliDriver(
+			tamaLikeSpec({
+				cleanupCreated: {
+					kind: "command",
+					command: (name) => ["rm-name", "-y", name],
+					absenceConfirmationMs: 5,
+				},
+			}),
+			{
+				run: async (_binary, args) => {
+					if (args[0] === "new") {
+						return { stdout: "", stderr: "429 Too Many Requests", code: 7 };
+					}
+					if (args[0] === "list") return { stdout: "[]", stderr: "", code: 0 };
+					if (args[0] === "rm-name") {
+						return { stdout: "", stderr: "machine not found", code: 1 };
+					}
+					return { stdout: "", stderr: "unexpected", code: 2 };
+				},
+			},
+		)
+			.create(request)
+			.catch((caught: unknown) => caught)) as DriverError;
+		expect(prose).toMatchObject({
+			code: "create-failed",
+			provider: "tama",
+			vendorExitCode: 7,
+			vendorMessage: "429 Too Many Requests",
+		});
+		expect(isRetryableDriverCreate(prose)).toBe(false);
+	});
+
+	test("a readiness retry verdict is released only after confirmed cleanup", async () => {
+		for (const cleanupFails of [false, true]) {
+			let name = "";
+			const spec = tamaLikeSpec({
+				create: (_request, generated) => {
+					name = generated;
+					return ["new", name];
+				},
+				ready: {
+					poll: ["list"],
+					parse: machineRows,
+					select: (rows) => rows[0] ?? null,
+					classify: () => ({ terminal: "typed transient refusal", retryable: true }),
+				},
+			});
+			const error = await cliDriver(spec, {
+				run: async (_binary, args) => {
+					if (args[0] === "list")
+						return {
+							code: 0,
+							stderr: "",
+							stdout: JSON.stringify([{ id: "m-1", name, status: "failed" }]),
+						};
+					if (args[0] === "rm-name" && cleanupFails)
+						return { code: 1, stderr: "cleanup unavailable", stdout: "" };
+					return { code: 0, stderr: "", stdout: "" };
+				},
+			})
+				.create(request)
+				.catch((caught: unknown) => caught);
+			expect(isRetryableDriverCreate(error)).toBe(!cleanupFails);
+			if (cleanupFails) expect(error).toBeInstanceOf(FailedCreateCleanupError);
+		}
+	});
+
+	test("a module isRetryableCreate hook can mark a create after confirmed cleanup", async () => {
+		const error = (await cliDriver(
+			tamaLikeSpec({
+				isRetryableCreate: (failed) => failed.vendorExitCode === 8,
+				cleanupCreated: {
+					kind: "command",
+					command: (name) => ["rm-name", "-y", name],
+					absenceConfirmationMs: 5,
+				},
+			}),
+			{
+				run: async (_binary, args) => {
+					if (args[0] === "new") return { stdout: "", stderr: "no slot right now", code: 8 };
+					if (args[0] === "list") return { stdout: "[]", stderr: "", code: 0 };
+					if (args[0] === "rm-name") {
+						return { stdout: "", stderr: "machine not found", code: 1 };
+					}
+					return { stdout: "", stderr: "unexpected", code: 2 };
+				},
+			},
+		)
+			.create(request)
+			.catch((caught: unknown) => caught)) as DriverError;
+		expect(error).toMatchObject({
+			code: "create-failed",
+			vendorExitCode: 8,
+			vendorMessage: "no slot right now",
+		});
+		expect(error.retryable).toBe(true);
+		expect(isRetryableDriverCreate(error)).toBe(true);
 	});
 
 	test("redacts overlapping prepare and cleanup secrets from terminal readiness detail", async () => {

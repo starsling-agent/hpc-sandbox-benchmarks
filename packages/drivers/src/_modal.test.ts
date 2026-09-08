@@ -12,8 +12,8 @@ import {
 	createModalControlRunner,
 	defineModalDriver,
 	execModalCommand,
+	isModalRetryableCreate,
 	launchModalCommand,
-	lazyModalCompute,
 	MODAL_APP_NAME,
 	MODAL_CONTROL_TIMEOUT_MS,
 	MODAL_COST_SDK_PROVENANCE,
@@ -27,6 +27,7 @@ import {
 	modalLifecycle,
 	modalProbes,
 	modalSandboxId,
+	nativeModalCompute,
 	verifyModalDiskCapacity,
 } from "./_modal.ts";
 import modalGvisor from "./modal-gvisor.ts";
@@ -127,45 +128,71 @@ describe("Modal shared driver factory", () => {
 		).toMatchObject({ kind: "missing", reason: "sandbox_teardown_unconfirmed" });
 	});
 
-	it("defers the wrapper's eager app lookup until create and reuses one instance", async () => {
-		let factoryCalls = 0;
-		let createCalls = 0;
-		const compute = lazyModalCompute({}, () => {
-			factoryCalls += 1;
-			return {
-				sandbox: {
-					create: async () => {
-						createCalls += 1;
-						return {};
-					},
-				},
-			} as never;
-		});
-		expect(factoryCalls).toBe(0);
-		await compute.sandbox.create();
-		await compute.sandbox.create();
-		expect(factoryCalls).toBe(1);
-		expect(createCalls).toBe(2);
-	});
-
-	it("clears a wrapper whose captured app lookup rejects so a later create can recover", async () => {
-		let factoryCalls = 0;
-		const compute = lazyModalCompute({}, () => {
-			factoryCalls += 1;
-			const attempt = factoryCalls;
-			return {
-				sandbox: {
-					create: async () => {
-						if (attempt === 1) throw new Error("transient Modal app lookup failure");
-						return { attempt };
-					},
-				},
-			} as never;
-		});
-		await expect(compute.sandbox.create()).rejects.toThrow(/transient Modal app lookup/);
-		const recovered = await compute.sandbox.create();
-		expect((recovered as unknown as { attempt: number }).attempt).toBe(2);
-		expect(factoryCalls).toBe(2);
+	it("native creation is lazy, keeps typed failures, and routes each isolation variant", async () => {
+		for (const variant of ["vm", "gvisor"] as const) {
+			let lookups = 0;
+			const calls: unknown[] = [];
+			const refusal = new ClientError(
+				"/modal.client.ModalClient/SandboxCreate",
+				Status.RESOURCE_EXHAUSTED,
+				"capacity",
+			);
+			const allocate = async (...args: unknown[]) => {
+				calls.push(args);
+				throw refusal;
+			};
+			const compute = nativeModalCompute(
+				variant,
+				{ tokenId: "id", tokenSecret: "secret" },
+				() =>
+					({
+						apps: {
+							fromName: async () => {
+								lookups++;
+								return "app";
+							},
+						},
+						images: { fromRegistry: (image: string) => image },
+						sandboxes: {
+							create:
+								variant === "vm"
+									? allocate
+									: async () => {
+											throw new Error("wrong backend");
+										},
+							experimentalCreate:
+								variant === "gvisor"
+									? allocate
+									: async () => {
+											throw new Error("wrong backend");
+										},
+						},
+					}) as never,
+			);
+			expect(lookups).toBe(0);
+			const options = modalCreateOptions(variant, "registry.example/toolchain:version").map(
+				request(),
+				unsupported,
+			);
+			for (let attempt = 0; attempt < 2; attempt++) {
+				const error = await compute.sandbox.create(options).catch((caught: unknown) => caught);
+				expect(error).toBe(refusal);
+				expect(isModalRetryableCreate(error)).toBe(true);
+			}
+			expect(lookups).toBe(2);
+			expect(calls[0]).toEqual([
+				"app",
+				"registry.example/toolchain:version",
+				expect.objectContaining({
+					cpu: 4,
+					cpuLimit: 4,
+					memoryMiB: 8192,
+					memoryLimitMiB: 8192,
+					timeoutMs: MODAL_SANDBOX_LIFETIME_MS,
+					env: { BENCHMARK_MODE: "true" },
+				}),
+			]);
+		}
 	});
 
 	it("cannot attach the shared factory outside the registered Modal id union", () => {
@@ -556,6 +583,28 @@ describe("Modal truthful lifecycle and recovery projections", () => {
 				modalLifecycle("vm", directRunner(control)).destroy({} as never, modalRef, {}),
 			).rejects.toMatchObject({ path, code: Status.NOT_FOUND });
 		}
+	});
+
+	it("only typed RESOURCE_EXHAUSTED is a retryable create; prose and UNAVAILABLE are not", () => {
+		const exhausted = new ClientError(
+			"/modal.client.ModalClient/SandboxCreate",
+			Status.RESOURCE_EXHAUSTED,
+			"quota",
+		);
+		expect(isModalRetryableCreate(exhausted)).toBe(true);
+		expect(isModalRetryableCreate(new Error("wrapper", { cause: exhausted }))).toBe(true);
+		expect(
+			isModalRetryableCreate(
+				new ClientError("/modal.client.ModalClient/SandboxCreate", Status.UNAVAILABLE, "retry"),
+			),
+		).toBe(false);
+
+		expect(isModalRetryableCreate(new Error("429 Too Many Requests"))).toBe(false);
+		expect(isModalRetryableCreate(new Error("quota|rate limit|capacity"))).toBe(false);
+		expect(isModalRetryableCreate(new Error("Modal quota exceeded somewhere else"))).toBe(false);
+		expect(
+			modalCreateRecovery("vm", directRunner({ sandboxes: {} })).isRetryableCreate?.(exhausted),
+		).toBe(true);
 	});
 
 	it("preserves an auth-token NOT_FOUND through production name recovery", async () => {

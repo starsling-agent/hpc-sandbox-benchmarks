@@ -46,6 +46,12 @@ export const TAMA_REQUEST_COVERAGE = {
 	env: "unsupported",
 } as const satisfies CliCreateRequestCoverage;
 
+/**
+ * Build the table from one already-parsed context, so nothing here reads ambient env or resolves an
+ * artifact: `env` arrives validated by the registry's declared input slice, and `resolvedArtifact` is
+ * the ref the composition root chose for this lane. That is why `create` can assert the request's
+ * artifact matches rather than deciding which image to boot.
+ */
 export function tamaSpec({ env, resolvedArtifact }: DriverContext<"tama">) {
 	return defineCliSpec(TAMA_MACHINES, {
 		binary: env.TAMA_CLI ?? "tama",
@@ -88,6 +94,7 @@ export function tamaSpec({ env, resolvedArtifact }: DriverContext<"tama">) {
 					? "ready"
 					: /^(failed|error|stopped|terminated|deleted|gone)$/i.test(machine.status)
 						? {
+								retryable: false,
 								terminal: `status=${machine.status}${
 									machine.status_detail ? ` (${machine.status_detail})` : ""
 								}`,
@@ -98,6 +105,10 @@ export function tamaSpec({ env, resolvedArtifact }: DriverContext<"tama">) {
 		exec: (id, command) => ["exec", id, "--", "bash", "-lc", command],
 		destroy: (id) => ["rm", "-y", id],
 		notFound: TAMA_MACHINE_NOT_FOUND,
+		// The pinned CLI exposes status and diagnostic text, but no typed capacity reason.
+		// Terminal rows explicitly decline retry; status_detail is never parsed as a retry signal.
+		// The kit preserves this verdict through reconciliation, so a future documented reason
+		// can change provider policy without changing the shared error or readiness machinery.
 	});
 }
 

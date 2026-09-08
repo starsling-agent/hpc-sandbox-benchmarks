@@ -339,9 +339,11 @@ Six request/result rules complete the port, each earned in prototyping:
   with a stable `DriverErrorCode`. Invalid requests and credentials are terminal; allocation
   refusals use `create-failed`; broken integration invariants use `vendor-contract-violation`.
   A `create-failed` error may retain the vendor diagnostic only in its designated `vendorMessage`
-  field so the legacy retry policy can consult registry-owned retry patterns without parsing the
-  formatted exception message. There is no parallel `SandboxCreateError` taxonomy or
-  `retryAfterMs` channel.
+  field, for logs and human diagnosis — never as the retry classifier. ADR-0008 dropped the
+  registry-owned retry patterns this originally served; retry is now decided by
+  `isRetryableDriverCreate` from a typed mark the driver sets once it has established that the
+  refusal is transient and nothing remains allocated. There is no parallel `SandboxCreateError`
+  taxonomy or `retryAfterMs` channel.
 
 A driver **author**, however, writes a *stateless method table* — flat, pure functions over a typed
 native handle, capability-by-presence — and the kit assembles sessions from it:

@@ -1,0 +1,81 @@
+{
+  "provider": "modal-gvisor",
+  "phase": "version",
+  "startedAt": "2026-09-08T19:01:14.285Z",
+  "completedAt": "2026-09-08T19:01:40.159Z",
+  "workloadSeconds": 10,
+  "checks": [
+    {
+      "name": "resolve",
+      "status": "pass",
+      "detail": "artifact image ghcr.io/starslingdev/sandbox-benchmarks-toolchain:v8, sdk modal@0.9.0",
+      "durationMs": 0
+    },
+    {
+      "name": "create",
+      "status": "pass",
+      "detail": "modal-gvisor/sb-01M216AP5TY76MRCSHFXATNTKX, booted image ghcr.io/starslingdev/sandbox-benchmarks-toolchain:v8",
+      "durationMs": 4449.851708
+    },
+    {
+      "name": "readiness",
+      "status": "pass",
+      "detail": "create-returns-ready: exec succeeded with no polling",
+      "durationMs": 448.8340840000001
+    },
+    {
+      "name": "exec-success",
+      "status": "pass",
+      "detail": "exit 0 reported as exited/0",
+      "durationMs": 453.72670800000014
+    },
+    {
+      "name": "exec-exit-code",
+      "status": "pass",
+      "detail": "exit 7 preserved",
+      "durationMs": 449.26337500000045
+    },
+    {
+      "name": "exec-streams",
+      "status": "pass",
+      "detail": "stdout and stderr stayed separate",
+      "durationMs": 464.7571250000001
+    },
+    {
+      "name": "files-roundtrip",
+      "status": "pass",
+      "detail": "kit exec fallback round-tripped",
+      "durationMs": 1748.6575420000008
+    },
+    {
+      "name": "step-sync",
+      "status": "pass",
+      "detail": "workload ok after 1s",
+      "durationMs": 1465.707375
+    },
+    {
+      "name": "step-durable",
+      "status": "pass",
+      "detail": "workload ok after 10s (durable path, cap 1800000ms)",
+      "durationMs": 15713.028709
+    },
+    {
+      "name": "destroy",
+      "status": "pass",
+      "detail": "destroyed",
+      "durationMs": 551.0342920000003
+    },
+    {
+      "name": "destroy-idempotent",
+      "status": "pass",
+      "detail": "second destroy succeeded",
+      "durationMs": 0.03724999999758438
+    },
+    {
+      "name": "destroy-converged",
+      "status": "pass",
+      "detail": "observed terminal",
+      "durationMs": 87.50350000000253
+    }
+  ]
+}

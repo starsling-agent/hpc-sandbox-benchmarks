@@ -444,10 +444,13 @@ function tamaCliVersion(root: string): string {
 export function renderDriversProvenance(root = REPO_ROOT): string {
 	const catalog = providerCatalog(root);
 	const entries = [
-		["E2B", "@computesdk/e2b", catalogVersion(catalog, "@computesdk/e2b")],
-		["MODAL", "@computesdk/modal", catalogVersion(catalog, "@computesdk/modal")],
-		// The Modal driver's control plane, cost-evidence lookups included, runs on the catalog's
-		// native SDK — not the older copy vendored under the wrapper — so it needs its own identity.
+		["E2B", REGISTRY.e2b.sdkPackage, catalogVersion(catalog, REGISTRY.e2b.sdkPackage)],
+		[
+			"MODAL",
+			REGISTRY["modal-vm"].sdkPackage,
+			catalogVersion(catalog, REGISTRY["modal-vm"].sdkPackage),
+		],
+		// Cost-evidence consumers retain their explicit native-SDK provenance alias.
 		["MODAL_NATIVE", "modal", catalogVersion(catalog, "modal")],
 		["TAMA", "tama CLI", tamaCliVersion(root)],
 	] as const;

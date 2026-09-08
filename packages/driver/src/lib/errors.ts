@@ -13,6 +13,8 @@ import type { DriverOperationOptions, SandboxRef } from "./port.ts";
 // nominal "created by this kit instance" guarantee that a structural code/name check would lose.
 const driverErrors = new WeakSet<object>();
 const failedCreateCleanupErrors = new WeakSet<object>();
+/** Create-failed errors whose driver established that nothing remains allocated and a retry is useful. */
+const retryableCreates = new WeakSet<object>();
 
 /**
  * What went wrong, in terms of what the caller may do next:
@@ -21,9 +23,10 @@ const failedCreateCleanupErrors = new WeakSet<object>();
  *     config is wrong. Terminal; fix the input, do not retry.
  *   - `artifact-mismatch` / `use-after-destroy` / `vendor-contract-violation` — a kit or driver
  *     invariant was broken. Terminal; a bug, not a transient condition.
- *   - `create-failed` — the vendor refused create. The harness decides retry-vs-terminal by
- *     matching the registry's `retryableCreatePatterns` against {@link DriverError.vendorMessage}
- *     (a designated field — NOT a formatted message that embeds argv).
+ *   - `create-failed` — the vendor refused create. The harness decides retry-vs-terminal with
+ *     {@link isRetryableDriverCreate}: the error code plus an explicit {@link DriverError.retryable}
+ *     mark and/or a structured {@link DriverError.vendorHttpStatus} of 429. {@link DriverError.vendorMessage}
+ *     is diagnostic only — never regexed as the classifier.
  *   - `readiness-timeout` — create was accepted but the sandbox never became ready in budget.
  *   - `vendor-output-unparseable` — the vendor's control-plane output drifted from its schema.
  *   - `exec-failed` — a kit-owned shell fallback failed before it could satisfy its contract.
@@ -52,9 +55,14 @@ export type DriverErrorCode =
 export interface DriverErrorFields {
 	readonly provider?: ProviderId;
 	readonly ref?: SandboxRef;
-	/** Raw vendor diagnostic/detail — the field retry heuristics match, never the formatted message. */
+	/** Raw vendor diagnostic/detail. Logged and retained; never regexed to decide retry-vs-fail. */
 	readonly vendorMessage?: string;
+	/** Child process exit status; never interpreted as an HTTP status. */
 	readonly vendorExitCode?: number;
+	/** HTTP response status, separate from the process exit-code namespace. */
+	readonly vendorHttpStatus?: number;
+	/** Safe, transient create refusal after the driver established no allocation remains. */
+	readonly retryable?: boolean;
 	readonly cause?: unknown;
 }
 
@@ -200,6 +208,7 @@ export class DriverError extends Error {
 	readonly ref: SandboxRef | undefined;
 	readonly vendorMessage: string | undefined;
 	readonly vendorExitCode: number | undefined;
+	readonly vendorHttpStatus: number | undefined;
 
 	constructor(code: DriverErrorCode, message: string, fields: DriverErrorFields = {}) {
 		super(message, fields.cause !== undefined ? { cause: fields.cause } : undefined);
@@ -210,7 +219,48 @@ export class DriverError extends Error {
 		this.ref = fields.ref;
 		this.vendorMessage = fields.vendorMessage;
 		this.vendorExitCode = fields.vendorExitCode;
+		this.vendorHttpStatus = fields.vendorHttpStatus;
+		if (code === "create-failed" && fields.retryable === true) {
+			retryableCreates.add(this);
+		}
 	}
+
+	/**
+	 * Whether this create failure is an explicit retry mark. Independent of
+	 * {@link DriverError.vendorHttpStatus} 429; {@link isRetryableDriverCreate} is the harness rule.
+	 */
+	get retryable(): boolean {
+		return this.code === "create-failed" && retryableCreates.has(this);
+	}
+}
+
+/**
+ * Mark a `create-failed` {@link DriverError} as safe to retry. Non-create codes and non-DriverError
+ * values are returned untouched — inventing a wrapper would lose the identity callers match on.
+ */
+export function markRetryableDriverCreate<E>(error: E): E {
+	if (isDriverError(error) && error.code === "create-failed") {
+		retryableCreates.add(error);
+	}
+	return error;
+}
+
+/**
+ * Typed create-retry classifier for the driver lane. True only for a branded `create-failed`
+ * {@link DriverError} that carries an explicit retry mark or a {@link DriverError.vendorHttpStatus} of
+ * 429 (see that field: an HTTP status a driver read off a response, never a CLI's process exit).
+ * Unclassified prose (including a formatted message that happens to mention quota/429) is false.
+ * A {@link FailedCreateCleanupError} is never retryable: cleanup did not prove the allocation is gone.
+ *
+ * The mark is where every registered module answers today. Its two halves — "transient" and "nothing
+ * remains allocated" — are both the module's to establish; this function only reports the answer.
+ */
+export function isRetryableDriverCreate(error: unknown): boolean {
+	// `isDriverError` is a WeakSet brand, so past it the value is an instance this module constructed:
+	// `retryable` is our own getter over a WeakSet lookup and `vendorHttpStatus` a plain constructor
+	// field. Neither read can reach user code, which is why `code` above needs no guard either.
+	if (!isDriverError(error) || error.code !== "create-failed") return false;
+	return error.retryable || error.vendorHttpStatus === 429;
 }
 
 export const isDriverError = (value: unknown): value is DriverError =>

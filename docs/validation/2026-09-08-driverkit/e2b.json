@@ -1,0 +1,81 @@
+{
+  "provider": "e2b",
+  "phase": "version",
+  "startedAt": "2026-09-08T19:01:12.880Z",
+  "completedAt": "2026-09-08T19:02:27.327Z",
+  "workloadSeconds": 65,
+  "checks": [
+    {
+      "name": "resolve",
+      "status": "pass",
+      "detail": "artifact baked sandbox-benchmarks-toolchain-v8, sdk e2b@2.27.1",
+      "durationMs": 0
+    },
+    {
+      "name": "create",
+      "status": "pass",
+      "detail": "e2b/irkey2bylax38qbgxrsx4, booted baked sandbox-benchmarks-toolchain-v8",
+      "durationMs": 1077.5210829999999
+    },
+    {
+      "name": "readiness",
+      "status": "pass",
+      "detail": "create-returns-ready: exec succeeded with no polling",
+      "durationMs": 106.83862500000009
+    },
+    {
+      "name": "exec-success",
+      "status": "pass",
+      "detail": "exit 0 reported as exited/0",
+      "durationMs": 114.15333299999998
+    },
+    {
+      "name": "exec-exit-code",
+      "status": "pass",
+      "detail": "exit 7 preserved",
+      "durationMs": 98.24079199999983
+    },
+    {
+      "name": "exec-streams",
+      "status": "pass",
+      "detail": "stdout and stderr stayed separate",
+      "durationMs": 105.2534999999998
+    },
+    {
+      "name": "files-roundtrip",
+      "status": "pass",
+      "detail": "native files round-tripped",
+      "durationMs": 246.29462500000022
+    },
+    {
+      "name": "step-sync",
+      "status": "pass",
+      "detail": "workload ok after 1s",
+      "durationMs": 1138.590208
+    },
+    {
+      "name": "step-durable",
+      "status": "pass",
+      "detail": "workload ok after 65s (durable path, cap 60000ms)",
+      "durationMs": 71362.468167
+    },
+    {
+      "name": "destroy",
+      "status": "pass",
+      "detail": "destroyed",
+      "durationMs": 97.79475000000093
+    },
+    {
+      "name": "destroy-idempotent",
+      "status": "pass",
+      "detail": "second destroy succeeded",
+      "durationMs": 0.05329100000381004
+    },
+    {
+      "name": "destroy-converged",
+      "status": "pass",
+      "detail": "observed absent",
+      "durationMs": 93.43616699999257
+    }
+  ]
+}

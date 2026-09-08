@@ -45,7 +45,7 @@ export const modalPricing: ProviderPricing = {
 };
 
 export const modalTransport: ProviderTransport = {
-	// `@computesdk/modal` runs `sandbox.exec([...])` and `process.wait()`s the result, with no
+	// The native Modal driver runs `sandbox.exec([...])` and waits for the result, with no
 	// separate per-exec timeout. There is no hard server gateway cap, but the exec stdio stream
 	// is not reliable over benchmark-length execs: a ~66-minute better-auth run completed
 	// in-sandbox (manifest exit_code 0) while the harness-side stream died with gRPC INTERNAL

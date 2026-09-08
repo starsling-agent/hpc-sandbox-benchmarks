@@ -26,7 +26,12 @@ import type {
 	SandboxRef,
 } from "./index.ts";
 import { defineDriver, driverFromTable, sandboxRef } from "./index.ts";
-import { DriverError, FailedCreateCleanupError, isDriverError } from "./lib/errors.ts";
+import {
+	DriverError,
+	FailedCreateCleanupError,
+	isDriverError,
+	markRetryableDriverCreate,
+} from "./lib/errors.ts";
 import { pollUntilReady } from "./lib/poll.ts";
 import type { MethodTable } from "./lib/table.ts";
 
@@ -71,7 +76,10 @@ export type CliFailedCreateCleanup<Row> =
 	  };
 
 /** Provider classification of one selected readiness row; the kit owns the resulting control flow. */
-export type CliReadinessStatus = "ready" | "pending" | { readonly terminal: string };
+export type CliReadinessStatus =
+	| "ready"
+	| "pending"
+	| { readonly terminal: string; readonly retryable?: boolean };
 
 function sanitizedCliCallbackCause(): Error {
 	// Author callbacks close over provider credentials that need not appear in any argv. Never retain
@@ -255,6 +263,10 @@ function snapshotCliSpec<Row>(provider: ProviderId, spec: CliSpec<Row>): CliSpec
 		} else {
 			throw new Error("cleanup kind is invalid");
 		}
+		const isRetryableCreate: unknown = Reflect.get(spec, "isRetryableCreate");
+		if (isRetryableCreate !== undefined && typeof isRetryableCreate !== "function") {
+			throw new Error("isRetryableCreate is not callable");
+		}
 		return {
 			binary: Reflect.get(spec, "binary"),
 			secretFlags: Reflect.get(spec, "secretFlags"),
@@ -285,6 +297,9 @@ function snapshotCliSpec<Row>(provider: ProviderId, spec: CliSpec<Row>): CliSpec
 			exec: Reflect.get(spec, "exec"),
 			destroy: Reflect.get(spec, "destroy"),
 			notFound: Reflect.get(spec, "notFound"),
+			...(typeof isRetryableCreate === "function"
+				? { isRetryableCreate: isRetryableCreate as (error: DriverError) => boolean }
+				: {}),
 		} as CliSpec<Row>;
 	});
 }
@@ -363,8 +378,10 @@ function normalizeCliReadinessStatus(
 	if (value === "ready" || value === "pending") return value;
 	if ((typeof value === "object" || typeof value === "function") && value !== null) {
 		let terminal: unknown;
+		let retryable: unknown;
 		try {
 			terminal = Reflect.get(value, "terminal");
+			retryable = Reflect.get(value, "retryable");
 		} catch {
 			throw new DriverError(
 				"vendor-contract-violation",
@@ -376,8 +393,15 @@ function normalizeCliReadinessStatus(
 				},
 			);
 		}
-		if (typeof terminal === "string" && terminal.trim() !== "") {
-			return { terminal: redact(terminal.trim()) };
+		if (
+			typeof terminal === "string" &&
+			terminal.trim() !== "" &&
+			(retryable === undefined || typeof retryable === "boolean")
+		) {
+			return {
+				terminal: redact(terminal.trim()),
+				...(retryable === undefined ? {} : { retryable }),
+			};
 		}
 	}
 	throw new DriverError(
@@ -476,6 +500,15 @@ export interface CliSpec<Row> {
 	readonly destroy: (id: string) => CliArgv;
 	/** Vendor prose meaning "already gone" — destroy-of-missing MUST succeed (ADR-0008). */
 	readonly notFound: RegExp;
+	/**
+	 * Optional module-owned create-retry classifier. Called only after failed-create reconciliation
+	 * has confirmed the generated name is gone. True marks the `create-failed` {@link DriverError}
+	 * for the harness; a throw or any other value leaves it terminal.
+	 *
+	 * CLI process exit codes never act as HTTP retry signals. Readiness classifiers may also
+	 * return an explicit retryable verdict; either channel marks the error only after cleanup.
+	 */
+	readonly isRetryableCreate?: (error: DriverError) => boolean;
 }
 
 export type CliSpecFields<Row> = Omit<CliSpec<Row>, "ready"> & {
@@ -947,6 +980,7 @@ export function cliMethodTable<Row>(
 	const sandboxId = compiled.sandboxId;
 	const execArgv = compiled.exec;
 	const destroyArgv = compiled.destroy;
+	const isRetryableCreate = compiled.isRetryableCreate;
 	const secretFlags = normalizeCliStringList(provider, "secretFlags", compiled.secretFlags);
 	const readyPoll = normalizeCliArgv(provider, "ready.poll", ready.poll);
 	const prepare =
@@ -1039,8 +1073,9 @@ export function cliMethodTable<Row>(
 	};
 	const providerCallback = <T>(boundary: string, callback: () => T, ref?: SandboxRef): T =>
 		invokeCliProviderCallback(provider, boundary, callback, ref);
-	// Vendor failures carry structured fields (exit code + vendor diagnostic) so the harness classifies
-	// by them, not by regexing a formatted message; the message redacts secret argv for humans.
+	// Vendor failures carry structured fields (the child's exit status + its vendor diagnostic), and
+	// the message redacts secret argv for humans. Retry is decided by isRetryableDriverCreate, from a
+	// mark this lane sets only through CliSpec.isRetryableCreate — never by regexing either string.
 	const vendorFailed = (
 		code: "create-failed" | "destroy-failed" | "probe-failed",
 		args: CliArgv,
@@ -1360,6 +1395,7 @@ export function cliMethodTable<Row>(
 	return {
 		async create(context, request, operationOptions) {
 			const signal = operationOptions?.signal;
+			let retryableReadiness = false;
 			const name = `bench-${randomUUID()}`;
 			const deadlineMs = Math.min(
 				request.deadlineMs,
@@ -1460,6 +1496,7 @@ export function cliMethodTable<Row>(
 							if (status === "ready") return row;
 							if (status === "pending") return null;
 							const detail = status.terminal;
+							retryableReadiness = status.retryable === true;
 							throw new DriverError(
 								"create-failed",
 								`${provider} sandbox entered a terminal state: ${detail}`,
@@ -1680,6 +1717,21 @@ export function cliMethodTable<Row>(
 						cleanup: (cleanupOptions: DriverOperationOptions = {}) =>
 							retryCleanup(commandTimeoutMs, cleanupOptions.signal),
 					});
+				}
+				// Reconciliation above proved the generated name is gone, so the module may now classify
+				// the refusal. Same boundary as every other spec-owned callback on this lane; a throwing
+				// classifier leaves the create terminal rather than failing it a second way.
+				if (isDriverError(primary) && primary.code === "create-failed") {
+					if (retryableReadiness) markRetryableDriverCreate(primary);
+					try {
+						const retryable = providerCallback("retryable-create classifier", () =>
+							isRetryableCreate?.(primary),
+						);
+						if (retryable === true) markRetryableDriverCreate(primary);
+					} catch {
+						// The boundary already redacted the classifier's own failure; the create failure
+						// below is the one the caller needs.
+					}
 				}
 				throw primary;
 			}

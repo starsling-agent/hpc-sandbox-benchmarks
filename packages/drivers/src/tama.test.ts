@@ -110,10 +110,11 @@ describe("Tama proof driver", () => {
 		expect(classify({ ...readyMachine, status: "creating" })).toBe("pending");
 		expect(classify({ ...readyMachine, status: "stopped" })).toEqual({
 			terminal: "status=stopped (booted)",
+			retryable: false,
 		});
 		expect(
 			classify({ ...readyMachine, status: "failed", status_detail: "image pull failed" }),
-		).toEqual({ terminal: "status=failed (image pull failed)" });
+		).toEqual({ terminal: "status=failed (image pull failed)", retryable: false });
 	});
 
 	test("uses the stock binary when no developer override is present", () => {

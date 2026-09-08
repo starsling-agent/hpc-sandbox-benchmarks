@@ -1,11 +1,11 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import type { E2BSandbox } from "@computesdk/e2b";
 import type { CreateRequest } from "@sandbox-benchmarks/driver";
 import { DriverError, FailedCreateCleanupError, sandboxRef } from "@sandbox-benchmarks/driver";
 import {
 	AuthenticationError,
 	CommandExitError,
 	InvalidArgumentError,
+	RateLimitError,
 	Sandbox,
 	TimeoutError,
 } from "e2b";
@@ -23,6 +23,7 @@ import e2bDriver, {
 	e2bSpec,
 	execE2bCommandAsRoot,
 	isE2bDefinitiveCreateRejection,
+	isE2bRetryableCreate,
 	launchE2bCommandAsRoot,
 } from "./e2b.ts";
 
@@ -101,7 +102,6 @@ describe("E2B proof driver", () => {
 		expect(e2bDriver.createBudget).toBeUndefined();
 
 		const spec = e2bSpec(context);
-		expect(spec.compute.name).toBe("e2b");
 		expect(spec.createOptions.coverage).toEqual(E2B_REQUEST_COVERAGE);
 		const mapped = spec.createOptions.map(request, (detail) => {
 			throw new Error(detail);
@@ -131,7 +131,7 @@ describe("E2B proof driver", () => {
 
 		type Driver = ReturnType<(typeof e2bDriver)["driver"]>;
 		type Session = Awaited<ReturnType<Driver["create"]>>;
-		type _nativeIsInstalledWrapperType = Expect<Equal<Session["native"], E2BSandbox>>;
+		type _nativeIsInstalledSdkType = Expect<Equal<Session["native"], Sandbox>>;
 		expect(true).toBe(true);
 	});
 
@@ -240,7 +240,7 @@ describe("E2B proof driver", () => {
 		}
 	});
 
-	test("recognizes the installed wrapper's authentication envelope before recovery", async () => {
+	test("recognizes native authentication refusal before recovery", async () => {
 		// @computesdk/e2b catches the typed SDK error and emits this stable plain-Error envelope.
 		const create = spyOn(Sandbox, "create").mockRejectedValue(
 			new AuthenticationError("API key rejected"),
@@ -255,7 +255,7 @@ describe("E2B proof driver", () => {
 				.catch((caught: unknown) => caught);
 			expect(error).not.toBeInstanceOf(FailedCreateCleanupError);
 			expect(error).toMatchObject({ code: "create-failed", provider: "e2b" });
-			expect((error as Error).message).toContain("E2B authentication failed");
+			expect((error as Error).message).toContain("API key rejected");
 			expect(create).toHaveBeenCalledTimes(1);
 			expect(list).not.toHaveBeenCalled();
 		} finally {
@@ -614,7 +614,7 @@ describe("E2B proof driver", () => {
 			isE2bDefinitiveCreateRejection(
 				new Error("E2B authentication failed. Please check your E2B_API_KEY environment variable."),
 			),
-		).toBe(true);
+		).toBe(false);
 		// The wrapper may wrap the SDK error, so a bounded cause walk still recognizes the rejection.
 		expect(
 			isE2bDefinitiveCreateRejection(
@@ -634,5 +634,47 @@ describe("E2B proof driver", () => {
 		const looping = new Error("looping");
 		Object.defineProperty(looping, "cause", { value: looping });
 		expect(isE2bDefinitiveCreateRejection(looping)).toBe(false);
+	});
+
+	test("only typed rate-limit signals are retryable creates; prose is not", () => {
+		expect(isE2bRetryableCreate(new RateLimitError("too many sandboxes"))).toBe(true);
+		expect(
+			isE2bRetryableCreate(
+				new Error("computesdk create failed", { cause: new RateLimitError("too many sandboxes") }),
+			),
+		).toBe(true);
+		expect(
+			isE2bRetryableCreate(Object.assign(new Error("wrapper copy"), { name: "RateLimitError" })),
+		).toBe(false);
+		expect(isE2bRetryableCreate(Object.assign(new Error("throttled"), { status: 429 }))).toBe(
+			false,
+		);
+
+		expect(isE2bRetryableCreate(new Error("429 Too Many Requests"))).toBe(false);
+		expect(isE2bRetryableCreate(new Error("quota|rate limit|capacity"))).toBe(false);
+		expect(isE2bRetryableCreate(new Error("E2B quota exceeded elsewhere"))).toBe(false);
+		expect(isE2bRetryableCreate(new TimeoutError("request timed out"))).toBe(false);
+		expect(isE2bRetryableCreate(new AuthenticationError("invalid api key"))).toBe(false);
+		expect(isE2bRetryableCreate(undefined)).toBe(false);
+		const looping = new Error("looping");
+		Object.defineProperty(looping, "cause", { value: looping });
+		expect(isE2bRetryableCreate(looping)).toBe(false);
+	});
+
+	test("a native rate-limit refusal reaches the driver without losing its retry classification", async () => {
+		const refusal = new RateLimitError("rate limited");
+		const create = spyOn(Sandbox, "create").mockRejectedValue(refusal);
+		const list = spyOn(Sandbox, "list");
+		try {
+			const error = await e2bDriver
+				.driver(context)
+				.create(request)
+				.catch((caught: unknown) => caught);
+			expect(error).toMatchObject({ code: "create-failed", retryable: true });
+			expect(list).not.toHaveBeenCalled();
+		} finally {
+			create.mockRestore();
+			list.mockRestore();
+		}
 	});
 });

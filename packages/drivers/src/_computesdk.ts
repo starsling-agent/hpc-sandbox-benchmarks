@@ -1,6 +1,6 @@
 // The ComputeSDK bridge (ADR-0007 §6): computesdk keeps all its real value — maintained vendor
-// translations — as ONE driver among several, and stops being the substrate every provider
-// must impersonate.
+// translations — as ONE driver among several. Native SDK modules reuse this structural session
+// machinery through _native.ts, preserving their own native handle and typed errors.
 //
 // The bridge is a MethodTable, not a hand-assembled driver, so it flows through the same
 // assembly layer as every other driver (table.ts) and inherits its session invariants for free:
@@ -39,6 +39,8 @@ import {
 	FailedCreateCleanupError,
 	isDriverError,
 	isFailedCreateCleanupError,
+	isRetryableDriverCreate,
+	markRetryableDriverCreate,
 	sandboxRef,
 } from "@sandbox-benchmarks/driver";
 import { sensitiveEnvValuesFor } from "@sandbox-benchmarks/driver/env";
@@ -48,7 +50,10 @@ import { type } from "arktype";
 /** The structural slice of a computesdk provider instance this bridge consumes. */
 export interface ComputeSdkLike<TSandbox extends ComputeSdkSandboxLike = ComputeSdkSandboxLike> {
 	readonly sandbox: {
-		create(options?: Record<string, unknown>): Promise<TSandbox>;
+		create(
+			options?: Record<string, unknown>,
+			operationOptions?: DriverOperationOptions,
+		): Promise<TSandbox>;
 		list?(): Promise<unknown>;
 	};
 }
@@ -148,6 +153,16 @@ export interface ComputeSdkCreateRecovery<TCompute extends ComputeSdkLike> {
 	 * lookup is far cheaper than a leaked billable sandbox.
 	 */
 	isDefinitive?(error: unknown): boolean;
+	/**
+	 * True when the vendor error is a transient capacity/rate-limit refusal the harness may retry.
+	 * The bridge copies that answer onto {@link DriverError.retryable}; it never regexes vendor prose.
+	 *
+	 * The mark also asserts that nothing remains allocated, and either proof satisfies that: the
+	 * reconciliation lookup this bridge runs, or an {@link isDefinitive} rejection — which is the
+	 * stronger proof, since the control plane refused before allocating. So classifying one refusal
+	 * as both is not a contradiction and does not cost the retry; answer each question on its own.
+	 */
+	isRetryableCreate?(error: unknown): boolean;
 }
 
 type ComputeSdkSandboxIdParser = Type<string> | Type<(In: string) => Out<string>>;
@@ -496,12 +511,15 @@ function wrapperFailure(
 		const message = redact(safeThrownMessage(caught) ?? "driver failure diagnostic omitted");
 		let vendorMessage: unknown;
 		let vendorExitCode: unknown;
+		let vendorHttpStatus: unknown;
 		try {
 			vendorMessage = Reflect.get(caught, "vendorMessage");
 			vendorExitCode = Reflect.get(caught, "vendorExitCode");
+			vendorHttpStatus = Reflect.get(caught, "vendorHttpStatus");
 		} catch {
 			vendorMessage = undefined;
 			vendorExitCode = undefined;
+			vendorHttpStatus = undefined;
 		}
 		return new DriverError(code, message, {
 			provider,
@@ -510,6 +528,10 @@ function wrapperFailure(
 			...(typeof vendorExitCode === "number" && Number.isSafeInteger(vendorExitCode)
 				? { vendorExitCode }
 				: {}),
+			...(typeof vendorHttpStatus === "number" && Number.isSafeInteger(vendorHttpStatus)
+				? { vendorHttpStatus }
+				: {}),
+			...(code === "create-failed" && isRetryableDriverCreate(caught) ? { retryable: true } : {}),
 			cause: new Error(message),
 		});
 	}
@@ -841,6 +863,7 @@ function computeSdkMethodTable<TCompute extends ComputeSdkLike>(
 					locator: rawCreateRecovery.locator,
 					cleanup: rawCreateRecovery.cleanup,
 					isDefinitive: rawCreateRecovery.isDefinitive,
+					isRetryableCreate: rawCreateRecovery.isRetryableCreate,
 				};
 	const createRequestMapper: ComputeSdkCreateRequestMapper = {
 		coverage: snapshotComputeSdkCoverage(options.createOptions.coverage),
@@ -947,7 +970,10 @@ function computeSdkMethodTable<TCompute extends ComputeSdkLike>(
 			};
 			let created: ComputeSdkSandboxOf<TCompute>;
 			try {
-				created = (await compute.sandbox.create(createOptions)) as ComputeSdkSandboxOf<TCompute>;
+				created = (await compute.sandbox.create(
+					createOptions,
+					operationOptions,
+				)) as ComputeSdkSandboxOf<TCompute>;
 			} catch (caught) {
 				const primary = wrapperFailure(
 					"create-failed",
@@ -957,10 +983,21 @@ function computeSdkMethodTable<TCompute extends ComputeSdkLike>(
 					undefined,
 					sensitiveValues,
 				);
+				// The retry mark asserts two things: the refusal is transient, and nothing remains
+				// allocated. Reconciliation is one way to establish the second; a DEFINITIVE rejection is
+				// the other and the stronger one — the control plane refused before allocating. So a
+				// module that classifies a refusal as both keeps its retry here, rather than having the
+				// cheaper proof of "nothing was allocated" cost it the retry. (The mark is a no-op on a
+				// FailedCreateCleanupError, which is the only other thing `primary` can be.)
+				if (classifiesCreateRejection(provider, createRecovery, "isRetryableCreate", caught)) {
+					markRetryableDriverCreate(primary);
+				}
 				// A create the control plane refused outright owns nothing to reconcile. Polling for it
 				// would burn the caller's budget and, when the same rejection also fails the lookup,
 				// relabel a plain credential error as a cleanup double fault over a sandbox that never was.
-				if (isDefinitiveCreateRejection(provider, createRecovery, caught)) throw primary;
+				if (classifiesCreateRejection(provider, createRecovery, "isDefinitive", caught)) {
+					throw primary;
+				}
 				return rejectWithRecovery(primary);
 			}
 			if ((typeof created !== "object" && typeof created !== "function") || created === null) {
@@ -1508,19 +1545,34 @@ function readRecoveryLocator<TCompute extends ComputeSdkLike>(
 	}
 }
 
-function isDefinitiveCreateRejection(
+/** The two independent questions a module may answer about its own create rejection. */
+type ComputeSdkCreateClassifier = "isDefinitive" | "isRetryableCreate";
+
+const CREATE_CLASSIFIER_BOUNDARIES = {
+	isDefinitive: "failed-create ambiguity classification",
+	isRetryableCreate: "retryable-create classification",
+} as const satisfies Record<ComputeSdkCreateClassifier, string>;
+
+/**
+ * Ask one of a module's create-rejection classifiers, treating anything but an explicit `true` as no.
+ *
+ * A classifier that throws, or answers with anything else, has proven nothing: for `isDefinitive`
+ * that means reconciling rather than assuming nothing was billed, and for `isRetryableCreate` it
+ * means leaving the failure terminal. The two are asked separately and neither answer constrains
+ * the other — see {@link ComputeSdkCreateRecovery.isRetryableCreate}.
+ */
+function classifiesCreateRejection(
 	provider: ProviderId,
-	recovery: { readonly isDefinitive?: ((error: unknown) => boolean) | undefined } | undefined,
+	recovery: Partial<Record<ComputeSdkCreateClassifier, (error: unknown) => boolean>> | undefined,
+	classifier: ComputeSdkCreateClassifier,
 	caught: unknown,
 ): boolean {
-	const isDefinitive = recovery?.isDefinitive;
-	if (isDefinitive === undefined) return false;
+	const classify = recovery?.[classifier];
+	if (classify === undefined) return false;
 	try {
-		// Only an explicit `true` releases recovery. A classifier that throws, or answers with
-		// anything else, has not proven absence — reconcile rather than assume nothing was billed.
 		return (
-			invokeComputeSdkProviderCallback(provider, "failed-create ambiguity classification", () =>
-				isDefinitive.call(recovery, caught),
+			invokeComputeSdkProviderCallback(provider, CREATE_CLASSIFIER_BOUNDARIES[classifier], () =>
+				classify.call(recovery, caught),
 			) === true
 		);
 	} catch {

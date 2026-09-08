@@ -1,5 +1,28 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { durableStepTimeoutMs, parseArgs, workloadScript } from "./driver-check.ts";
+
+const CLI = join(import.meta.dir, "driver-check.ts");
+
+/**
+ * Drive the bin as a subprocess with every E2B variable stripped, so `openDriver` skips on
+ * missing credentials and no sandbox is ever allocated by a unit test — including on the
+ * CI-with-secrets lanes, where the ambient key would otherwise make this hit the real control plane.
+ */
+async function runCli(...args: string[]) {
+	const env = Object.fromEntries(
+		Object.entries(process.env).filter(([name]) => !name.startsWith("E2B_")),
+	);
+	const proc = Bun.spawn(["bun", CLI, ...args], { env, stdout: "pipe", stderr: "pipe" });
+	const [stdout, stderr, exitCode] = await Promise.all([
+		new Response(proc.stdout).text(),
+		new Response(proc.stderr).text(),
+		proc.exited,
+	]);
+	return { stdout, stderr, exitCode };
+}
 
 describe("driver-check argv", () => {
 	test("defaults to the published version phase and a short workload", () => {
@@ -8,6 +31,7 @@ describe("driver-check argv", () => {
 			phase: "version",
 			workloadSeconds: 3,
 			keep: false,
+			requirePass: false,
 		});
 	});
 
@@ -30,7 +54,25 @@ describe("driver-check argv", () => {
 			artifactRef: "ghcr.io/x:v8",
 			workloadSeconds: 10,
 			keep: true,
+			requirePass: false,
 		});
+	});
+
+	test("strict validation requires every clause and refuses retained sandboxes", () => {
+		expect(parseArgs(["--provider", "e2b", "--require-pass"]).requirePass).toBe(true);
+		expect(() => parseArgs(["--provider", "e2b", "--require-pass", "--keep"])).toThrow(
+			/cannot be combined/,
+		);
+		expect(() => parseArgs(["--provider", "e2b", "--require-pas"])).toThrow(/unknown option/);
+		expect(() => parseArgs(["--provider", "e2b", "--provider", "tama"])).toThrow(
+			/duplicate option/,
+		);
+	});
+
+	test("accepts a dedicated machine-readable report path", () => {
+		expect(parseArgs(["--provider", "e2b", "--report-file", "/tmp/report.json"]).reportFile).toBe(
+			"/tmp/report.json",
+		);
 	});
 
 	test("rejects a provider that has no driver module yet", () => {
@@ -88,5 +130,60 @@ describe("workloadScript", () => {
 		expect(script).toContain("sleep 7");
 		// `set -eu` matters: without it a failing step still exits 0 and the check would pass falsely.
 		expect(script.startsWith("set -eu;")).toBe(true);
+	});
+});
+
+describe("report emission", () => {
+	// `exitAfterSandboxCleanup` is the only thing that retries a sandbox whose `destroy` already
+	// failed during the run. An unguarded write threw past it as an unhandled rejection — `beforeExit`
+	// does not fire on that path — so an unwritable `--report-file` leaked a billable sandbox.
+	test("an unwritable report path is diagnosed and never escapes past cleanup", async () => {
+		const unwritable = join(tmpdir(), "driver-check-no-such-dir", "report.json");
+		const { stderr, exitCode } = await runCli(
+			"--provider",
+			"e2b",
+			"--report-file",
+			unwritable,
+			"--workload-seconds",
+			"1",
+		);
+
+		// The skip proves no sandbox was created, so this exercises the emit guard in isolation.
+		expect(stderr).toContain("missing-credentials");
+		expect(stderr).toContain("could not emit the report");
+		// The crash banner is the regression: it means the throw escaped instead of being folded in.
+		expect(stderr).not.toContain("Bun v");
+		expect(exitCode).toBe(1);
+	});
+
+	test("a writable report path receives the report and exits on the checks alone", async () => {
+		const directory = mkdtempSync(join(tmpdir(), "driver-check-report-"));
+		const reportFile = join(directory, "report.json");
+		try {
+			const { stdout, stderr, exitCode } = await runCli(
+				"--provider",
+				"e2b",
+				"--report-file",
+				reportFile,
+				"--workload-seconds",
+				"1",
+			);
+
+			// The guard must not swallow a write that succeeded: the file is the deliverable, and CI
+			// consumes it as the artifact for this lane.
+			expect(stderr).not.toContain("could not emit the report");
+			expect(JSON.parse(readFileSync(reportFile, "utf8"))).toMatchObject({
+				provider: "e2b",
+				phase: "version",
+				workloadSeconds: 1,
+				checks: [{ name: "resolve", status: "skip" }],
+			});
+			// --report-file redirects the report off stdout so provider chatter cannot corrupt it.
+			expect(stdout).toBe("");
+			// Skips are not failures without --require-pass, so a clean emit leaves the lane green.
+			expect(exitCode).toBe(0);
+		} finally {
+			rmSync(directory, { recursive: true, force: true });
+		}
 	});
 });

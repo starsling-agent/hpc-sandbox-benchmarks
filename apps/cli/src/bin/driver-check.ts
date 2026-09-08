@@ -20,6 +20,7 @@
 // Credentials come from the environment (bun auto-loads `.env`). A provider whose credentials are
 // absent SKIPS with exit 0 — the same skip-vs-fail contract the rest of the fleet uses.
 
+import { writeFileSync } from "node:fs";
 import type { SandboxSession } from "@sandbox-benchmarks/driver";
 import { isDriverError, readTextFile, succeeded, writeTextFile } from "@sandbox-benchmarks/driver";
 import { verifyDriverReadiness } from "@sandbox-benchmarks/driver/conformance";
@@ -55,13 +56,15 @@ interface Options {
 	readonly artifactRef?: string;
 	readonly workloadSeconds: number;
 	readonly keep: boolean;
+	readonly requirePass: boolean;
+	readonly reportFile?: string;
 }
 
 /** The `--help`-shaped banner, naming the providers this lane can actually drive today. */
 function usage(): string {
 	return [
 		"usage: driver-check --provider <id> [--phase candidate|version] [--artifact-ref <ref>]",
-		"                    [--workload-seconds <n>] [--keep]",
+		"                    [--workload-seconds <n>] [--keep] [--require-pass] [--report-file <path>]",
 		"",
 		`migrated providers: ${DRIVER_IDS.join(", ")}`,
 		"",
@@ -79,19 +82,32 @@ function usage(): string {
 function parseArgs(argv: readonly string[]): Options {
 	const values = new Map<string, string>();
 	let keep = false;
+	let requirePass = false;
 	for (let index = 0; index < argv.length; index++) {
 		const arg = argv[index] as string;
+		if (arg === "--require-pass") {
+			requirePass = true;
+			continue;
+		}
 		if (arg === "--keep") {
 			keep = true;
 			continue;
 		}
 		if (!arg.startsWith("--")) throw new Error(`unexpected argument ${arg}`);
+		if (
+			!["--provider", "--phase", "--artifact-ref", "--workload-seconds", "--report-file"].includes(
+				arg,
+			)
+		)
+			throw new Error(`unknown option ${arg}`);
+		if (values.has(arg.slice(2))) throw new Error(`duplicate option ${arg}`);
 		const next = argv[index + 1];
 		if (next === undefined || next.startsWith("--")) throw new Error(`${arg} needs a value`);
 		values.set(arg.slice(2), next);
 		index++;
 	}
 
+	if (keep && requirePass) throw new Error("--keep cannot be combined with --require-pass");
 	const provider = values.get("provider");
 	if (provider === undefined) throw new Error("--provider is required");
 	if (!DRIVER_IDS.includes(provider as DriverProviderId)) {
@@ -110,12 +126,15 @@ function parseArgs(argv: readonly string[]): Options {
 	}
 
 	const artifactRef = values.get("artifact-ref");
+	const reportFile = values.get("report-file");
 	return {
 		provider: provider as DriverProviderId,
 		phase,
 		workloadSeconds,
 		keep,
+		requirePass,
 		...(artifactRef === undefined ? {} : { artifactRef }),
+		...(reportFile === undefined ? {} : { reportFile }),
 	};
 }
 
@@ -426,16 +445,38 @@ if (import.meta.main) {
 		process.exit(2);
 	}
 
+	const startedAt = new Date().toISOString();
 	const checks = await run(options, log);
 	const failed = checks.filter((entry) => entry.status === "fail").length;
 	const passed = checks.filter((entry) => entry.status === "pass").length;
 	const skipped = checks.filter((entry) => entry.status === "skip").length;
 	log(`<<< ${options.provider}: ${passed} passed, ${failed} failed, ${skipped} skipped`);
-	console.log(
-		JSON.stringify({ provider: options.provider, phase: options.phase, checks }, null, 2),
+	const report = JSON.stringify(
+		{
+			provider: options.provider,
+			phase: options.phase,
+			startedAt,
+			completedAt: new Date().toISOString(),
+			workloadSeconds: options.workloadSeconds,
+			checks,
+		},
+		null,
+		2,
 	);
+	// Emitting the report must never be the reason a still-owned sandbox is abandoned. When `destroy`
+	// failed above, the sandbox stays registered with the process owner and `exitAfterSandboxCleanup`
+	// is the only thing that retries it — so a write failure (bad `--report-file` path, full disk,
+	// closed stdout) is caught, reported, and folded into the exit code rather than allowed to escape.
+	let exitCode = failed > 0 || (options.requirePass && skipped > 0) ? 1 : 0;
+	try {
+		if (options.reportFile !== undefined) writeFileSync(options.reportFile, `${report}\n`);
+		else console.log(report);
+	} catch (error) {
+		log(`error: could not emit the report — ${reason(error)}`);
+		exitCode = 1;
+	}
 
-	await exitAfterSandboxCleanup(failed > 0 ? 1 : 0);
+	await exitAfterSandboxCleanup(exitCode);
 }
 
 export { parseArgs, workloadScript };

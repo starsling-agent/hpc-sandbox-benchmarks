@@ -35,6 +35,8 @@ export {
 	FailedCreateCleanupError,
 	isDriverError,
 	isFailedCreateCleanupError,
+	isRetryableDriverCreate,
+	markRetryableDriverCreate,
 } from "./lib/errors.ts";
 export type {
 	AcceleratorObservation,

@@ -1,10 +1,9 @@
-// E2B is the ComputeSDK proof module: one registry-joined file owns credentials, artifact mapping,
+// E2B is a native SDK module: one registry-joined file owns credentials, artifact mapping,
 // sandbox identity, lifecycle truth, and the few vendor-specific projections the universal wrapper
 // cannot express safely. The shared bridge still owns request validation, error normalization,
 // redaction, ambiguous-create ownership, output caps, and session assembly.
 
 import { randomUUID } from "node:crypto";
-import { e2b } from "@computesdk/e2b";
 import type {
 	CreateRequest,
 	DriverContext,
@@ -13,7 +12,13 @@ import type {
 	SandboxRef,
 } from "@sandbox-benchmarks/driver";
 import { type } from "arktype";
-import { AuthenticationError, InvalidArgumentError, Sandbox, SandboxNotFoundError } from "e2b";
+import {
+	AuthenticationError,
+	InvalidArgumentError,
+	RateLimitError,
+	Sandbox,
+	SandboxNotFoundError,
+} from "e2b";
 import type {
 	ComputeSdkCreatedRequestVerification,
 	ComputeSdkCreateRecovery,
@@ -24,13 +29,15 @@ import type {
 	ComputeSdkSandboxOf,
 } from "./_computesdk.ts";
 import { computeSdkSpec, defineComputeSdkDriver } from "./_computesdk.ts";
+import { matchesAnyCause } from "./_errors.ts";
+import { nativeSdkCompute } from "./_native.ts";
 import { E2B_PROVENANCE } from "./_provenance.ts";
 
 export { E2B_PROVENANCE };
 
-type E2bCompute = ReturnType<typeof e2b>;
-type E2bWrapperSandbox = ComputeSdkSandboxOf<E2bCompute>;
-type E2bNativeSandbox = ComputeSdkNativeOf<E2bWrapperSandbox>;
+type E2bCompute = ReturnType<typeof nativeE2bCompute>;
+type E2bSandboxHandle = ComputeSdkSandboxOf<E2bCompute>;
+type E2bNativeSandbox = ComputeSdkNativeOf<E2bSandboxHandle>;
 
 export const E2B_SANDBOX_ID = type(/^i[a-z0-9]+$/);
 export const E2B_SANDBOX_LIFETIME_MS = 3 * 60 * 60_000;
@@ -44,11 +51,42 @@ export const E2B_EXECUTION = Object.freeze({
 	durable: "native-launch" as const,
 });
 const E2B_RECOVERY_MAX_PAGES = 100;
-const E2B_WRAPPER_DEFINITIVE_CREATE_MESSAGES = new Set([
-	"Missing E2B API key. Provide 'apiKey' in config or set E2B_API_KEY environment variable.",
-	"Invalid E2B API key format. E2B API keys should start with 'e2b_'.",
-	"E2B authentication failed. Please check your E2B_API_KEY environment variable.",
-]);
+const E2B_CREATE_OPTIONS = type({
+	snapshotId: "string >= 1",
+	timeout: "number.integer > 0",
+	metadata: { "[string]": "string" },
+});
+
+/** Allocate with the pinned SDK so typed refusals survive until reconciliation/classification. */
+export function nativeE2bCompute(apiKey: string) {
+	return nativeSdkCompute(
+		(options) => E2B_CREATE_OPTIONS.assert(options),
+		(options, operation) =>
+			Sandbox.create(options.snapshotId, {
+				apiKey,
+				timeoutMs: options.timeout,
+				metadata: options.metadata,
+				...(operation.signal === undefined ? {} : { signal: operation.signal }),
+			}),
+		(native) => ({
+			sandboxId: native.sandboxId,
+			runCommand: (command, options) =>
+				native.commands.run(command, {
+					user: "root",
+					background: false,
+					...(options?.signal === undefined ? {} : { signal: options.signal }),
+				}),
+			destroy: () => native.kill(),
+			filesystem: {
+				readFile: (path) => native.files.read(path, { user: "root" }),
+				exists: (path) => native.files.exists(path, { user: "root" }),
+				writeFile: async (path, content) => {
+					await native.files.write(path, content, { user: "root" });
+				},
+			},
+		}),
+	);
+}
 
 export const E2B_REQUEST_COVERAGE = {
 	spec: {
@@ -90,7 +128,7 @@ function foreignCommandExit(
 
 /** Foreground root execution preserves E2B's public nonzero exit envelope for kit normalization. */
 export async function execE2bCommandAsRoot(
-	sandbox: E2bWrapperSandbox,
+	sandbox: E2bSandboxHandle,
 	command: string,
 	options?: ExecOptions,
 ): Promise<unknown> {
@@ -110,7 +148,7 @@ export async function execE2bCommandAsRoot(
 
 /** Background execution succeeds only after E2B returns a genuine positive process handle. */
 export async function launchE2bCommandAsRoot(
-	sandbox: E2bWrapperSandbox,
+	sandbox: E2bSandboxHandle,
 	command: string,
 	options?: ExecOptions,
 ): Promise<void> {
@@ -199,36 +237,35 @@ export function e2bLifecycle(apiKey: string): ComputeSdkLifecycle<E2bCompute> {
 	};
 }
 
-/**
- * E2B rejections that happen before the control plane can allocate need no recovery lookup. The
- * locked ComputeSDK wrapper erases SDK error classes and causes, so also recognize only its exact
- * missing/invalid/authentication envelopes. Its generic "Failed to create" envelope is deliberately
- * excluded because it is shared by invalid arguments, transport loss, and timeouts. A bounded cause
- * walk still supports boundaries that preserve the original typed SDK error.
- */
+/** Typed rejections made before allocation need no recovery lookup. */
 export function isE2bDefinitiveCreateRejection(error: unknown): boolean {
-	let cause: unknown = error;
-	for (let depth = 0; depth < 8; depth += 1) {
-		if (cause instanceof AuthenticationError || cause instanceof InvalidArgumentError) return true;
-		if (!(cause instanceof Error)) return false;
-		if (E2B_WRAPPER_DEFINITIVE_CREATE_MESSAGES.has(cause.message)) return true;
-		let next: unknown;
-		try {
-			next = cause.cause;
-		} catch {
-			return false;
-		}
-		if (next === undefined || next === cause) return false;
-		cause = next;
-	}
-	return false;
+	return matchesAnyCause(
+		error,
+		(link) =>
+			link instanceof AuthenticationError ||
+			link instanceof InvalidArgumentError ||
+			link instanceof RateLimitError,
+	);
 }
 
+/** Only the installed SDK's rate-limit class establishes a transient refusal. */
+export function isE2bRetryableCreate(error: unknown): boolean {
+	return matchesAnyCause(error, (link) => link instanceof RateLimitError);
+}
+
+/**
+ * What the bridge needs to reconcile — and classify — a create whose outcome E2B left ambiguous.
+ *
+ * The locator is an attempt marker written into create metadata, so a sandbox the wrapper never
+ * returned a handle for is still findable by listing. Both classifiers answer independently: whether
+ * the refusal happened before allocation, and whether it is worth retrying.
+ */
 export function e2bCreateRecovery(apiKey: string): ComputeSdkCreateRecovery<E2bCompute> {
 	return {
 		absenceConfirmationMs: E2B_RECOVERY_CONFIRMATION_MS,
 		maxAttempts: E2B_RECOVERY_MAX_ATTEMPTS,
 		isDefinitive: isE2bDefinitiveCreateRejection,
+		isRetryableCreate: isE2bRetryableCreate,
 		locator: (createOptions) => ({
 			kind: "marker",
 			key: E2B_ATTEMPT_METADATA_KEY,
@@ -374,7 +411,7 @@ export async function verifyE2bDiskCapacity(
 /** Extracted through the joined context type so tests can pin the actual one-file authoring shape. */
 export function e2bSpec({ env, resolvedArtifact }: DriverContext<"e2b">) {
 	const apiKey = env.E2B_API_KEY;
-	return computeSdkSpec(e2b({ apiKey, timeout: E2B_SANDBOX_LIFETIME_MS }), {
+	return computeSdkSpec(nativeE2bCompute(apiKey), {
 		sandboxId: E2B_SANDBOX_ID,
 		createOptions: {
 			coverage: E2B_REQUEST_COVERAGE,
@@ -386,7 +423,7 @@ export function e2bSpec({ env, resolvedArtifact }: DriverContext<"e2b">) {
 					snapshotId: resolvedArtifact.ref,
 					timeout: E2B_SANDBOX_LIFETIME_MS,
 					metadata: { [E2B_ATTEMPT_METADATA_KEY]: `benchmark-${randomUUID()}` },
-				};
+				} satisfies typeof E2B_CREATE_OPTIONS.infer;
 			},
 		},
 		commands: {

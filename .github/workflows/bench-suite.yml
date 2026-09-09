@@ -140,7 +140,7 @@ jobs:
     # below, and bench-suite refuses a suite that cannot finish inside that window rather than letting
     # the cell be reaped mid-run with no logs and every replicate lost. Keep the three paired.
     # >>> generated: provider-runner — bun run generate-provider-wiring
-    runs-on: ${{ matrix.provider == 'microsandbox-local' && 'starsling-ubuntu-24.04-2' || 'ubuntu-24.04' }}
+    runs-on: ${{ 'ubuntu-24.04' }}
     # <<< end generated: provider-runner
     timeout-minutes: 180
     strategy:
@@ -172,7 +172,7 @@ jobs:
         uses: ./.github/actions/setup-workspace
         with:
           # >>> generated: provider-runner-cache — bun run generate-provider-wiring
-          no-cache: ${{ matrix.provider == 'microsandbox-local' && 'true' || 'false' }}
+          no-cache: ${{ false && 'true' || 'false' }}
           # <<< end generated: provider-runner-cache
 
       # Namespace is the one provider with no stored secret: it federates on this job's OIDC identity
@@ -269,7 +269,6 @@ jobs:
           DAYTONA_CONTAINER_SNAPSHOT: ${{ matrix.provider == 'daytona-container' && (env.DAYTONA_CONTAINER_SNAPSHOT || vars.DAYTONA_CONTAINER_SNAPSHOT || secrets.DAYTONA_CONTAINER_SNAPSHOT) || '' }}
           BL_API_KEY: ${{ matrix.provider == 'blaxel' && secrets.BL_API_KEY || '' }}
           BL_WORKSPACE: ${{ matrix.provider == 'blaxel' && secrets.BL_WORKSPACE || '' }}
-          MICROSANDBOX_LOCAL_BENCH: ${{ matrix.provider == 'microsandbox-local' && '1' || '' }}
           MSB_API_KEY: ${{ matrix.provider == 'microsandbox-cloud' && secrets.MSB_API_KEY || '' }}
           MSB_API_URL: ${{ matrix.provider == 'microsandbox-cloud' && (env.MSB_API_URL || vars.MSB_API_URL || secrets.MSB_API_URL) || '' }}
           MODAL_TOKEN_ID: ${{ (matrix.provider == 'modal-gvisor' || matrix.provider == 'modal-vm') && secrets.MODAL_TOKEN_ID || '' }}
@@ -291,7 +290,7 @@ jobs:
           # requires a literal). Declaring it here lets bench-suite reject a suite that cannot finish
           # inside it, before any sandbox is created. Empty on the hosted runner, which outlives the job.
           # >>> generated: provider-runner-lifetime — bun run generate-provider-wiring
-          BENCH_RUNNER_LIFETIME_MINUTES: ${{ matrix.provider == 'microsandbox-local' && '70' || '' }}
+          BENCH_RUNNER_LIFETIME_MINUTES: ${{ '' }}
           # <<< end generated: provider-runner-lifetime
         run: bun apps/cli/src/bin/bench-suite.ts "$BENCH_PROVIDER" "$BENCH_SUITE" "$GITHUB_RUN_ID" --replicates "$BENCH_REPLICATES"
 

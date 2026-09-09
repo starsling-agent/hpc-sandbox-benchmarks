@@ -13,7 +13,7 @@ import { blaxelWithVolumeAndKeepAlive } from "./blaxel-volume.ts";
 import { runcloudCostEvidence } from "./cost-evidence.ts";
 import { daytonaActivateSnapshot } from "./daytona-snapshot.ts";
 import { daytonaClientTarget } from "./daytona-target.ts";
-import { microsandboxCloudCompute, microsandboxLocalCompute } from "./microsandbox.ts";
+import { microsandboxCloudCompute } from "./microsandbox.ts";
 import { novitaCompute } from "./novita.ts";
 import { RUNCLOUD_CREATE_CEILING_MS, runcloudCompute } from "./runcloud.ts";
 import { runloopCompute } from "./runloop.ts";
@@ -133,32 +133,12 @@ export const adapters: Record<LegacyAdapterId, ProviderAdapter> = {
 			),
 		createOptions: {},
 	},
-	"microsandbox-local": {
-		artifact: { kind: "image", ref: config.toolchainImage },
-		// Explicit local selection is important: a developer can have MSB_API_* configured globally and
-		// still request a true host-local benchmark without the SDK auto-selecting cloud.
-		createCompute: () =>
-			microsandboxLocalCompute({
-				variant: "microsandbox-local",
-				backend: "local",
-				ephemeral: false,
-				image: config.toolchainImage,
-				cpus: TARGET_SPEC.vcpus,
-				memoryMib: TARGET_SPEC.memoryGb * 1024,
-				rootDiskMib: TARGET_SPEC.diskGb * 1024,
-				namePrefix: "bench-local-",
-				timeoutMs: MICROSANDBOX_MAX_DURATION_SECS * 1000,
-			}),
-		createOptions: { templateId: config.toolchainImage },
-		createTimeoutMs: MICROSANDBOX_CREATE_TIMEOUT_MS,
-	},
 	"microsandbox-cloud": {
 		artifact: { kind: "image", ref: config.toolchainImage },
 		// The API key remains in the CloudBackend HTTP/WebSocket client. It is never forwarded through
 		// createOptions, metadata, or the benchmark's in-guest environment.
 		createCompute: () =>
 			microsandboxCloudCompute({
-				variant: "microsandbox-cloud",
 				backend: microsandboxCloudCredentials(),
 				ephemeral: true,
 				image: config.toolchainImage,

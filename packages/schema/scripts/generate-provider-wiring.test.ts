@@ -89,16 +89,9 @@ describe("provider wiring projections", () => {
 			"rendered provider options",
 		);
 		expect(renderedOptions.options).toEqual([...PROVIDER_IDS]);
-		expect(renderRunnerSelection()).toContain(
-			"matrix.provider == 'microsandbox-local' && 'starsling-ubuntu-24.04-2'",
-		);
-		expect(renderRunnerSelection()).toEndWith("'ubuntu-24.04' }}");
-		expect(renderRunnerNoCache("")).toBe(
-			`no-cache: \${{ matrix.provider == 'microsandbox-local' && 'true' || 'false' }}`,
-		);
-		expect(renderRunnerLifetime("")).toBe(
-			`BENCH_RUNNER_LIFETIME_MINUTES: \${{ matrix.provider == 'microsandbox-local' && '70' || '' }}`,
-		);
+		expect(renderRunnerSelection()).toBe(`    runs-on: \${{ 'ubuntu-24.04' }}`);
+		expect(renderRunnerNoCache("")).toBe(`no-cache: \${{ false && 'true' || 'false' }}`);
+		expect(renderRunnerLifetime("")).toBe(`BENCH_RUNNER_LIFETIME_MINUTES: \${{ '' }}`);
 	});
 
 	test("scopes secrets, shared inputs, capability literals, and pre-auth values safely", () => {
@@ -109,9 +102,7 @@ describe("provider wiring projections", () => {
 		expect(matrix).toContain(
 			`DAYTONA_API_KEY: \${{ (matrix.provider == 'daytona-vm' || matrix.provider == 'daytona-container') && secrets.DAYTONA_API_KEY || '' }}`,
 		);
-		expect(matrix).toContain(
-			`MICROSANDBOX_LOCAL_BENCH: \${{ matrix.provider == 'microsandbox-local' && '1' || '' }}`,
-		);
+		expect(matrix).not.toContain("MICROSANDBOX_LOCAL_BENCH");
 		expect(matrix).toContain(`NSC_TOKEN_FILE: \${{ steps.namespace.outputs.token-file }}`);
 		expect(matrix).toContain(
 			`VERCEL_OIDC_TOKEN: \${{ matrix.provider == 'vercel' && steps.vercel-auth.outcome == 'success' && env.VERCEL_OIDC_TOKEN || '' }}`,
@@ -232,7 +223,6 @@ describe("provider wiring projections", () => {
 			"daytona-vm",
 			"daytona-container",
 			"blaxel",
-			"microsandbox-local",
 			"microsandbox-cloud",
 			"novita",
 			"runloop",

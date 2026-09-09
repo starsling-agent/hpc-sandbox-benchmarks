@@ -501,7 +501,6 @@ jobs:
           DAYTONA_CONTAINER_SNAPSHOT: ${{ matrix.provider == 'daytona-container' && (env.DAYTONA_CONTAINER_SNAPSHOT || vars.DAYTONA_CONTAINER_SNAPSHOT || secrets.DAYTONA_CONTAINER_SNAPSHOT) || '' }}
           BL_API_KEY: ${{ matrix.provider == 'blaxel' && secrets.BL_API_KEY || '' }}
           BL_WORKSPACE: ${{ matrix.provider == 'blaxel' && secrets.BL_WORKSPACE || '' }}
-          MICROSANDBOX_LOCAL_BENCH: ${{ matrix.provider == 'microsandbox-local' && '1' || '' }}
           MSB_API_KEY: ${{ matrix.provider == 'microsandbox-cloud' && secrets.MSB_API_KEY || '' }}
           MSB_API_URL: ${{ matrix.provider == 'microsandbox-cloud' && (env.MSB_API_URL || vars.MSB_API_URL || secrets.MSB_API_URL) || '' }}
           MODAL_TOKEN_ID: ${{ (matrix.provider == 'modal-gvisor' || matrix.provider == 'modal-vm') && secrets.MODAL_TOKEN_ID || '' }}
@@ -688,7 +687,6 @@ jobs:
           DAYTONA_CONTAINER_SNAPSHOT: ${{ contains(fromJSON(needs.plan.outputs.matrix).include.*.provider, 'daytona-container') && (env.DAYTONA_CONTAINER_SNAPSHOT || vars.DAYTONA_CONTAINER_SNAPSHOT || secrets.DAYTONA_CONTAINER_SNAPSHOT) || '' }}
           BL_API_KEY: ${{ contains(fromJSON(needs.plan.outputs.matrix).include.*.provider, 'blaxel') && secrets.BL_API_KEY || '' }}
           BL_WORKSPACE: ${{ contains(fromJSON(needs.plan.outputs.matrix).include.*.provider, 'blaxel') && secrets.BL_WORKSPACE || '' }}
-          MICROSANDBOX_LOCAL_BENCH: ${{ contains(fromJSON(needs.plan.outputs.matrix).include.*.provider, 'microsandbox-local') && '1' || '' }}
           MSB_API_KEY: ${{ contains(fromJSON(needs.plan.outputs.matrix).include.*.provider, 'microsandbox-cloud') && secrets.MSB_API_KEY || '' }}
           MSB_API_URL: ${{ contains(fromJSON(needs.plan.outputs.matrix).include.*.provider, 'microsandbox-cloud') && (env.MSB_API_URL || vars.MSB_API_URL || secrets.MSB_API_URL) || '' }}
           MODAL_TOKEN_ID: ${{ (contains(fromJSON(needs.plan.outputs.matrix).include.*.provider, 'modal-gvisor') || contains(fromJSON(needs.plan.outputs.matrix).include.*.provider, 'modal-vm')) && secrets.MODAL_TOKEN_ID || '' }}

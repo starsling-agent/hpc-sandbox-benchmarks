@@ -39,7 +39,7 @@ describe("Tier-3 provider metadata schema", () => {
 			validateProviderModules(meta("vercel", { artifact: { kind: "mirror", repository: "" } })),
 		).toThrow(/repository/);
 		expect(() =>
-			validateProviderModules(meta("microsandbox-local", { runner: { label: "", noCache: true } })),
+			validateProviderModules(meta("microsandbox-cloud", { runner: { label: "", noCache: true } })),
 		).toThrow(/label/);
 		expect(() => validateProviderModules(meta("vercel", { preAuth: "custom-auth" }))).toThrow(
 			/preAuth/,
@@ -228,17 +228,19 @@ describe("Tier-3 provider metadata schema", () => {
 	});
 
 	test("requires providers sharing a runner label to share its complete policy", () => {
-		expect(() =>
-			validateProviderModules(
-				meta("e2b", {
-					runner: {
-						label: "starsling-ubuntu-24.04-2",
-						noCache: false,
-						lifetimeMinutes: 70,
-					},
-				}),
-			),
-		).toThrow(/shared runner starsling-ubuntu-24.04-2 must use one cache\/lifetime policy/);
+		const modules = meta("e2b", {
+			runner: { label: "shared-runner", noCache: false, lifetimeMinutes: 70 },
+		});
+		modules["microsandbox-cloud"] = {
+			id: "microsandbox-cloud",
+			meta: {
+				...REGISTRY["microsandbox-cloud"],
+				runner: { label: "shared-runner", noCache: true, lifetimeMinutes: 70 },
+			},
+		};
+		expect(() => validateProviderModules(modules)).toThrow(
+			/shared runner shared-runner must use one cache\/lifetime policy/,
+		);
 	});
 
 	test("rejects malformed transport and pricing before generation", () => {

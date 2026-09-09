@@ -3,15 +3,10 @@ import type { FsEntry as MsbFsEntry } from "microsandbox";
 import {
 	IoError,
 	Sandbox as MsbSandbox,
-	Snapshot as MsbSnapshot,
 	SandboxFsOpsError,
 	SandboxNotFoundError,
 } from "microsandbox";
-import {
-	microsandboxCloudCompute,
-	microsandboxFileEntries,
-	microsandboxLocalCompute,
-} from "./microsandbox.ts";
+import { microsandboxCloudCompute, microsandboxFileEntries } from "./microsandbox.ts";
 
 let builtName = "";
 let getNames: string[] = [];
@@ -42,7 +37,6 @@ function failedBuilder(name: string): ReturnType<typeof MsbSandbox.builder> {
 
 function cloudProvider() {
 	return microsandboxCloudCompute({
-		variant: "microsandbox-cloud",
 		backend: { kind: "cloud", apiKey: "offline-test-key" },
 		ephemeral: true,
 		image: "alpine:3.20",
@@ -50,20 +44,6 @@ function cloudProvider() {
 		memoryMib: 512,
 		rootDiskMib: 8192,
 		namePrefix: "test-cloud-",
-		timeoutMs: 60_000,
-	});
-}
-
-function localProvider() {
-	return microsandboxLocalCompute({
-		variant: "microsandbox-local",
-		backend: "local",
-		ephemeral: false,
-		image: "alpine:3.20",
-		cpus: 1,
-		memoryMib: 512,
-		rootDiskMib: 8192,
-		namePrefix: "test-local-",
 		timeoutMs: 60_000,
 	});
 }
@@ -250,36 +230,6 @@ describe("Microsandbox provider edge cases", () => {
 		expect(ephemeral).toBe(true);
 		expect((await sandbox.getInfo()).timeout).toBe(12_345);
 	});
-
-	it("keeps local snapshot qualification persistent", async () => {
-		let ephemeral: boolean | undefined;
-		let builder: Record<PropertyKey, unknown>;
-		builder = new Proxy(
-			{},
-			{
-				get: (_target, property) => {
-					if (property === "ephemeral") {
-						return (enabled: boolean) => {
-							ephemeral = enabled;
-							return builder;
-						};
-					}
-					if (property === "create") return async () => ({});
-					return () => builder;
-				},
-			},
-		);
-		restore(
-			spyOn(MsbSandbox, "builder").mockImplementation(
-				(() => builder) as unknown as typeof MsbSandbox.builder,
-			),
-		);
-
-		await localProvider().sandbox.create();
-
-		expect(ephemeral).toBe(false);
-	});
-
 	it("throws instead of replaying a command after an ambiguous agent failure", async () => {
 		let execCalls = 0;
 		const nativeSandbox = {
@@ -478,68 +428,6 @@ describe("Microsandbox provider edge cases", () => {
 		);
 		expect(startCalls).toBe(0);
 	});
-
-	it("drops a cached connection after a snapshot stops and restarts the guest", async () => {
-		let connects = 0;
-		const nativeSandbox = {
-			execWith: async () => ({ stdout: () => "ok", stderr: () => "", code: 0 }),
-		};
-		let builder: Record<PropertyKey, unknown>;
-		builder = new Proxy(
-			{},
-			{
-				get: (_target, property) =>
-					property === "create" ? async () => nativeSandbox : () => builder,
-			},
-		);
-		restore(
-			spyOn(MsbSandbox, "builder").mockImplementation(
-				(() => builder) as unknown as typeof MsbSandbox.builder,
-			),
-		);
-		restore(
-			spyOn(MsbSandbox, "get").mockImplementation(
-				(async (name: string) =>
-					({
-						name,
-						status: "running",
-						stop: async () => {},
-						startDetached: async () => ({}),
-						connect: async () => {
-							connects++;
-							return nativeSandbox;
-						},
-					}) as unknown as Awaited<ReturnType<typeof MsbSandbox.get>>) as typeof MsbSandbox.get,
-			),
-		);
-		restore(
-			spyOn(MsbSnapshot, "builder").mockImplementation(((name: string) => {
-				let snapBuilder: Record<PropertyKey, unknown>;
-				snapBuilder = new Proxy(
-					{},
-					{
-						get: (_target, property) =>
-							property === "create" ? async () => ({ name }) : () => snapBuilder,
-					},
-				);
-				return snapBuilder as unknown as ReturnType<typeof MsbSnapshot.builder>;
-			}) as typeof MsbSnapshot.builder),
-		);
-
-		const provider = localProvider();
-		const sandbox = await provider.sandbox.create({ name: "bench-local-snap" });
-		await sandbox.runCommand("true");
-		expect(connects).toBe(0); // create handed back a live connection
-
-		await provider.snapshot?.create("bench-local-snap");
-
-		// The snapshot path stopped and rebooted the guest through its own handles, so the connection
-		// cached on the ComputeSDK handle is dead. Without invalidation the next command went straight
-		// to that stale connection and was reported as having failed INSIDE the guest.
-		await sandbox.runCommand("true");
-		expect(connects).toBe(1);
-	});
-
 	it("lists legacy prefix-owned sandboxes without requiring the current label", async () => {
 		let labelCalls = 0;
 		restore(
@@ -586,54 +474,6 @@ describe("Microsandbox provider edge cases", () => {
 
 		expect(listed.map((sandbox) => sandbox.sandboxId)).toEqual(["test-cloud-legacy"]);
 		expect(labelCalls).toBe(0);
-	});
-
-	it("reports both snapshot and restart failures", async () => {
-		let getCalls = 0;
-		restore(
-			spyOn(MsbSandbox, "get").mockImplementation((async (name: string) => {
-				getCalls++;
-				return {
-					name,
-					status: "running",
-					stop: async () => {},
-					startDetached: async () => {
-						throw new Error("restart unavailable");
-					},
-				} as unknown as Awaited<ReturnType<typeof MsbSandbox.get>>;
-			}) as typeof MsbSandbox.get),
-		);
-		let snapshotBuilder: Record<PropertyKey, unknown>;
-		snapshotBuilder = new Proxy(
-			{},
-			{
-				get: (_target, property) =>
-					property === "create"
-						? async () => {
-								throw new Error("snapshot unavailable");
-							}
-						: () => snapshotBuilder,
-			},
-		);
-		restore(
-			spyOn(MsbSnapshot, "builder").mockImplementation(
-				(() => snapshotBuilder) as unknown as typeof MsbSnapshot.builder,
-			),
-		);
-
-		const error = await localProvider()
-			.snapshot?.create("sandbox-1", { name: "snapshot-1" })
-			.catch((caught) => caught);
-
-		expect(error).toBeInstanceOf(AggregateError);
-		expect(error.message).toContain(
-			"snapshot unavailable; restart also failed: restart unavailable",
-		);
-		expect(error.errors.map((entry: unknown) => String(entry))).toEqual([
-			"Error: snapshot unavailable",
-			"Error: restart unavailable",
-		]);
-		expect(getCalls).toBe(2);
 	});
 });
 

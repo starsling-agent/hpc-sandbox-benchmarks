@@ -11,7 +11,6 @@ import {
 	isLegacyAdapterId,
 	MIGRATED_DRIVER_IDS,
 	microsandboxCloudCompute,
-	microsandboxLocalCompute,
 	NOVITA_E2B_DOMAIN,
 	novitaCompute,
 	novitaConnection,
@@ -228,8 +227,7 @@ describe("@sandbox-benchmarks/providers", () => {
 		expect(daytonaMeta?.requiredEnvVars).toEqual(["DAYTONA_API_KEY"]);
 		expect(daytona?.requiredEnvVars).toEqual(daytonaMeta?.requiredEnvVars);
 	});
-
-	it("keeps Microsandbox local and cloud as separate, capability-accurate providers", () => {
+	it("exposes Microsandbox Cloud with its supported capabilities", () => {
 		const base = {
 			image: config.toolchainImage,
 			cpus: TARGET_SPEC.vcpus,
@@ -238,31 +236,17 @@ describe("@sandbox-benchmarks/providers", () => {
 			namePrefix: "test-msb-",
 			timeoutMs: 10_800_000,
 		} as const;
-		const local = microsandboxLocalCompute({
-			...base,
-			variant: "microsandbox-local",
-			backend: "local",
-			ephemeral: false,
-		});
 		const cloud = microsandboxCloudCompute({
 			...base,
-			variant: "microsandbox-cloud",
 			backend: { kind: "cloud", url: "https://msb.invalid", apiKey: "unit-test-key" },
 			ephemeral: true,
 		});
-
-		expect(local.name).toBe("microsandbox-local");
-		expect(local.snapshot).toBeDefined();
 		expect(cloud.name).toBe("microsandbox-cloud");
 		// Cloud snapshots are not implemented by msb-cloud yet. Omitting the manager makes the lifecycle
 		// harness record an explicit skipped capability instead of attempting a knowingly invalid call.
 		expect(cloud.snapshot).toBeUndefined();
-
-		const localAdapter = providers.find((provider) => provider.name === "microsandbox-local");
 		const cloudAdapter = providers.find((provider) => provider.name === "microsandbox-cloud");
-		expect(localAdapter?.requiredEnvVars).toEqual(["MICROSANDBOX_LOCAL_BENCH"]);
 		expect(cloudAdapter?.requiredEnvVars).toEqual(["MSB_API_KEY"]);
-		expect(localAdapter?.createOptions).toEqual({ templateId: config.toolchainImage });
 		expect(cloudAdapter?.createOptions).toEqual({ templateId: config.toolchainImage });
 		// The control-plane credential belongs only to the SDK backend config; it must never enter the
 		// universal create options because those can be translated into guest-visible provider fields.

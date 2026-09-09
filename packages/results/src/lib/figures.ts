@@ -90,22 +90,6 @@ export function suiteFigureNote(suite: PipelineSuite, chartCount: number): strin
  * in here, once, typed by the schema that owns them.
  */
 export function benchmarkDataOf(run: Run): RealworldFigureModel {
-	// Historical runs retain their original task IDs; never combine V1 and V2 bars.
-	const hasMastraV2 = run.providers.some((provider) =>
-		provider.metrics.some((metric) => metric.metricId.startsWith("realworld_mastra_v2_task_")),
-	);
-	const mastra = SUITES["realworld-mastra"];
-	const suites = hasMastraV2
-		? SUITES
-		: {
-				...SUITES,
-				"realworld-mastra": {
-					...mastra,
-					metrics: mastra.metrics.map((id) =>
-						id.replace("realworld_mastra_v2_", "realworld_mastra_"),
-					),
-				},
-			};
 	return buildRealworldFigureModel({
 		run,
 		metrics: METRIC_CATALOG,
@@ -114,7 +98,7 @@ export function benchmarkDataOf(run: Run): RealworldFigureModel {
 			displayName: provider.displayName,
 			isolationTechnology: provider.isolation.technology,
 		})),
-		suites,
+		suites: SUITES,
 	});
 }
 

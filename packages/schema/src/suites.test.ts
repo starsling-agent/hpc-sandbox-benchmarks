@@ -68,7 +68,7 @@ describe("suite registry", () => {
 		// an added/removed/renamed task can't leave a suite emitting an undeclared metric or
 		// declaring a metric its profile no longer produces.
 		const profileOf = {
-			"realworld-mastra": "local/realworld-mastra-v2",
+			"realworld-mastra": "local/realworld-mastra",
 			"realworld-better-auth": "local/realworld-better-auth",
 			"realworld-openclaw": "local/realworld-openclaw",
 		} as const;

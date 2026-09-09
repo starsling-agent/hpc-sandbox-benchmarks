@@ -13,7 +13,7 @@ echo "========================================"
 ensure_pts || true
 
 run_task benchmark:realworld:pts:better-auth
-run_task benchmark:realworld:pts:mastra-v2
+run_task benchmark:realworld:pts:mastra
 run_task benchmark:realworld:pts:openclaw
 
 summary

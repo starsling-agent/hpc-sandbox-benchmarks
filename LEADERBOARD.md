@@ -48,7 +48,7 @@ cross-check.
 | tama | container (shared kernel) | unknown |
 | Vercel Sandbox | Firecracker microVM | vm |
 
-_Not present in this run: Daytona (container), Microsandbox (local) — registered providers that reported no data (not dispatched, or every cell was lost before reporting anything)._
+_Not present in this run: Daytona (container), microsandbox-local — registered providers that reported no data (not dispatched, or every cell was lost before reporting anything)._
 
 > **Comparability warning:** tama's observed compute did not match the requested CPU/RAM target; its observed allocation was **64 vCPU · 1512 GiB RAM · 48.9 GB disk**. Its measured ranks are not like-for-like with compute-matched providers.
 

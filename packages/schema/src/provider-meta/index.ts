@@ -6,7 +6,6 @@ import daytona_container from "./daytona-container.ts";
 import daytona_vm from "./daytona-vm.ts";
 import e2b from "./e2b.ts";
 import microsandbox_cloud from "./microsandbox-cloud.ts";
-import microsandbox_local from "./microsandbox-local.ts";
 import modal_gvisor from "./modal-gvisor.ts";
 import modal_vm from "./modal-vm.ts";
 import namespace from "./namespace.ts";
@@ -21,7 +20,6 @@ const MODULES = {
 	"daytona-vm": daytona_vm,
 	"daytona-container": daytona_container,
 	blaxel: blaxel,
-	"microsandbox-local": microsandbox_local,
 	"microsandbox-cloud": microsandbox_cloud,
 	"modal-gvisor": modal_gvisor,
 	"modal-vm": modal_vm,
@@ -38,7 +36,6 @@ export const REGISTRY = {
 	"daytona-vm": MODULES["daytona-vm"].meta,
 	"daytona-container": MODULES["daytona-container"].meta,
 	blaxel: MODULES.blaxel.meta,
-	"microsandbox-local": MODULES["microsandbox-local"].meta,
 	"microsandbox-cloud": MODULES["microsandbox-cloud"].meta,
 	"modal-gvisor": MODULES["modal-gvisor"].meta,
 	"modal-vm": MODULES["modal-vm"].meta,

@@ -1,8 +1,4 @@
-// ComputeSDK adapters for Microsandbox's two execution backends. Both variants use the same
-// public SDK surface; the backend selection is explicit so a process with cloud credentials can
-// still benchmark the local runtime without accidentally routing that run to the control plane.
-// Requires microsandbox >=0.6.8: that is the first release carrying the unified cloud backend,
-// paginated list API, cloud agent tunnel, and create-until-running contract used below.
+// ComputeSDK adapter for Microsandbox Cloud.
 import { randomUUID } from "node:crypto";
 import { posix as posixPath } from "node:path";
 import type {
@@ -12,7 +8,6 @@ import type {
 	RunCommandOptions,
 	SandboxInfo,
 	SandboxMethods,
-	SnapshotMethods,
 } from "@computesdk/provider";
 import { defineProvider } from "@computesdk/provider";
 import type {
@@ -25,7 +20,6 @@ import {
 	HttpError,
 	IoError,
 	Sandbox as MsbSandbox,
-	Snapshot as MsbSnapshot,
 	ProtocolError,
 	SandboxNotFoundError,
 	withDefaultBackend,
@@ -33,16 +27,13 @@ import {
 
 type MsbSandboxBuilder = ReturnType<typeof MsbSandbox.builder>;
 
-/** Marker shared by both variants; the value distinguishes local and cloud benchmark sandboxes. */
+/** Identifies sandboxes created by this benchmark provider. */
 const LABEL_MARKER = "sandbox-benchmarks.provider";
 /** Label prefix under which ComputeSDK metadata is persisted. */
 const LABEL_META_PREFIX = "sandbox-benchmarks.meta.";
 
-export type MicrosandboxVariant = "microsandbox-local" | "microsandbox-cloud";
-
-interface MicrosandboxBaseConfig {
-	variant: MicrosandboxVariant;
-	backend: DefaultBackend;
+export interface MicrosandboxCloudConfig {
+	backend: Extract<DefaultBackend, { kind: "cloud" }>;
 	/** Whether the provider should delete sandbox state when the sandbox stops. */
 	ephemeral: boolean;
 	/** OCI image to boot when create() receives no templateId. */
@@ -59,30 +50,16 @@ interface MicrosandboxBaseConfig {
 	timeoutMs: number;
 }
 
-export interface MicrosandboxLocalConfig extends MicrosandboxBaseConfig {
-	variant: "microsandbox-local";
-	backend: "local";
-}
-
-export interface MicrosandboxCloudConfig extends MicrosandboxBaseConfig {
-	variant: "microsandbox-cloud";
-	backend: Extract<DefaultBackend, { kind: "cloud" }>;
-}
-
-export type MicrosandboxConfig = MicrosandboxLocalConfig | MicrosandboxCloudConfig;
+export type MicrosandboxConfig = MicrosandboxCloudConfig;
 
 /** The native sandbox plus enough immutable context to reconnect it safely. */
 export interface MicrosandboxHandle {
 	name: string;
 	sandbox: InstanceType<typeof MsbSandbox> | null;
-	backend: DefaultBackend;
-	variant: MicrosandboxVariant;
+	backend: MicrosandboxCloudConfig["backend"];
 	createdAt: Date;
 	timeoutMs: number;
 	metadata: Record<string, unknown>;
-	/** Value of {@link bootEpoch} when `sandbox` was connected; a mismatch means that guest has been
-	 *  rebooted underneath us and the cached connection is dead. Meaningless while `sandbox` is null. */
-	connectedEpoch: number;
 }
 
 /**
@@ -101,24 +78,6 @@ export class MicrosandboxTransportError extends Error {
 		});
 		this.name = "MicrosandboxTransportError";
 	}
-}
-
-/**
- * Per-sandbox boot counter, bumped whenever this process stops and restarts a guest.
- *
- * `SnapshotMethods` receive only `(config, sandboxId)`, so the snapshot path cannot reach the
- * ComputeSDK handles that hold cached agent connections to the sandbox it just rebooted. Comparing an
- * epoch is how those handles find out: it is O(1) per name and needs no handle registry.
- */
-const bootEpoch = new Map<string, number>();
-
-function currentEpoch(name: string): number {
-	return bootEpoch.get(name) ?? 0;
-}
-
-/** Invalidate every cached connection to `name`; call after this process restarts that guest. */
-function bumpEpoch(name: string): void {
-	bootEpoch.set(name, currentEpoch(name) + 1);
 }
 
 /** POSIX single-quote shell escaping for commands sent to the guest shell. */
@@ -196,17 +155,15 @@ function handleFromMsb(
 		name: msbHandle.name,
 		sandbox: null,
 		backend: config.backend,
-		variant: config.variant,
 		createdAt: msbHandle.createdAt ?? new Date(),
 		timeoutMs: config.timeoutMs,
 		metadata,
-		connectedEpoch: currentEpoch(msbHandle.name),
 	};
 }
 
 function isOurs(config: MicrosandboxConfig, handle: MsbSandboxHandle): boolean {
 	const { labels } = recoverFromConfig(handle.configJson);
-	if (labels[LABEL_MARKER] === config.variant) return true;
+	if (labels[LABEL_MARKER] === "microsandbox-cloud") return true;
 	return handle.name.startsWith(config.namePrefix);
 }
 
@@ -234,24 +191,15 @@ async function removeSandboxIfPresent(
 			// occur — skipping the stop for those made remove() reject and leaked the microVM until its
 			// maxDuration expired.
 			if (handle.status !== "stopped") {
-				if (config.variant === "microsandbox-cloud") {
-					// Cloud stop can legitimately take longer than the SDK's 10-second graceful window.
-					// Requesting and observing it separately avoids stop() escalating to kill(), which the
-					// cloud backend intentionally does not support.
-					await handle.requestStop();
-					await handle.waitUntilStopped();
-				} else {
-					await handle.stop();
-				}
+				// Request and await cloud stop without escalating to unsupported kill().
+				await handle.requestStop();
+				await handle.waitUntilStopped();
 			}
 			await MsbSandbox.remove(sandboxId);
 		} catch (error) {
 			if (isNotFound(error)) return;
 			throw error;
 		}
-		// Deliberately NOT clearing this name's `bootEpoch`: resetting it to 0 would let a handle whose
-		// cached connection predates a snapshot restart compare equal again and reuse a dead connection.
-		// The map only gains an entry when a sandbox is actually snapshotted, so it cannot grow far.
 	});
 }
 
@@ -278,10 +226,7 @@ export function microsandboxFileEntries(entries: readonly MsbFsEntry[]): FileEnt
 async function ensureConnected(
 	handle: MicrosandboxHandle,
 ): Promise<InstanceType<typeof MsbSandbox>> {
-	// A cached connection is only usable while it predates no reboot of that guest (see `bootEpoch`).
-	if (handle.sandbox && handle.connectedEpoch === currentEpoch(handle.name)) return handle.sandbox;
-	handle.sandbox = null;
-	const epoch = currentEpoch(handle.name);
+	if (handle.sandbox) return handle.sandbox;
 	const sandbox = await withDefaultBackend(handle.backend, async () => {
 		const current = await MsbSandbox.get(handle.name);
 		if (current.status !== "running") {
@@ -294,7 +239,6 @@ async function ensureConnected(
 		return current.connect();
 	});
 	handle.sandbox = sandbox;
-	handle.connectedEpoch = epoch;
 	return sandbox;
 }
 
@@ -390,33 +334,26 @@ const sandboxMethods: SandboxMethods<MicrosandboxHandle, MicrosandboxConfig> = {
 		const name = options?.name ?? `${config.namePrefix}${randomUUID()}`;
 		const timeoutMs = options?.timeout ?? config.timeoutMs;
 		const metadata: Record<string, unknown> = options?.metadata ?? {};
-		// Published ports are unsupported on BOTH backends. The benchmark drives sandboxes over the
-		// agent connection and never dials into a guest, so there was no caller for the port-mapping and
-		// getUrl machinery this used to carry — one rejection beats two code paths, only one of them live.
 		if (options?.ports?.length) {
 			throw new Error("Microsandbox sandboxes do not expose published host ports");
 		}
-		if (config.variant === "microsandbox-cloud" && options?.snapshotId) {
+		if (options?.snapshotId) {
 			throw new Error("Microsandbox cloud snapshots are not supported");
 		}
 		const maxDurationSecs = Math.max(1, Math.ceil(timeoutMs / 1000));
 
 		try {
 			const sandbox = await withBackend(config, async () => {
-				let builder: MsbSandboxBuilder = MsbSandbox.builder(name);
-				if (options?.snapshotId) {
-					builder = builder.fromSnapshot(options.snapshotId);
-				} else {
-					builder = builder.image(options?.templateId ?? config.image).rootDisk(config.rootDiskMib);
-				}
-
+				let builder: MsbSandboxBuilder = MsbSandbox.builder(name)
+					.image(options?.templateId ?? config.image)
+					.rootDisk(config.rootDiskMib);
 				builder = builder
 					.cpus(config.cpus)
 					.memory(config.memoryMib)
 					.maxDuration(maxDurationSecs)
 					.detached(true)
 					.ephemeral(config.ephemeral)
-					.label(LABEL_MARKER, config.variant);
+					.label(LABEL_MARKER, "microsandbox-cloud");
 				for (const [key, value] of Object.entries(metadata)) {
 					builder = builder.label(`${LABEL_META_PREFIX}${key}`, String(value));
 				}
@@ -430,17 +367,13 @@ const sandboxMethods: SandboxMethods<MicrosandboxHandle, MicrosandboxConfig> = {
 					name,
 					sandbox,
 					backend: config.backend,
-					variant: config.variant,
 					createdAt: new Date(),
 					timeoutMs,
 					metadata,
-					connectedEpoch: currentEpoch(name),
 				},
 				sandboxId: name,
 			};
 		} catch (error) {
-			const location =
-				config.variant === "microsandbox-local" ? "local libkrun runtime" : "cloud control plane";
 			let cleanupFailure: unknown;
 			// Generated UUID names cannot refer to a caller-owned pre-existing sandbox. Explicit names can:
 			// an AlreadyExists or transport error must never turn into deleting that existing resource.
@@ -455,7 +388,7 @@ const sandboxMethods: SandboxMethods<MicrosandboxHandle, MicrosandboxConfig> = {
 				? `; cleanup of the partial sandbox also failed: ${errorMessage(cleanupFailure)}`
 				: "";
 			throw new Error(
-				`Failed to create ${config.variant} sandbox "${name}" through the ${location}: ${errorMessage(error)}${cleanupSuffix}`,
+				`Failed to create microsandbox-cloud sandbox "${name}" through the cloud control plane: ${errorMessage(error)}${cleanupSuffix}`,
 				{ cause: error },
 			);
 		}
@@ -493,21 +426,18 @@ const sandboxMethods: SandboxMethods<MicrosandboxHandle, MicrosandboxConfig> = {
 		}
 		return {
 			id: handle.name,
-			provider: handle.variant,
+			provider: "microsandbox-cloud",
 			status,
 			createdAt,
 			timeout: handle.timeoutMs,
 			metadata: {
 				...handle.metadata,
 				isolation: "microVM (libkrun)",
-				backend: handle.variant === "microsandbox-local" ? "local" : "cloud",
+				backend: "cloud",
 			},
 		};
 	},
-
-	// Required by SandboxMethods, so it cannot be omitted — but `create` rejects published ports on both
-	// backends, so there is never a mapping to return. Rejecting here keeps that single answer in one
-	// place rather than reintroducing a port map that nothing populates.
+	// Required by SandboxMethods, though this provider does not publish ports.
 	getUrl: async (handle): Promise<string> => {
 		throw new Error(
 			`Microsandbox sandbox "${handle.name}" does not expose published ports; drive it through runCommand`,
@@ -544,87 +474,12 @@ const sandboxMethods: SandboxMethods<MicrosandboxHandle, MicrosandboxConfig> = {
 	},
 };
 
-const localSnapshotMethods: SnapshotMethods<unknown, MicrosandboxLocalConfig> = {
-	create: async (config, sandboxId, options) =>
-		withBackend(config, async () => {
-			const name = options?.name ?? `${sandboxId}-snap-${Date.now().toString(36)}`;
-			const current = await MsbSandbox.get(sandboxId);
-			const wasRunning = current.status === "running" || current.status === "draining";
-			if (wasRunning) {
-				// Every agent connection to this guest dies with the stop below, and the restart brings up a
-				// different one. Bump first: ComputeSDK handles reach their cached connection through
-				// `ensureConnected`, which compares this epoch, and the snapshot methods have no other way
-				// to reach them (they receive only config + sandboxId).
-				bumpEpoch(sandboxId);
-				await current.stop();
-			}
-
-			let snapshotError: unknown;
-			try {
-				let builder = MsbSnapshot.builder(name).fromSandbox(sandboxId);
-				for (const [key, value] of Object.entries(options?.metadata ?? {})) {
-					builder = builder.label(key, String(value));
-				}
-				await builder.create();
-			} catch (error) {
-				snapshotError = error;
-			}
-
-			if (wasRunning) {
-				try {
-					await (await MsbSandbox.get(sandboxId)).startDetached();
-				} catch (restartError) {
-					if (snapshotError) {
-						throw new AggregateError(
-							[snapshotError, restartError],
-							`Snapshot "${name}" failed: ${errorMessage(snapshotError)}; restart also failed: ${errorMessage(restartError)}`,
-						);
-					}
-					throw new Error(
-						`Snapshot "${name}" succeeded but restart failed: ${errorMessage(restartError)}`,
-						{ cause: restartError },
-					);
-				}
-			}
-			if (snapshotError) throw snapshotError;
-			return {
-				id: name,
-				snapshotId: name,
-				sandboxId,
-				name,
-				createdAt: new Date(),
-				metadata: options?.metadata,
-			};
-		}),
-	list: async (config) =>
-		withBackend(config, async () =>
-			(await MsbSnapshot.list()).map((snapshot) => ({
-				snapshotId: snapshot.name ?? snapshot.digest,
-				name: snapshot.name ?? undefined,
-				createdAt: snapshot.createdAt,
-				imageRef: snapshot.imageRef,
-			})),
-		),
-	delete: async (config, snapshotId) => withBackend(config, () => MsbSnapshot.remove(snapshotId)),
-};
-
-/** Local libkrun provider, including local snapshot support. */
-export const microsandboxLocalCompute = defineProvider<MicrosandboxHandle, MicrosandboxLocalConfig>(
-	{
-		name: "microsandbox-local",
-		methods: {
-			sandbox: sandboxMethods as SandboxMethods<MicrosandboxHandle, MicrosandboxLocalConfig>,
-			snapshot: localSnapshotMethods,
-		},
-	},
-);
-
 /** Cloud provider. Snapshot methods are intentionally absent so the lifecycle harness records a gap. */
 export const microsandboxCloudCompute = defineProvider<MicrosandboxHandle, MicrosandboxCloudConfig>(
 	{
 		name: "microsandbox-cloud",
 		methods: {
-			sandbox: sandboxMethods as SandboxMethods<MicrosandboxHandle, MicrosandboxCloudConfig>,
+			sandbox: sandboxMethods,
 		},
 	},
 );

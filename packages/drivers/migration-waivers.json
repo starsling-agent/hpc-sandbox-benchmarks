@@ -14,11 +14,6 @@
     "reason": "The Blaxel adapter has not yet migrated from packages/providers to DriverModule.",
     "expires": "2026-12-31"
   },
-  "microsandbox-local": {
-    "owner": "@dbworku",
-    "reason": "The Microsandbox local adapter has not yet migrated from packages/providers to DriverModule.",
-    "expires": "2026-12-31"
-  },
   "microsandbox-cloud": {
     "owner": "@dbworku",
     "reason": "The Microsandbox cloud adapter has not yet migrated from packages/providers to DriverModule.",

@@ -13,7 +13,7 @@ export default defineProviderMeta("microsandbox-cloud", {
 		class: "microVM",
 		technology: "libkrun microVM (cloud)",
 		notes:
-			"The Microsandbox SDK talks to msb-cloud; Nomad schedules the same libkrun microVM runtime on remote hosts. Kept distinct from local runs so datasets never mix host-local and cloud measurements.",
+			"The Microsandbox SDK talks to msb-cloud; Nomad schedules the same libkrun microVM runtime on remote hosts.",
 	},
 	pricing: {
 		model: "published",

@@ -332,7 +332,7 @@ Copy [`.env.example`](../.env.example) to a gitignored `.env` and fill in the pr
 (Bun auto-loads `.env` when you run a bin). A missing credential is a skip, not a failure. Never
 commit them; never paste them into issues or pull requests. See [SECURITY.md](../SECURITY.md).
 
-`microsandbox-local` uses `MICROSANDBOX_LOCAL_BENCH=1` as an explicit capability opt-in rather than a credential. The runner must provide KVM on Linux or Hypervisor.framework on macOS. `microsandbox-cloud` needs `MSB_API_KEY`; `MSB_API_URL` is an optional endpoint override. The cloud adapter keeps the key in the SDK control-plane backend and never adds it to sandbox metadata, create-time environment variables, or guest commands.
+`microsandbox-cloud` needs `MSB_API_KEY`; `MSB_API_URL` is an optional endpoint override. The cloud adapter keeps the key in the SDK control-plane backend and never adds it to sandbox metadata, create-time environment variables, or guest commands.
 
 Runloop needs `RUNLOOP_API_KEY`. The release lane keeps it in the SDK control-plane client while
 building versioned Blueprints from digest-pinned public toolchain images; the runtime adapter boots the

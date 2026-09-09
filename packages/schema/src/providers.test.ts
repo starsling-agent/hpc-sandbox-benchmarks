@@ -69,7 +69,6 @@ describe("@sandbox-benchmarks/schema providers", () => {
 			"daytona-vm",
 			"e2b",
 			"microsandbox-cloud",
-			"microsandbox-local",
 			"modal-gvisor",
 			"modal-vm",
 			"namespace",
@@ -297,11 +296,6 @@ describe("@sandbox-benchmarks/schema providers", () => {
 			expect(published(id).components.length).toBeGreaterThan(0);
 			expect(hourlyCostAtTargetSpec(getProvider(id) as ProviderMeta)).toBeNull();
 		}
-		expect(getProvider("microsandbox-local")?.pricing).toMatchObject({
-			model: "unavailable",
-			reason: "self_hosted",
-		});
-		expect(hourlyCostAtTargetSpec(getProvider("microsandbox-local") as ProviderMeta)).toBeNull();
 	});
 
 	it("pins cited unranked reference values and allowance scopes", () => {

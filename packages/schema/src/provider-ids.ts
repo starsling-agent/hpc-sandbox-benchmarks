@@ -10,7 +10,6 @@ export const PROVIDER_IDS = [
 	"daytona-vm",
 	"daytona-container",
 	"blaxel",
-	"microsandbox-local",
 	"microsandbox-cloud",
 	"modal-gvisor",
 	"modal-vm",

@@ -60,9 +60,8 @@ function candidateLaunch(id: ProviderId, refs: CandidateRefs): CandidateLaunch {
 		// Same candidate image as modal-gvisor; the VM runtime is selected by the adapter's base
 		// createOptions (experimentalOptions:{vm_runtime:true}), which validate-run.ts preserves
 		// through the spread — so this candidate override, like modal-gvisor's, is only the templateId.
-		case "microsandbox-local":
 		case "microsandbox-cloud":
-			// Both backends consume the same OCI image reference; only their SDK backend differs.
+			// Microsandbox Cloud consumes the shared OCI image.
 			return {
 				artifact: { kind: "image", ref: refs.toolchainImageCandidate },
 				createOptions: { templateId: refs.toolchainImageCandidate },

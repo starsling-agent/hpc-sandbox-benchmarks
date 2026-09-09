@@ -181,7 +181,7 @@ describe("resolveRunnerLifetimeMinutes", () => {
 });
 
 describe("runnerLifetimeError", () => {
-	// The real pairing: microsandbox-local is routed to the KVM-capable self-hosted label, which is
+	// A runner may have a shorter lifetime than the requested suite; the self-hosted label is
 	// reaped at 70 minutes even while the step is healthy.
 	const ephemeral = { runnerLifetimeMinutes: 70 };
 

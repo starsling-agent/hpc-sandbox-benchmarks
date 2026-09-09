@@ -73,7 +73,7 @@ describe("leaderboardFigures", () => {
 		expect(figures).toEqual([
 			{
 				suiteId: "realworld-mastra",
-				suiteName: "Mastra",
+				suiteName: "Mastra v2",
 				file: `${LEADERBOARD_FIGURE_DIR}/realworld-mastra.webp`,
 				width: 960,
 				charted: 2,
@@ -164,7 +164,7 @@ describe("renderLeaderboardFigureHtml", () => {
 		// The document must carry everything the screenshot needs: the chart, the caption, the
 		// faces. A reference to anything outside the string would make the WebP depend on the
 		// machine that rendered it.
-		expect(html).toContain("<title>Mastra</title>");
+		expect(html).toContain("<title>Mastra v2</title>");
 		expect(html).toContain("retained trials");
 		expect(html).toContain("data:font/woff2;base64,");
 	});
@@ -256,5 +256,27 @@ describe("suiteFigureNote", () => {
 		];
 		expect(suiteFigureNote(suite(rows), 3)).toContain("All charts share one time scale.");
 		expect(suiteFigureNote(suite(rows), 1)).not.toContain("share one time scale");
+	});
+});
+
+describe("Mastra workload versions", () => {
+	it("keeps historical Mastra runs chartable without relabeling their metrics", () => {
+		const historical = chartableRun();
+		for (const provider of historical.providers) {
+			for (const metric of provider.metrics) {
+				metric.metricId = metric.metricId.replace("realworld_mastra_v2_", "realworld_mastra_");
+			}
+		}
+		expect(leaderboardFigures(benchmarkDataOf(historical))).toHaveLength(1);
+	});
+
+	it("does not compare a V1 provider against a V2 provider in the same chart", () => {
+		const mixed = chartableRun();
+		const original = mixed.providers[0];
+		if (!original) throw new Error("missing fixture provider");
+		for (const metric of original.metrics) {
+			metric.metricId = metric.metricId.replace("realworld_mastra_v2_", "realworld_mastra_");
+		}
+		expect(leaderboardFigures(benchmarkDataOf(mixed))).toHaveLength(0);
 	});
 });

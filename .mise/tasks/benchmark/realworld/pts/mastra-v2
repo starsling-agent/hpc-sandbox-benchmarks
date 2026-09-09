@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+#MISE description="PTS: mastra v2 CI tasks (realworld suite, repo-local profile)"
+# Measurement leaf: -e guards the scaffolding; each measured task is isolated by run_pts_benchmark.
+set -euo pipefail
+REPO_ROOT="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
+source "${REPO_ROOT}/lib/bench.sh"
+
+run_realworld_pts mastra-v2

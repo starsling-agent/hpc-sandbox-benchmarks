@@ -1,0 +1,53 @@
+<?xml version="1.0"?>
+<!--Phoronix Test Suite local profile: mastra-ai/mastra's own CI tasks (ENG-137), timed per phase.-->
+<PhoronixTestSuite>
+  <TestInformation>
+    <Title>Mastra CI Tasks v2</Title>
+    <AppVersion>b6eeb9d08ebeaf27bc6fd16b6b88087040aaf767</AppVersion>
+    <Description>Mastra workload v2: original source and clone/install/lint/build tasks; core tests use explicit configuration mastra-heap4096-worker1-v1 (4096-MiB Node old-space limit and one Vitest worker). Changed core-test timings are not historical v1 equivalents.</Description>
+    <ResultScale>Seconds</ResultScale>
+    <Proportion>LIB</Proportion>
+    <Executable>realworld-run</Executable>
+    <TimesToRun>2</TimesToRun>
+  </TestInformation>
+  <TestProfile>
+    <Version>1.0.0</Version>
+    <SupportedPlatforms>Linux</SupportedPlatforms>
+    <SoftwareType>Benchmark</SoftwareType>
+    <TestType>System</TestType>
+    <License>Free</License>
+    <Status>Verified</Status>
+    <EnvironmentSize>3</EnvironmentSize>
+    <ProjectURL>https://github.com/mastra-ai/mastra</ProjectURL>
+    <RepositoryURL>https://github.com/mastra-ai/mastra</RepositoryURL>
+    <Maintainer>StarSling</Maintainer>
+  </TestProfile>
+  <TestSettings>
+    <Option>
+      <DisplayName>Task</DisplayName>
+      <Identifier>task</Identifier>
+      <Menu>
+        <Entry>
+          <Name>Git Clone</Name>
+          <Value>git_clone</Value>
+        </Entry>
+        <Entry>
+          <Name>Cold Install</Name>
+          <Value>cold_install</Value>
+        </Entry>
+        <Entry>
+          <Name>Lint Format</Name>
+          <Value>lint_format</Value>
+        </Entry>
+        <Entry>
+          <Name>Build Core</Name>
+          <Value>build_core</Value>
+        </Entry>
+        <Entry>
+          <Name>Test Core</Name>
+          <Value>test_core</Value>
+        </Entry>
+      </Menu>
+    </Option>
+  </TestSettings>
+</PhoronixTestSuite>

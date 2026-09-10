@@ -118,7 +118,7 @@ export interface DriverModule<P extends ProviderId, Handle = unknown>
 function driverMember(
 	provider: ProviderId,
 	driver: object,
-	member: "create" | "destroyById" | "probes" | "snapshots",
+	member: "create" | "destroyById" | "probes" | "snapshots" | "inventory",
 ): unknown {
 	try {
 		return Reflect.get(driver, member);
@@ -199,6 +199,7 @@ function policyGuardedDriver<P extends ProviderId, Handle>(
 	}
 	const probes = driverMember(provider, raw, "probes") as SandboxDriver<Handle>["probes"];
 	const snapshots = driverMember(provider, raw, "snapshots") as SandboxDriver<Handle>["snapshots"];
+	const inventory = driverMember(provider, raw, "inventory") as SandboxDriver<Handle>["inventory"];
 	return Object.freeze({
 		async create(request: CreateRequest, options?: DriverOperationOptions) {
 			if (request.gpu !== undefined && policy.accelerator === undefined) {
@@ -231,6 +232,7 @@ function policyGuardedDriver<P extends ProviderId, Handle>(
 				}),
 		...(probes === undefined ? {} : { probes }),
 		...(snapshots === undefined ? {} : { snapshots }),
+		...(inventory === undefined ? {} : { inventory }),
 	});
 }
 

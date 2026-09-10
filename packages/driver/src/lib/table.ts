@@ -14,6 +14,7 @@ import type {
 	DriverOperationOptions,
 	ExecOptions,
 	ExecResult,
+	InventorySnapshot,
 	ResolvedArtifact,
 	SandboxDriver,
 	SandboxObservation,
@@ -69,6 +70,9 @@ export interface MethodTable<Handle, Ctx, Native = Handle> {
 	readonly snapshots?: {
 		create(ctx: Ctx, session: SandboxSession<Native>): Promise<{ readonly snapshotId: string }>;
 		delete(ctx: Ctx, snapshotId: string): Promise<void>;
+	};
+	readonly inventory?: {
+		list(ctx: Ctx, options?: DriverOperationOptions): Promise<InventorySnapshot>;
 	};
 }
 
@@ -183,7 +187,15 @@ export function driverFromTable<Handle, Ctx, Native = Handle>(
 	const probeList = tableProbes?.list;
 	const probeDescribe = tableProbes?.describe;
 	const tableSnapshots = table.snapshots;
+	const inventory = table.inventory;
 	return {
+		...(inventory
+			? {
+					inventory: {
+						list: async (options?: DriverOperationOptions) => inventory.list(await ctx(), options),
+					},
+				}
+			: {}),
 		async create(request, operationOptions) {
 			const resolved = await ctx();
 			const created = await table.create(resolved, request, operationOptions);

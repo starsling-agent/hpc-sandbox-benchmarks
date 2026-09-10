@@ -23,6 +23,7 @@ export type {
 	ResolvedArtifactOf,
 } from "./lib/define.ts";
 export { defineDriver } from "./lib/define.ts";
+export { describeDriverFailure, redactDiagnosticText } from "./lib/diagnostics.ts";
 
 export type {
 	DriverErrorCode,
@@ -62,6 +63,8 @@ export type {
 	ExecResult,
 	Exit,
 	GpuSpec,
+	InventoryCapability,
+	InventorySnapshot,
 	ResolvedArtifact,
 	SandboxDriver,
 	SandboxFiles,

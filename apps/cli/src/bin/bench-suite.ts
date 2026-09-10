@@ -14,6 +14,12 @@
 
 import { join } from "node:path";
 import * as core from "@actions/core";
+import { describeDriverFailure as projectDriverFailure } from "@sandbox-benchmarks/driver";
+import { diagnosticSecretsFromEnv } from "@sandbox-benchmarks/driver/env";
+
+const describeDriverFailure = (error: unknown): string =>
+	projectDriverFailure(error, diagnosticSecretsFromEnv(process.env));
+
 import {
 	CREATE_FAILURE_PREFIX,
 	exitAfterSandboxCleanup,
@@ -515,9 +521,9 @@ export async function runReplicate(ctx: ReplicateContext): Promise<ReplicateOutc
 			}
 			suiteError = err;
 			logWarning(
-				`Suite "${suite}" threw on ${provider} — will normalize any failed marker into a gap: ${
-					err instanceof Error ? err.message : String(err)
-				}`,
+				`Suite "${suite}" threw on ${provider} — will normalize any failed marker into a gap: ${describeDriverFailure(
+					err,
+				)}`,
 				{ title: cell },
 			);
 		}
@@ -556,7 +562,7 @@ export async function runReplicate(ctx: ReplicateContext): Promise<ReplicateOutc
 	const normalized = run;
 
 	if (suiteError) {
-		const message = suiteError instanceof Error ? suiteError.message : String(suiteError);
+		const message = describeDriverFailure(suiteError);
 		// Verify before claiming: the harness writes the failed marker, but a throw can predate it (or
 		// the marker can be lost before normalize), leaving this shard's Run EMPTY for the cell. Saying
 		// "recorded as a failed gap" then would launder the loss — the aggregate would show a bare
@@ -665,7 +671,7 @@ if (import.meta.main) {
 		cellBudgetMinutes = resolveCellBudgetMinutes();
 		runnerLifetimeMinutes = resolveRunnerLifetimeMinutes();
 	} catch (err) {
-		fail(err instanceof Error ? err.message : String(err), {
+		fail(describeDriverFailure(err), {
 			properties: { title: "bench-suite usage" },
 			exitCode: 2,
 		});
@@ -781,7 +787,7 @@ if (import.meta.main) {
 				}
 			}
 		} catch (err) {
-			const msg = `Could not describe suite tasks for "${suite}": ${err instanceof Error ? err.message : String(err)}`;
+			const msg = `Could not describe suite tasks for "${suite}": ${describeDriverFailure(err)}`;
 			logWarning(msg, { title: cell });
 		}
 	});
@@ -895,9 +901,7 @@ if (import.meta.main) {
 			durationMs: Math.round(
 				(Bun.nanoseconds() - (startedAt.get(replicateIndex) ?? Bun.nanoseconds())) / 1e6,
 			),
-			detail: `replicate threw outside the reporting path: ${
-				error instanceof Error ? (error.stack ?? error.message) : String(error)
-			}`,
+			detail: `replicate threw outside the reporting path: ${describeDriverFailure(error)}`,
 		}),
 	);
 

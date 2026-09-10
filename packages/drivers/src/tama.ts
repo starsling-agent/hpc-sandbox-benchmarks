@@ -56,10 +56,13 @@ export function tamaSpec({ env, resolvedArtifact }: DriverContext<"tama">) {
 	return defineCliSpec(TAMA_MACHINES, {
 		binary: env.TAMA_CLI ?? "tama",
 		secretFlags: ["--token"],
+		inventoryOwned: (row) =>
+			/^bench-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(row.name),
 		commandTimeoutMs: 60_000,
 		createCommandTimeoutMs: 20 * 60_000,
 		requestCoverage: TAMA_REQUEST_COVERAGE,
 		prepare: {
+			authenticateFirst: true,
 			probe: ["list", "--all", "--json"],
 			fallback: ["login", "--token", env.TAMA_TOKEN],
 		},

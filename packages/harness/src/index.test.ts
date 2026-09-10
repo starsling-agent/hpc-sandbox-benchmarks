@@ -374,7 +374,7 @@ function makeSandbox(opts: {
 		return { exitCode: 0, stdout: "" };
 	};
 	const tagOf = (command: string, ext: string): string | undefined =>
-		command.match(new RegExp(`/tmp/(bench-[0-9a-f-]+)\\.${ext}`))?.[1];
+		command.match(new RegExp(`/tmp/(bench-[0-9a-f-]+)/(?:output|completion)\\.${ext}`))?.[1];
 	return {
 		sandboxId: "sb-test-1",
 		async runCommand(command) {
@@ -394,7 +394,7 @@ function makeSandbox(opts: {
 			const doneTag = tagOf(command, "done");
 			if (doneTag) {
 				const d = detached.get(doneTag);
-				return { exitCode: 0, stdout: d ? String(d.exit) : "__RUNNING__" };
+				return { exitCode: 0, stdout: d ? `v1 ${doneTag} ${d.exit}` : "__RUNNING__" };
 			}
 			// Cat-read of the log: the stashed output (stderr merged into stdout, mirroring live 2>&1).
 			const logTag = tagOf(command, "log");
@@ -486,6 +486,7 @@ describe("createSuiteSandbox (creation-failure marker)", () => {
 		suiteName: "cpu-node",
 		providerName: "daytona-container",
 		resultsDir,
+		retryBudgetMs: 60 * 60_000,
 		...overrides,
 	});
 	const MARKER = "sandbox-daytona-container-cpu-node--failed.json";
@@ -608,7 +609,10 @@ describe("createSuiteSandbox (creation-failure marker)", () => {
 		expect(existsSync(join(resultsDir, MARKER))).toBe(true);
 	});
 
-	it("writes a FAILED marker once the retry budget is spent", async () => {
+	it.each([
+		0,
+		undefined,
+	])("writes a FAILED marker without a positive retry budget (%s)", async (retryBudgetMs) => {
 		const resultsDir = freshDir();
 		let attempts = 0;
 		const compute = {
@@ -622,10 +626,7 @@ describe("createSuiteSandbox (creation-failure marker)", () => {
 		// A budget smaller than one delay leaves no room for another attempt, so the first failure is
 		// also the last: patience is bounded, and the cell still records why it produced nothing.
 		await expect(
-			createSuiteSandbox(
-				() => compute,
-				createCtx(resultsDir, { retryDelayMs: 50, retryBudgetMs: 0 }),
-			),
+			createSuiteSandbox(() => compute, createCtx(resultsDir, { retryDelayMs: 50, retryBudgetMs })),
 		).rejects.toThrow("no slot right now");
 		expect(attempts).toBe(1);
 		expect(JSON.parse(readFileSync(join(resultsDir, MARKER), "utf8")).outcome).toBe("failed");

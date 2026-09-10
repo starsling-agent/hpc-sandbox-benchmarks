@@ -41,6 +41,9 @@ export interface CliRunResult {
 	readonly code: number;
 }
 
+// CLI profile files are process-shared even when separate driver contexts are opened.
+const preparationLocks = new Map<string, Promise<void>>();
+
 export interface CliRunOptions {
 	/** Hard subprocess budget. Runners MUST terminate the child before rejecting on timeout. */
 	readonly timeoutMs: number;
@@ -274,10 +277,12 @@ function snapshotCliSpec<Row>(provider: ProviderId, spec: CliSpec<Row>): CliSpec
 			createCommandTimeoutMs: Reflect.get(spec, "createCommandTimeoutMs"),
 			requestCoverage: snapshotCliCoverage(Reflect.get(spec, "requestCoverage")),
 			create: Reflect.get(spec, "create"),
+			inventoryOwned: Reflect.get(spec, "inventoryOwned"),
 			...(prepared === undefined
 				? {}
 				: {
 						prepare: {
+							authenticateFirst: Reflect.get(prepared, "authenticateFirst"),
 							probe: Reflect.get(prepared, "probe"),
 							fallback: Reflect.get(prepared, "fallback"),
 						},
@@ -459,6 +464,8 @@ const CLI_REQUEST_COVERAGE_AXES = {
 } as const satisfies Record<keyof CliCreateRequestCoverage, true>;
 
 export interface CliSpec<Row> {
+	/** Opt-in ownership predicate for the complete readiness-list response. No pagination may be omitted. */
+	readonly inventoryOwned?: (row: Row) => boolean;
 	/** Resolved binary path or name (the caller applies any env override). */
 	readonly binary: string;
 	/** Flags whose FOLLOWING argv value is a secret: redacted from every diagnostic. */
@@ -473,6 +480,8 @@ export interface CliSpec<Row> {
 	readonly create: (request: CreateRequest, name: string) => CliArgv;
 	/** Optional pre-create probe with a fallback action (for profile-based CLI authentication). */
 	readonly prepare?: {
+		/** Authenticate once before probing; avoids mistaking every list failure for bad credentials. */
+		readonly authenticateFirst?: boolean;
 		/** Must exit zero and parse through the readiness-row schema to count as prepared. */
 		readonly probe: CliArgv;
 		/** Checked fallback command, commonly `login --token …`; secret flags still redact it. */
@@ -964,6 +973,11 @@ export function cliMethodTable<Row>(
 	const run = (normalizedOptions.run as CliRunner | undefined) ?? defaultRunner;
 	const createAttemptCeilingMs = normalizedOptions.createAttemptCeilingMs;
 	const compiled = snapshotCliSpec(provider, spec);
+	const inventoryOwned = compiled.inventoryOwned;
+	if (inventoryOwned !== undefined && typeof inventoryOwned !== "function")
+		throw new DriverError("vendor-contract-violation", "CLI inventoryOwned must be callable", {
+			provider,
+		});
 	validateCliCoverage(provider, compiled.requestCoverage);
 	if (typeof compiled.binary !== "string" || compiled.binary.trim() === "") {
 		throw new DriverError("vendor-contract-violation", `${provider} CLI binary must be nonempty`, {
@@ -983,10 +997,20 @@ export function cliMethodTable<Row>(
 	const isRetryableCreate = compiled.isRetryableCreate;
 	const secretFlags = normalizeCliStringList(provider, "secretFlags", compiled.secretFlags);
 	const readyPoll = normalizeCliArgv(provider, "ready.poll", ready.poll);
+	if (
+		compiled.prepare?.authenticateFirst !== undefined &&
+		typeof compiled.prepare.authenticateFirst !== "boolean"
+	)
+		throw new DriverError(
+			"vendor-contract-violation",
+			"prepare.authenticateFirst must be boolean",
+			{ provider },
+		);
 	const prepare =
 		compiled.prepare === undefined
 			? undefined
 			: {
+					authenticateFirst: compiled.prepare.authenticateFirst === true,
 					probe: normalizeCliArgv(provider, "prepare.probe", compiled.prepare.probe),
 					fallback: normalizeCliArgv(provider, "prepare.fallback", compiled.prepare.fallback),
 				};
@@ -1146,7 +1170,7 @@ export function cliMethodTable<Row>(
 			provider,
 		});
 
-	const ensurePrepared = async (
+	const performPreparation = async (
 		remaining: () => number,
 		deadlineMs: number,
 		signal?: AbortSignal,
@@ -1154,22 +1178,24 @@ export function cliMethodTable<Row>(
 		if (prepare === undefined) return;
 		const probeBudget = remaining();
 		if (probeBudget < 1) throw createDeadlineError(deadlineMs);
-		let probed: CliRunResult;
-		try {
-			probed = await call(prepare.probe, Math.min(probeBudget, commandTimeoutMs), signal);
-		} catch (caught) {
-			if (isCliRunTimeoutError(caught) && probeBudget <= commandTimeoutMs) {
-				throw createDeadlineError(deadlineMs);
+		if (!prepare.authenticateFirst) {
+			let probed: CliRunResult;
+			try {
+				probed = await call(prepare.probe, Math.min(probeBudget, commandTimeoutMs), signal);
+			} catch (caught) {
+				if (isCliRunTimeoutError(caught) && probeBudget <= commandTimeoutMs) {
+					throw createDeadlineError(deadlineMs);
+				}
+				// A transport, cancellation, timeout, or runner-contract failure says nothing about the
+				// profile. Only a completed nonzero probe may authorize the state-changing fallback.
+				throw runnerFailed("create-failed", prepare.probe, caught);
 			}
-			// A transport, cancellation, timeout, or runner-contract failure says nothing about the
-			// profile. Only a completed nonzero probe may authorize the state-changing fallback.
-			throw runnerFailed("create-failed", prepare.probe, caught);
-		}
-		if (probed.code === 0) {
-			// Exit zero already proves authentication. Schema drift is not repaired by overwriting a
-			// developer's working profile, so surface it through the normal trust-boundary error.
-			parseRows(probed, [prepare.probe]);
-			return;
+			if (probed.code === 0) {
+				// Exit zero already proves authentication. Schema drift is not repaired by overwriting a
+				// developer's working profile, so surface it through the normal trust-boundary error.
+				parseRows(probed, [prepare.probe]);
+				return;
+			}
 		}
 
 		const fallbackBudget = remaining();
@@ -1204,6 +1230,28 @@ export function cliMethodTable<Row>(
 			throw vendorFailed("create-failed", prepare.probe, verified);
 		}
 		parseRows(verified, [prepare.probe]);
+	};
+
+	const ensurePrepared = (
+		remaining: () => number,
+		deadlineMs: number,
+		signal?: AbortSignal,
+	): Promise<void> => {
+		if (!prepare?.authenticateFirst) return performPreparation(remaining, deadlineMs, signal);
+		const prior = preparationLocks.get(binary) ?? Promise.resolve();
+		const next = prior
+			.catch(() => undefined)
+			.then(() => {
+				if (signal?.aborted) throw signal.reason ?? new Error("CLI preparation cancelled");
+				return performPreparation(remaining, deadlineMs, signal);
+			});
+		preparationLocks.set(binary, next);
+		void next
+			.finally(() => {
+				if (preparationLocks.get(binary) === next) preparationLocks.delete(binary);
+			})
+			.catch(() => undefined);
+		return next;
 	};
 	const ensurePreparedOnce = (
 		context: CliDriverContext,
@@ -1817,6 +1865,45 @@ export function cliMethodTable<Row>(
 					: { state: "terminal" as const };
 			},
 		},
+		...(inventoryOwned
+			? {
+					inventory: {
+						list: async (context: CliDriverContext, operationOptions?: DriverOperationOptions) => {
+							const started = Date.now();
+							await ensurePreparedOnce(
+								context,
+								() => commandTimeoutMs - (Date.now() - started),
+								commandTimeoutMs,
+								operationOptions?.signal,
+							);
+							let result: CliRunResult;
+							try {
+								result = await call(readyPoll, commandTimeoutMs, operationOptions?.signal);
+							} catch (error) {
+								throw runnerFailed("probe-failed", readyPoll, error);
+							}
+							if (result.code !== 0) throw vendorFailed("probe-failed", readyPoll, result);
+							const rows = parseRows(result, [readyPoll]);
+							const owned: SandboxRef[] = [];
+							let foreignCount = 0;
+							for (const row of rows) {
+								const owns: unknown = providerCallback("inventory ownership", () =>
+									inventoryOwned(row),
+								);
+								if (typeof owns !== "boolean")
+									throw new DriverError(
+										"vendor-contract-violation",
+										"inventory ownership must be boolean",
+										{ provider },
+									);
+								if (owns) owned.push(sandboxRef(provider, sandboxIdOf(row, [readyPoll])));
+								else foreignCount++;
+							}
+							return { owned, foreignCount };
+						},
+					},
+				}
+			: {}),
 		// No files, no launch: absent, not stubbed — the harness fallbacks (shell.ts) cover both.
 	};
 }

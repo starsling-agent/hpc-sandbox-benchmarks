@@ -245,6 +245,7 @@ async function decodeAndExtract(base64: string, resultsDir: string): Promise<num
 function assertNoReservedEvidenceFile(directory: string): void {
 	for (const entry of readdirSync(directory, { withFileTypes: true })) {
 		if (
+			/^(execution|cleanup)-.*\.json$/.test(entry.name) ||
 			entry.name === providerCostEvidenceFile() ||
 			entry.name === providerArtifactEvidenceFile()
 		) {

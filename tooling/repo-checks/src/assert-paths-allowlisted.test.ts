@@ -26,6 +26,8 @@ function tempGitRepo(): string {
 	expect(git(["init", "-q"]).exitCode).toBe(0);
 	expect(git(["config", "user.email", "test@example.com"]).exitCode).toBe(0);
 	expect(git(["config", "user.name", "test"]).exitCode).toBe(0);
+	// Fixture commits must not invoke a developer's interactive signing agent.
+	expect(git(["config", "commit.gpgsign", "false"]).exitCode).toBe(0);
 	return dir;
 }
 

@@ -202,7 +202,11 @@ export function checkCiLintGate(doc: unknown, label: string = CI_LINT_WORKFLOW):
 		}
 		// Job existence isn't enough: it must actually invoke the tool, or the gate false-passes if
 		// the real invocation is renamed/removed while an empty job shell survives.
-		if (!jobRun(tool).includes(tool)) {
+		const run = jobRun(tool);
+		const queueCompatibleActionlint =
+			tool === "actionlint" &&
+			run.split("\n").some((line) => line.trim() === "bun run lint:workflows");
+		if (!run.includes(tool) && !queueCompatibleActionlint) {
 			errors.push(
 				`${label}: the "${tool}" job must actually run \`${tool}\` — the gate must not pass on a job that no longer invokes it`,
 			);

@@ -373,6 +373,10 @@ jobs:
   # per-cell `if:` to keep in sync with the scope, and an out-of-scope provider's job never exists.
   bake:
     name: Bake + verify (${{ matrix.provider }})
+    concurrency:
+      group: benchmark-account-${{ (matrix.provider == 'daytona-vm' || matrix.provider == 'daytona-container') && 'daytona' || (matrix.provider == 'modal-gvisor' || matrix.provider == 'modal-vm') && 'modal' || matrix.provider }}
+      cancel-in-progress: false
+      queue: max
     needs: [plan, build]
     # `build` is skippable (`build: skip`), and a skipped `needs` would normally skip this job too — so
     # the condition is spelled out rather than left to the default. `!cancelled()` re-enables the job

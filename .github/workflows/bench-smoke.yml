@@ -137,6 +137,7 @@ permissions:
 concurrency:
   group: bench-smoke-${{ github.ref }}-${{ inputs.provider }}-${{ inputs.suite }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   # The matrix's plan phase, narrowed to the dispatched cell: the same three planners re-validate the

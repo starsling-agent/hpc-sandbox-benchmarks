@@ -119,6 +119,7 @@ permissions:
 concurrency:
   group: bench-matrix-${{ github.ref }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   # Compute both matrix axes once, as the single $GITHUB_OUTPUT contract the suite job reads. No

@@ -243,6 +243,7 @@ describe("provider wiring projections", () => {
 			"daytona-vm",
 			"daytona-container",
 			"blaxel",
+			"microsandbox-cloud",
 			"modal-gvisor",
 			"modal-vm",
 			"novita",
@@ -250,7 +251,6 @@ describe("provider wiring projections", () => {
 			"tama",
 		]);
 		expect([...PROVIDER_IDS].filter((id) => fleet.waivers[id] !== undefined)).toEqual([
-			"microsandbox-cloud",
 			"runloop",
 			"namespace",
 			"runcloud",

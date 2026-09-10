@@ -18,6 +18,7 @@
     "@sandbox-benchmarks/daytona": "workspace:*",
     "@sandbox-benchmarks/driver": "workspace:*",
     "@sandbox-benchmarks/e2b": "workspace:*",
+    "@sandbox-benchmarks/microsandbox-cloud": "workspace:*",
     "@sandbox-benchmarks/modal": "workspace:*",
     "@sandbox-benchmarks/novita": "workspace:*",
     "@sandbox-benchmarks/tama": "workspace:*",

@@ -114,6 +114,7 @@
         "@sandbox-benchmarks/daytona": "workspace:*",
         "@sandbox-benchmarks/driver": "workspace:*",
         "@sandbox-benchmarks/e2b": "workspace:*",
+        "@sandbox-benchmarks/microsandbox-cloud": "workspace:*",
         "@sandbox-benchmarks/modal": "workspace:*",
         "@sandbox-benchmarks/novita": "workspace:*",
         "@sandbox-benchmarks/tama": "workspace:*",
@@ -163,6 +164,20 @@
         "@sandbox-benchmarks/driver": "workspace:*",
         "@sandbox-benchmarks/providers": "workspace:*",
         "@sandbox-benchmarks/schema": "workspace:*",
+      },
+      "devDependencies": {
+        "@repo/tsconfig": "workspace:*",
+        "@types/bun": "catalog:",
+        "typescript": "catalog:",
+      },
+    },
+    "packages/microsandbox-cloud": {
+      "name": "@sandbox-benchmarks/microsandbox-cloud",
+      "version": "0.0.0",
+      "dependencies": {
+        "@sandbox-benchmarks/driver": "workspace:*",
+        "arktype": "catalog:",
+        "microsandbox": "catalog:computesdk",
       },
       "devDependencies": {
         "@repo/tsconfig": "workspace:*",
@@ -874,6 +889,8 @@
     "@sandbox-benchmarks/figures": ["@sandbox-benchmarks/figures@workspace:packages/figures"],
 
     "@sandbox-benchmarks/harness": ["@sandbox-benchmarks/harness@workspace:packages/harness"],
+
+    "@sandbox-benchmarks/microsandbox-cloud": ["@sandbox-benchmarks/microsandbox-cloud@workspace:packages/microsandbox-cloud"],
 
     "@sandbox-benchmarks/modal": ["@sandbox-benchmarks/modal@workspace:packages/modal"],
 

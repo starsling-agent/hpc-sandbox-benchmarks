@@ -10,7 +10,6 @@ import {
 	config,
 	isLegacyAdapterId,
 	MIGRATED_DRIVER_IDS,
-	microsandboxCloudCompute,
 	NOVITA_E2B_DOMAIN,
 	novitaCompute,
 	novitaConnection,
@@ -178,40 +177,6 @@ describe("@sandbox-benchmarks/providers", () => {
 			domain: NOVITA_E2B_DOMAIN,
 		});
 		expect(connection).not.toHaveProperty("headers");
-	});
-
-	it("exposes Microsandbox Cloud with its supported capabilities", () => {
-		const base = {
-			image: config.toolchainImage,
-			cpus: TARGET_SPEC.vcpus,
-			memoryMib: TARGET_SPEC.memoryGb * 1024,
-			rootDiskMib: TARGET_SPEC.diskGb * 1024,
-			namePrefix: "test-msb-",
-			timeoutMs: 10_800_000,
-		} as const;
-		const cloud = microsandboxCloudCompute({
-			...base,
-			backend: { kind: "cloud", url: "https://msb.invalid", apiKey: "unit-test-key" },
-			ephemeral: true,
-		});
-		expect(cloud.name).toBe("microsandbox-cloud");
-		// Cloud snapshots are not implemented by msb-cloud yet. Omitting the manager makes the lifecycle
-		// harness record an explicit skipped capability instead of attempting a knowingly invalid call.
-		expect(cloud.snapshot).toBeUndefined();
-		const cloudAdapter = providers.find((provider) => provider.name === "microsandbox-cloud");
-		expect(cloudAdapter?.requiredEnvVars).toEqual(["MSB_API_KEY"]);
-		expect(cloudAdapter?.createOptions).toEqual({ templateId: config.toolchainImage });
-		// The control-plane credential belongs only to the SDK backend config; it must never enter the
-		// universal create options because those can be translated into guest-visible provider fields.
-		expect(JSON.stringify(cloudAdapter?.createOptions)).not.toContain("unit-test-key");
-	});
-
-	it("defers missing Microsandbox Cloud credentials until that provider is selected", () => {
-		const cloud = providers.find((provider) => provider.name === "microsandbox-cloud");
-		expect(cloud).toBeDefined();
-		if (!process.env.MSB_API_KEY) {
-			expect(() => cloud?.createCompute()).toThrow(/MSB_API_KEY/);
-		}
 	});
 
 	it("passes E2B-compatible cwd and env options through envd's structured root channel", async () => {

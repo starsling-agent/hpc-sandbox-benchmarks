@@ -1,9 +1,4 @@
 {
-  "runloop": {
-    "owner": "@dbworku",
-    "reason": "The Runloop adapter has not yet migrated from packages/providers to DriverModule.",
-    "expires": "2026-12-31"
-  },
   "namespace": {
     "owner": "@dbworku",
     "reason": "The Namespace adapter has not yet migrated from packages/providers to DriverModule.",

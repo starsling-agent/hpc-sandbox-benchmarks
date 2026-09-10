@@ -36,4 +36,24 @@ change an old experiment's denominator.
 
 See [implementation and rollout status](../benchmark-execution-rollout.md). The pure contracts are not
 proof of live provider conformance. Strict publication rejects legacy candidates without a manifest;
-production dispatch must be migrated to emit and execute the manifest before publication can resume.
+production dispatch now emits and executes manifests, with live publication requiring account admission
+and complete verified attempts.
+
+## Durable account journal integration
+
+Account queues alone cannot detect an interrupted create that has not yet appeared in inventory.
+Before create, CLI composition appends an intent to a protected, account-specific GitHub journal
+branch. After create returns it appends the sandbox reference; release requires observed absence.
+Unknown creates block admission. Updates are fast-forward only and existing records cannot be
+replaced. Independent accounts use different branches; concurrent cells serialize journal appends.
+
+This is an evidence log using GitHub's existing Git storage, not a distributed quota or lease service.
+Actions artifacts remain immutable attempt archives, but cannot serve as the only ownership journal:
+expiry or deletion could erase an unresolved intent. The operational cost is protected journal branch
+provisioning and narrowly scoped write permission on the privileged worker. A missing branch fails
+closed; it never authorizes an empty account. Legacy allocating paths must use separate accounts until
+they adopt the owner. Account-wide capacity is guaranteed only after that admission condition holds.
+
+See [GitHub's reference API](https://docs.github.com/en/rest/git/refs) for fast-forward ref updates and
+[tree API](https://docs.github.com/en/rest/git/trees) for complete tree enumeration. Truncated histories
+and competing ref updates fail admission rather than discarding ownership facts.

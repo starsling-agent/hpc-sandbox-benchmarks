@@ -4,7 +4,7 @@ export default defineProviderMeta("blaxel", {
 	displayName: "Blaxel",
 	vendor: "Blaxel",
 	website: "https://blaxel.ai",
-	sdkPackage: "@computesdk/blaxel",
+	sdkPackage: "@blaxel/core",
 	artifact: { kind: "none" },
 	inputs: ["BL_API_KEY", "BL_WORKSPACE"],
 	isolation: {
@@ -54,9 +54,9 @@ export default defineProviderMeta("blaxel", {
 	// particular target is reachable, an arbitrary one would not be.
 	specPinning: "fixed",
 	transport: {
-		// `@computesdk/blaxel` execs through the sandbox gateway; long synchronous execs are not
-		// validated, so apply the conservative 60s policy bound and use the detached+poll path
-		// (background nohup + pollable filesystem, both supported by the wrapper) for long steps.
+		// The driver execs through the sandbox gateway's process API; long synchronous execs are not
+		// validated, so apply the conservative 60s policy bound and launch long steps as native
+		// background processes polled through the sandbox filesystem.
 		streaming: false,
 		syncCapMs: 60_000,
 		detachedPoll: true,

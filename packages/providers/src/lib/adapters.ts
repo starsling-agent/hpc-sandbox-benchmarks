@@ -2,12 +2,10 @@
 // maintained @computesdk wrappers. Vercel uses its native SDK because the published wrapper still
 // pins Sandbox v1; run.cloud also uses its native SDK because no @computesdk wrapper is published.
 
-import { blaxel } from "@computesdk/blaxel";
 import { namespace } from "@computesdk/namespace";
 import type { ProviderId } from "@sandbox-benchmarks/schema";
 import { PROVIDER_IDS, TARGET_SPEC } from "@sandbox-benchmarks/schema";
 import { config } from "../config.ts";
-import { blaxelWithVolumeAndKeepAlive } from "./blaxel-volume.ts";
 import { runcloudCostEvidence } from "./cost-evidence.ts";
 import { microsandboxCloudCompute } from "./microsandbox.ts";
 import { RUNCLOUD_CREATE_CEILING_MS, runcloudCompute } from "./runcloud.ts";
@@ -33,6 +31,7 @@ export const MIGRATED_DRIVER_IDS = [
 	"daytona-vm",
 	"daytona-container",
 	"vercel",
+	"blaxel",
 ] as const satisfies readonly ProviderId[];
 
 /** A schema id served by a registered DriverModule. Derived from the list, so the two cannot drift. */
@@ -81,24 +80,6 @@ function microsandboxCloudCredentials(): { kind: "cloud"; url?: string; apiKey: 
  * jointly complete.
  */
 export const adapters: Record<LegacyAdapterId, ProviderAdapter> = {
-	blaxel: {
-		artifact: { kind: "none" },
-		// Credentials come from BL_API_KEY/BL_WORKSPACE (the factory's env fallback). Boot the Debian
-		// ts-app image as root (the stock Alpine base-image has no apt — PTS uninstallable). Blaxel
-		// couples CPU to RAM (measured: vCPU ≈ memory_MB / 2048) and exposes no cgroup cpu.max, so
-		// memory=8192 yields the target's 8 GiB RAM and 4 vCPU — the target pins vCPU at 4 precisely so
-		// Blaxel's coupled point matches on effective vCPU/memory (specMatched=true), no comparability
-		// caveat. Disk is separate: blaxelWithVolumeAndKeepAlive mounts a 40 GiB volume at the PTS data
-		// dir where the heavy suites write (see blaxel-volume.ts), so it clears the disk gate like the
-		// other runners (not part of the specMatched check). It also holds one sleeping native process
-		// with keepAlive=true: without an inbound request Blaxel enters standby after ~15s, which would
-		// pause a synchronous benchmark. No pre-baked toolchain snapshot yet — setup steps run fallbacks.
-		createCompute: () =>
-			blaxelWithVolumeAndKeepAlive(
-				blaxel({ image: "blaxel/ts-app:latest", memory: 8192, region: "us-was-1" }),
-			),
-		createOptions: {},
-	},
 	"microsandbox-cloud": {
 		artifact: { kind: "image", ref: config.toolchainImage },
 		// The API key remains in the CloudBackend HTTP/WebSocket client. It is never forwarded through

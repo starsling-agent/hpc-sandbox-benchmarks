@@ -16,6 +16,7 @@ describe("generated driver loader", () => {
 			"e2b",
 			"daytona-vm",
 			"daytona-container",
+			"blaxel",
 			"modal-gvisor",
 			"modal-vm",
 			"novita",

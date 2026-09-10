@@ -43,7 +43,9 @@ and complete verified attempts.
 
 Account queues alone cannot detect an interrupted create that has not yet appeared in inventory.
 Before create, CLI composition appends an intent to a protected, account-specific GitHub journal
-branch. After create returns it appends the sandbox reference; release requires observed absence.
+branch. After create returns it appends the sandbox reference; release requires the control plane
+to observe the sandbox as no longer running (absent, or terminal for vendors that retain terminated
+records), never a destroy response alone.
 Unknown creates block admission. Updates are fast-forward only and existing records cannot be
 replaced. Independent accounts use different branches; concurrent cells serialize journal appends.
 

@@ -861,7 +861,11 @@ export async function executeSuite(options: ExecuteSuiteOptions): Promise<void> 
 						Math.max(1, deadline - Date.now()),
 						"Cleanup observation timeout",
 					);
-					if (observation.state === "absent") return;
+					// Removal is confirmed by the control plane's own observation, never by the destroy
+					// response. `terminal` counts alongside `absent`: a terminated sandbox holds no
+					// allocation, and vendors that retain terminated records (Modal, run.cloud) never
+					// report it absent.
+					if (observation.state !== "running") return;
 					await new Promise((resolve) =>
 						setTimeout(resolve, Math.min(250, Math.max(1, deadline - Date.now()))),
 					);

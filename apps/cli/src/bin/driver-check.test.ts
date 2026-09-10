@@ -15,7 +15,14 @@ async function runCli(...args: string[]) {
 	const env = Object.fromEntries(
 		Object.entries(process.env).filter(([name]) => !name.startsWith("E2B_")),
 	);
-	const proc = Bun.spawn(["bun", CLI, ...args], { env, stdout: "pipe", stderr: "pipe" });
+	// `--env-file=/dev/null`: Bun otherwise loads the repo-root `.env` into the child regardless of
+	// the filtered `env` above, and a developer's real E2B_API_KEY turned this credentials-skip test
+	// into a live create + teardown on every local `bun run test`.
+	const proc = Bun.spawn(["bun", "--env-file=/dev/null", CLI, ...args], {
+		env,
+		stdout: "pipe",
+		stderr: "pipe",
+	});
 	const [stdout, stderr, exitCode] = await Promise.all([
 		new Response(proc.stdout).text(),
 		new Response(proc.stderr).text(),

@@ -42,14 +42,30 @@ test("unavailable inventory, foreign resources and uncertain destroy block admis
 			reconcileAccount([{ id: "tama", driver: candidate }], { timeoutMs: 100 }),
 		).rejects.toThrow();
 });
-test("a successful delete response cannot replace observed absence", async () => {
+test("a successful delete response cannot replace the control plane's observation", async () => {
 	const candidate = driver({
 		destroyById: async () => {},
-		probes: { observe: async () => ({ state: "terminal" }) },
+		probes: { observe: async () => ({ state: "running" }) },
 	});
 	await expect(
 		reconcileAccount([{ id: "tama", driver: candidate }], { timeoutMs: 15, pollMs: 1 }),
 	).rejects.toThrow("deadline exceeded");
+});
+test("a terminal observation confirms removal where the vendor retains terminated records", async () => {
+	// Modal and run.cloud keep a terminated sandbox observable forever; it holds no allocation.
+	let present = true;
+	const candidate = driver({
+		inventory: { list: async () => ({ owned: present ? [ref] : [], foreignCount: 0 }) },
+		destroyById: async () => {
+			present = false;
+		},
+		probes: { observe: async () => ({ state: present ? "running" : "terminal" }) },
+	});
+	const result = await reconcileAccount([{ id: "tama", driver: candidate }], {
+		timeoutMs: 100,
+		pollMs: 1,
+	});
+	expect(result.removed).toEqual([ref]);
 });
 test("cancellation cannot turn an unobserved account into an admitted one", async () => {
 	const controller = new AbortController();

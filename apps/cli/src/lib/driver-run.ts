@@ -376,7 +376,8 @@ export function usesSessionOperations(id: DriverProviderId): boolean {
 		id === "vercel" ||
 		id === "blaxel" ||
 		id === "microsandbox-cloud" ||
-		id === "runloop"
+		id === "runloop" ||
+		id === "runcloud"
 	);
 }
 

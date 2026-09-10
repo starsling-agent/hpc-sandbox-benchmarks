@@ -1,40 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import {
-	RUNCLOUD_SDK_PROVENANCE,
-	runcloudCostEvidence,
-	sanitizeEvidenceDetail,
-	sanitizeProviderResponse,
-} from "./cost-evidence.ts";
-
-const input = (completed = true) =>
-	({
-		cell: { runId: "run-1", providerId: "runcloud", suite: "cpu-node", replicateIndex: 2 },
-		providerId: "runcloud",
-		sandboxId: "sb-123",
-		teardown: {
-			completed,
-			attemptedAt: "2026-08-08T00:00:00.000Z",
-			...(completed ? { completedAt: "2026-08-08T00:00:01.000Z" } : {}),
-		},
-	}) as const;
-
-function installedVersion(packageName: string): string {
-	const entry = fileURLToPath(import.meta.resolve(packageName));
-	let directory = dirname(entry);
-	for (;;) {
-		const manifest = join(directory, "package.json");
-		try {
-			return (JSON.parse(readFileSync(manifest, "utf8")) as { version: string }).version;
-		} catch {
-			const parent = dirname(directory);
-			if (parent === directory) throw new Error(`package manifest not found for ${packageName}`);
-			directory = parent;
-		}
-	}
-}
+import { sanitizeEvidenceDetail, sanitizeProviderResponse } from "./cost-evidence.ts";
 
 describe("provider cost evidence", () => {
 	it("canonicalizes responses, recursively redacts credential keys, and rejects unsafe values", () => {
@@ -149,23 +114,5 @@ describe("provider cost evidence", () => {
 			expect(detail).not.toContain(canary);
 			expect(detail).not.toContain("SECRET_SUFFIX_CANARY");
 		}
-	});
-
-	it("pins provenance to the installed native SDK package", () => {
-		expect(String(RUNCLOUD_SDK_PROVENANCE.version)).toBe(installedVersion("@run-cloud/sdk"));
-	});
-
-	it("returns explicit missing evidence without calling organization-wide APIs", async () => {
-		const runcloud = await runcloudCostEvidence.captureAfterTeardown(input());
-		expect(runcloud).toMatchObject({ kind: "missing", reason: "not_sandbox_scoped" });
-		if (runcloud.kind !== "missing") throw new Error("run.cloud hook returned observed evidence");
-		expect(runcloud.detail).toContain("was not called or delta-attributed");
-	});
-
-	it("reports unconfirmed teardown before considering provider usage", async () => {
-		expect(await runcloudCostEvidence.captureAfterTeardown(input(false))).toMatchObject({
-			kind: "missing",
-			reason: "sandbox_teardown_unconfirmed",
-		});
 	});
 });

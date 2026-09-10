@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 // The stock wrapper factory, imported so the novita test can prove the connection methods were
 // actually REPLACED (identity inequality against an unpatched instance's methods table).
 import { e2b } from "@computesdk/e2b";
-import { PROVIDERS, TARGET_SPEC } from "@sandbox-benchmarks/schema";
+import { PROVIDERS } from "@sandbox-benchmarks/schema";
 import { normalizeProviderInput } from "@sandbox-benchmarks/schema/provider-meta";
 import { REGISTRY } from "@sandbox-benchmarks/schema/providers";
 import { ENV_KEYS } from "./config.ts";
@@ -80,22 +80,6 @@ describe("@sandbox-benchmarks/providers", () => {
 			kind: "image",
 			ref: config.toolchainImage,
 		});
-	});
-
-	it("pins run.cloud to the shared image and target spec", () => {
-		const adapter = providers.find((provider) => provider.name === "runcloud");
-		expect(adapter?.requiredEnvVars).toEqual(["RUN_CLOUD_API_KEY"]);
-		expect(adapter?.createOptions).toMatchObject({
-			image: config.toolchainImage,
-			cpu: TARGET_SPEC.vcpus,
-			memory: TARGET_SPEC.memoryGb * 1024,
-			disk: TARGET_SPEC.diskGb,
-		});
-		// The adapter waits for readiness and cleans up failed allocations itself. A harness timeout would
-		// abandon that non-cancellable promise and bench-suite's process exit could kill the cleanup.
-		expect(adapter?.createTimeoutMs).toBeNull();
-		expect(adapter?.createCompute().name).toBe("runcloud");
-		expect(adapter?.costEvidence).toBeDefined();
 	});
 
 	it("re-points the e2b wrapper at Novita without the e2b_ key-format guard", () => {
@@ -283,9 +267,9 @@ describe("assertProviderJoin", () => {
 		// (an `id in adapters` predicate) would drop the very id that lost its adapter from BOTH sides,
 		// leaving a guard that can never fail. Drop one waived adapter and the guard must still name it.
 		const expected = PROVIDERS.map((meta) => meta.id).filter(isLegacyAdapterId);
-		const withoutRuncloud = Object.keys(adapters).filter((id) => id !== "runcloud");
-		expect(() => assertProviderJoin(expected, withoutRuncloud)).toThrow(
-			/missing a harness adapter: runcloud/,
+		const withoutNamespace = Object.keys(adapters).filter((id) => id !== "namespace");
+		expect(() => assertProviderJoin(expected, withoutNamespace)).toThrow(
+			/missing a harness adapter: namespace/,
 		);
 		// …and a migrated id is still excluded by the list, not by its absence from the table.
 		expect(expected).not.toContain("e2b");
@@ -348,13 +332,13 @@ describe("assertCreateCeilingDeclared", () => {
 	});
 
 	it("holds for the real registry, so every race-disabling provider is budgetable", () => {
-		// run.cloud is the live instance of this shape; assert against the registry rather than naming
-		// it, so a future adapter that disables the race is covered by the same test.
+		// run.cloud, the live instance of this shape, now declares its ceiling as a DriverModule create
+		// budget; assert against the registry rather than naming anyone, so a future adapter that
+		// disables the race is covered by the same test.
 		expect(() =>
 			assertCreateCeilingDeclared(Object.fromEntries(providers.map((p) => [p.name, p]))),
 		).not.toThrow();
-		const raceDisabled = providers.filter((p) => p.createTimeoutMs === null);
-		expect(raceDisabled.length).toBeGreaterThan(0);
-		for (const p of raceDisabled) expect(p.createAttemptCeilingMs).toBeGreaterThan(0);
+		for (const p of providers.filter((p) => p.createTimeoutMs === null))
+			expect(p.createAttemptCeilingMs).toBeGreaterThan(0);
 	});
 });

@@ -52,6 +52,12 @@ jobs:
           no-cache: ${{ false && 'true' || 'false' }}
           # <<< end generated: provider-runner-cache
 
+      # Each attempt's evidence is uploaded by the CLI as soon as that attempt ends (durable per
+      # attempt, not only at job end), which needs the artifact runtime GitHub gives only to action
+      # steps. The diagnostic bundle below still goes through actions/upload-artifact.
+      - name: Expose artifact runtime to scripts
+        uses: ./.github/actions/artifact-runtime
+
       - name: Set up Namespace credentials
         # >>> generated: preauth-namespace-token-bench — bun run generate-provider-wiring
         if: matrix.provider == 'namespace'

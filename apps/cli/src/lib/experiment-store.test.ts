@@ -1,5 +1,12 @@
 import { expect, test } from "bun:test";
-import { scanArtifactPages } from "./experiment-store.ts";
+import { githubExperimentStore, scanArtifactPages } from "./experiment-store.ts";
+
+test("an upload outside the artifact runtime names the step that provides it", async () => {
+	const store = githubExperimentStore({ GITHUB_REPOSITORY: "owner/repo", GH_TOKEN: "token" });
+	await expect(store.upload("experiment-plan-1", ".")).rejects.toThrow(
+		"run .github/actions/artifact-runtime before this step",
+	);
+});
 
 const artifact = (id: number) => ({
 	id,

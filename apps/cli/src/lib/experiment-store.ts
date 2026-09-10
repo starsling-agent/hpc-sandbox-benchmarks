@@ -79,6 +79,13 @@ export function githubExperimentStore(env: NodeJS.ProcessEnv = process.env): Exp
 			return selected.toSorted((a, b) => a.name.localeCompare(b.name));
 		},
 		async upload(name, directory) {
+			// @actions/artifact uploads through the run-scoped artifact runtime, which GitHub injects
+			// only into action steps; a `run:` step gets it from .github/actions/artifact-runtime. Fail
+			// before walking the tree so the message names the fix, not the library's bare env lookup.
+			if (!env.ACTIONS_RUNTIME_TOKEN || !env.ACTIONS_RESULTS_URL)
+				throw new Error(
+					"artifact upload requires the Actions artifact runtime (ACTIONS_RUNTIME_TOKEN and ACTIONS_RESULTS_URL); run .github/actions/artifact-runtime before this step",
+				);
 			const files: string[] = [];
 			const visit = (path: string) => {
 				for (const entry of readdirSync(path, { withFileTypes: true })) {

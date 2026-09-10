@@ -82,6 +82,10 @@ jobs:
           persist-credentials: false
       - name: Set up workspace
         uses: ./.github/actions/setup-workspace
+      # The CLI uploads the frozen plan itself (one immutable, run-scoped artifact), which needs the
+      # artifact runtime GitHub gives only to action steps.
+      - name: Expose artifact runtime to scripts
+        uses: ./.github/actions/artifact-runtime
       - name: Plan
         id: plan
         env:

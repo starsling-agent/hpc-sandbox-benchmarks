@@ -55,7 +55,10 @@ one bounded wave through the existing harness and normalizer. The account and ro
 indices are preserved. Convergence is rejected by publication planning until its separately reviewed
 measurement revision is admitted; an explicit fixed-pass input is part of the workload identity.
 
-Each attempt uploads independently. The dataset workflow downloads the original plan and complete
+Each attempt uploads independently. The CLI performs those uploads (and the plan's) through
+`@actions/artifact`, which needs the run-scoped artifact runtime GitHub injects only into action
+steps, so the plan and bench jobs first run `.github/actions/artifact-runtime`; a `run:` step without
+it fails at its first upload. Downloads need no runtime. The dataset workflow downloads the original plan and complete
 attempt directories, checks durable allocation/release records, and invokes strict aggregate/promote.
 Lost terminal uploads leave durable intents that block publication. Workflow reruns reuse the frozen
 plan and refuse to measure an already attempted cell again; start a fresh experiment instead of

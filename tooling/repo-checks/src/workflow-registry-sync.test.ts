@@ -17,30 +17,15 @@
 // failure messages on synthetic drift, so a future regression names the offending file + key.
 import { describe, expect, test } from "bun:test";
 import { SUITE_NAMES } from "@sandbox-benchmarks/schema";
-import type { SuiteMatrixCaller } from "./lib/workflow-sync.ts";
 import {
 	CELL_BUDGET_ENV_KEY,
 	checkCellBudgetEnv,
 	checkLaneDelegates,
-	checkSmokeSingleSandboxDefault,
 	checkSuiteInput,
-	checkSuiteMatrixCaller,
-	checkSuiteWorkflowNesting,
 	checkWorkflowTimeouts,
 	dispatchInput,
-	EXPECTED_PROVIDER_NAME_EXPR,
-	EXPECTED_REPLICATES_ARG,
-	EXPECTED_REPLICATES_ENV_EXPR,
-	EXPECTED_REPLICATES_INPUT_EXPR,
-	EXPECTED_REQUIRE_PROVIDERS_INPUT_EXPR,
-	EXPECTED_SMOKE_REPLICAS_INPUT_EXPR,
-	EXPECTED_SUITE_MATRIX_EXPR,
-	EXPECTED_SUITE_NAME_EXPR,
 	jobTimeoutMinutes,
 	MATRIX_WORKFLOW,
-	matrixSuiteCaller,
-	PLAN_STEP,
-	REPLICATES_ENV_KEY,
 	RUN_STEP,
 	readWorkflow,
 	requiredCredentialKeys,
@@ -52,8 +37,8 @@ import {
 	WORKFLOW_TIMEOUT_MARGIN_MINUTES,
 } from "./lib/workflow-sync.ts";
 
-const smoke = readWorkflow(SMOKE_WORKFLOW);
 const matrix = readWorkflow(MATRIX_WORKFLOW);
+const smoke = readWorkflow(SMOKE_WORKFLOW);
 const suiteWf = readWorkflow(SUITE_WORKFLOW);
 const suiteInput = dispatchInput(smoke, "suite", SMOKE_WORKFLOW);
 const suiteEnv = stepEnv(suiteWf, SUITE_JOB, RUN_STEP, SUITE_WORKFLOW);
@@ -269,336 +254,32 @@ describe("checkLaneDelegates", () => {
 	});
 });
 
-describe("checkSmokeSingleSandboxDefault", () => {
-	// Invariant 7. `default: '1'` does NOT hold this on its own — a cleared dispatch field sends "",
-	// which means "each suite's Suite.defaultReplicas" (R=12 on realworld). The fallback is the guard.
-	test("the real smoke lane pins one sandbox against a cleared field", () => {
-		expect(checkSmokeSingleSandboxDefault(smoke, SMOKE_WORKFLOW)).toEqual([]);
-		expect(dispatchInput(smoke, "replicas", SMOKE_WORKFLOW).default).toBe("1");
-	});
-
-	test("flags a plan step that forwards replicas without the blank fallback", () => {
-		const yaml = Bun.YAML.stringify({
-			jobs: {
-				plan: {
-					steps: [
-						// biome-ignore lint/suspicious/noTemplateCurlyInString: a GHA expression literal, not a JS template.
-						{ name: PLAN_STEP, with: { replicas: "${{ inputs.replicas }}" } },
-					],
-				},
-			},
-		});
-		const errors = checkSmokeSingleSandboxDefault(Bun.YAML.parse(yaml), "synthetic.yml");
-		expect(errors).toHaveLength(1);
-		expect(errors[0]).toContain(EXPECTED_SMOKE_REPLICAS_INPUT_EXPR);
-		expect(errors[0]).toContain("R=12");
-	});
-
-	test("flags a missing plan job or plan step rather than passing vacuously", () => {
-		const noJob = Bun.YAML.stringify({ jobs: { suite: {} } });
-		expect(checkSmokeSingleSandboxDefault(Bun.YAML.parse(noJob), "synthetic.yml")[0]).toContain(
-			'job "plan" is missing',
-		);
-		const noStep = Bun.YAML.stringify({ jobs: { plan: { steps: [{ name: "Checkout" }] } } });
-		expect(checkSmokeSingleSandboxDefault(Bun.YAML.parse(noStep), "synthetic.yml")[0]).toContain(
-			`no step named "${PLAN_STEP}"`,
-		);
-	});
+test("production workflows preserve planned account batching and strict promotion", () => {
+	expect(runCheck()).toEqual([]);
 });
 
-describe("checkSuiteMatrixCaller", () => {
-	const realCaller = matrixSuiteCaller(matrix, MATRIX_WORKFLOW);
-	// The matrix lane's complete, declared posture: it owns the publish dependency and must NOT require
-	// a provider. Every call states both — a partial object would silently waive the flag it omits,
-	// which is exactly why the options type has no optional fields.
-	const MATRIX_LANE = { requirePublishNeeds: true, requireProviderAssertion: false } as const;
-	const check = (caller: SuiteMatrixCaller, label = MATRIX_WORKFLOW): string[] =>
-		checkSuiteMatrixCaller(caller, label, MATRIX_LANE);
-
-	test("matrixSuiteCaller extracts the real suite-matrix nesting wiring", () => {
-		expect(realCaller.jobId).toBe("suite");
-		expect(realCaller.name).toBe(EXPECTED_SUITE_NAME_EXPR);
-		expect(realCaller.suiteInput).toBe(EXPECTED_SUITE_NAME_EXPR);
-		expect(realCaller.matrixSuiteExpr).toBe(EXPECTED_SUITE_MATRIX_EXPR);
-		expect(realCaller.publishNeeds).toContain("suite");
-	});
-
-	test("the real suite-matrix caller is wired for native nesting", () => {
-		expect(check(realCaller)).toEqual([]);
-	});
-
-	test("flags a caller whose display name is not matrix.suite", () => {
-		const errors = check({ ...realCaller, name: "Bench suites" });
-		expect(errors).toHaveLength(1);
-		expect(errors[0]).toContain("name must be");
-		expect(errors[0]).toContain(EXPECTED_SUITE_NAME_EXPR);
-	});
-
-	test("flags a caller whose with.suite is not matrix.suite", () => {
-		const errors = check({ ...realCaller, suiteInput: "cpu-node" });
-		expect(errors).toHaveLength(1);
-		expect(errors[0]).toContain("with.suite must be");
-	});
-
-	test("flags a caller whose suite axis is not plan.outputs.suites", () => {
-		const errors = check({
-			...realCaller,
-			// biome-ignore lint/suspicious/noTemplateCurlyInString: a GHA expression literal (wrong axis), not a JS template.
-			matrixSuiteExpr: "${{ fromJSON(needs.plan.outputs.providers) }}",
-		});
-		expect(errors).toHaveLength(1);
-		expect(errors[0]).toContain("strategy.matrix.suite must be");
-		expect(errors[0]).toContain(EXPECTED_SUITE_MATRIX_EXPR);
-	});
-
-	test("flags publish that does not need the suite-matrix caller", () => {
-		const errors = check({ ...realCaller, publishNeeds: ["plan"] });
-		expect(errors).toHaveLength(1);
-		expect(errors[0]).toContain('publish" must need "suite"');
-	});
-
-	test("matrixSuiteCaller throws when no job calls the reusable", () => {
-		const yaml = Bun.YAML.stringify({ jobs: { plan: { "runs-on": "ubuntu-24.04" } } });
-		expect(() => matrixSuiteCaller(Bun.YAML.parse(yaml), "synthetic.yml")).toThrow(
-			"no job calls the reusable bench-suite.yml",
-		);
-	});
-
-	test("matrixSuiteCaller throws on multiple suite-matrix callers", () => {
-		const yaml = Bun.YAML.stringify({
-			jobs: {
-				a: {
-					name: EXPECTED_SUITE_NAME_EXPR,
-					uses: "./.github/workflows/bench-suite.yml",
-					with: { suite: EXPECTED_SUITE_NAME_EXPR, replicates: EXPECTED_REPLICATES_INPUT_EXPR },
-					strategy: { matrix: { suite: EXPECTED_SUITE_MATRIX_EXPR } },
-				},
-				b: {
-					name: EXPECTED_SUITE_NAME_EXPR,
-					uses: "./.github/workflows/bench-suite.yml",
-					with: { suite: EXPECTED_SUITE_NAME_EXPR, replicates: EXPECTED_REPLICATES_INPUT_EXPR },
-					strategy: { matrix: { suite: EXPECTED_SUITE_MATRIX_EXPR } },
-				},
-			},
-		});
-		expect(() => matrixSuiteCaller(Bun.YAML.parse(yaml), "synthetic.yml")).toThrow(
-			"expected exactly one suite-matrix caller",
-		);
-	});
-
-	// The caller-side twin of the run-step bypass: hardcoding the array here passes every other nesting
-	// check while quietly measuring one sandbox per cell.
-	test("flags a caller that hardcodes with.replicates instead of taking the plan's slice", () => {
-		const caller = {
-			...matrixSuiteCaller(matrix, MATRIX_WORKFLOW),
-			replicatesInput: "[0]",
-		};
-		const errors = check(caller, "synthetic.yml");
-		expect(errors).toHaveLength(1);
-		expect(errors[0]).toContain("with.replicates must be");
-		expect(errors[0]).toContain(EXPECTED_REPLICATES_INPUT_EXPR);
-	});
-
-	test("matrixSuiteCaller throws on a reusable-caller job with no string replicates", () => {
-		const yaml = Bun.YAML.stringify({
-			jobs: {
-				bad: {
-					uses: "./.github/workflows/bench-suite.yml",
-					with: { suite: EXPECTED_SUITE_NAME_EXPR },
-					strategy: { matrix: { suite: EXPECTED_SUITE_MATRIX_EXPR } },
-				},
-			},
-		});
-		expect(() => matrixSuiteCaller(Bun.YAML.parse(yaml), "synthetic.yml")).toThrow(
-			'without a string "replicates" input',
-		);
-	});
-
-	test("matrixSuiteCaller throws on a reusable-caller job with no string suite", () => {
-		const yaml = Bun.YAML.stringify({
-			jobs: { bad: { uses: "./.github/workflows/bench-suite.yml", with: { providers: "[]" } } },
-		});
-		expect(() => matrixSuiteCaller(Bun.YAML.parse(yaml), "synthetic.yml")).toThrow(
-			'without a string "suite" input',
-		);
-	});
-
-	test("matrixSuiteCaller rejects a present non-string require_providers input", () => {
-		const yaml = Bun.YAML.stringify({
-			jobs: {
-				bad: {
-					name: EXPECTED_SUITE_NAME_EXPR,
-					uses: "./.github/workflows/bench-suite.yml",
-					with: {
-						suite: EXPECTED_SUITE_NAME_EXPR,
-						replicates: EXPECTED_REPLICATES_INPUT_EXPR,
-						require_providers: true,
-					},
-					strategy: { matrix: { suite: EXPECTED_SUITE_MATRIX_EXPR } },
-				},
-			},
-		});
-		expect(() => matrixSuiteCaller(Bun.YAML.parse(yaml), "synthetic.yml")).toThrow(
-			'with a non-string "require_providers" input',
-		);
-	});
-});
-
-describe("checkSuiteMatrixCaller on the smoke lane", () => {
-	const smokeCaller = matrixSuiteCaller(smoke, SMOKE_WORKFLOW);
-	// The smoke lane's complete, declared posture — the exact mirror of MATRIX_LANE above.
-	const SMOKE_LANE = { requirePublishNeeds: false, requireProviderAssertion: true } as const;
-
-	// The consolidation in one assertion: the smoke lane's caller is the matrix lane's caller, down to
-	// the job id and every nesting expression. If these diverge, "a smoke is a real run minus the
-	// commit" has stopped being true.
-	test("the smoke caller is wired identically to the matrix caller", () => {
-		const matrixCaller = matrixSuiteCaller(matrix, MATRIX_WORKFLOW);
-		expect(smokeCaller.jobId).toBe(matrixCaller.jobId);
-		expect(smokeCaller.name).toBe(matrixCaller.name);
-		expect(smokeCaller.suiteInput).toBe(matrixCaller.suiteInput);
-		expect(smokeCaller.replicatesInput).toBe(matrixCaller.replicatesInput);
-		expect(smokeCaller.matrixSuiteExpr).toBe(matrixCaller.matrixSuiteExpr);
-	});
-
-	test("the real smoke caller passes its dispatched provider as require_providers", () => {
-		expect(smokeCaller.requireProvidersInput).toBe(EXPECTED_REQUIRE_PROVIDERS_INPUT_EXPR);
-		expect(checkSuiteMatrixCaller(smokeCaller, SMOKE_WORKFLOW, SMOKE_LANE)).toEqual([]);
-	});
-
-	// Dropping it is the silent regression: every nesting check still passes, the job still goes green,
-	// and a missing credential is recorded as a skip on a run that benchmarked nothing.
-	test("flags a smoke caller that stopped requiring its provider", () => {
-		const { requireProvidersInput: _dropped, ...caller } = smokeCaller;
-		const errors = checkSuiteMatrixCaller(caller, SMOKE_WORKFLOW, SMOKE_LANE);
-		expect(errors).toHaveLength(1);
-		expect(errors[0]).toContain("with.require_providers must be");
-		expect(errors[0]).toContain("no such input");
-	});
-
-	// The smoke lane deliberately has NO publish job — that missing third phase IS the difference
-	// between the lanes — so the publish dependency must not be demanded of it.
-	test("does not demand a publish dependency of the smoke lane", () => {
-		expect(smokeCaller.publishNeeds).toEqual([]);
-		expect(checkSuiteMatrixCaller(smokeCaller, SMOKE_WORKFLOW, SMOKE_LANE)).toEqual([]);
-	});
-
-	// The mirror image, and the reason `requireProviderAssertion: false` asserts ABSENCE rather than
-	// merely not-checking: a stray value on the matrix lane fails every cell whose provider it names —
-	// loudly, but only after a whole matrix run's worth of provider quota is committed.
-	test("flags a matrix-lane caller that grew a require_providers input", () => {
-		const errors = checkSuiteMatrixCaller(
-			{ ...matrixSuiteCaller(matrix, MATRIX_WORKFLOW), requireProvidersInput: "e2b" },
-			MATRIX_WORKFLOW,
-			{ requirePublishNeeds: true, requireProviderAssertion: false },
-		);
-		expect(errors).toHaveLength(1);
-		expect(errors[0]).toContain("must not pass with.require_providers");
-	});
-});
-
-describe("checkSuiteWorkflowNesting", () => {
-	const suiteWf = readWorkflow(SUITE_WORKFLOW);
-
-	test("the real reusable fan-out job is named matrix.provider", () => {
-		expect(checkSuiteWorkflowNesting(suiteWf)).toEqual([]);
-	});
-
-	/** A fan-out job that satisfies every nesting invariant; each drift test bends exactly one field. */
-	const wiredRunStep = {
-		name: RUN_STEP,
-		env: { [REPLICATES_ENV_KEY]: EXPECTED_REPLICATES_ENV_EXPR },
-		run: `bun apps/cli/src/bin/bench-suite.ts "$BENCH_PROVIDER" "$BENCH_SUITE" "$GITHUB_RUN_ID" ${EXPECTED_REPLICATES_ARG}`,
-	};
-	const wiredFanOut = {
-		name: EXPECTED_PROVIDER_NAME_EXPR,
-		"runs-on": "ubuntu-24.04",
-		steps: [wiredRunStep],
-	};
-	const nestingErrors = (job: object): string[] =>
-		checkSuiteWorkflowNesting(
-			Bun.YAML.parse(Bun.YAML.stringify({ jobs: { [SUITE_JOB]: job } })),
-			"synthetic.yml",
-		);
-
-	test("passes a fan-out job named matrix.provider that receives the replicate array", () => {
-		expect(nestingErrors(wiredFanOut)).toEqual([]);
-	});
-
-	test("flags a fan-out job whose display name is not matrix.provider", () => {
-		const errors = nestingErrors({ ...wiredFanOut, name: "Run" });
-		expect(errors).toHaveLength(1);
-		expect(errors[0]).toContain("name must be");
-		expect(errors[0]).toContain(EXPECTED_PROVIDER_NAME_EXPR);
-	});
-
-	// Re-adding the axis is the exact regression the in-process fan-out exists to prevent: it would
-	// silently restore one idle runner per replicate.
-	test("flags a reinstated replicate matrix axis", () => {
-		const errors = nestingErrors({
-			...wiredFanOut,
-			strategy: { matrix: { provider: "[]", replicate: "[0,1]" } },
-		});
-		expect(errors).toHaveLength(1);
-		expect(errors[0]).toContain('must not have a "replicate" matrix axis');
-	});
-
-	test("accepts a provider-only matrix", () => {
-		expect(nestingErrors({ ...wiredFanOut, strategy: { matrix: { provider: "[]" } } })).toEqual([]);
-	});
-
-	// Without the env wiring the cell falls back to ONE sandbox — a green run that publishes R=1 while
-	// the plan asked for R=12, so the drift must fail the gate rather than the dataset.
-	test("flags a run step that never receives the replicate array", () => {
-		const errors = nestingErrors({
-			...wiredFanOut,
-			steps: [{ ...wiredRunStep, env: {} }],
-		});
-		expect(errors).toHaveLength(1);
-		expect(errors[0]).toContain(REPLICATES_ENV_KEY);
-		expect(errors[0]).toContain("no such env key");
-	});
-
-	// The bypass that made the env check alone insufficient: keep the env key, drop the flag. The cell
-	// then takes bench-suite's single-sandbox default and commit-dataset's legacy glob collects the one
-	// shard without complaint — a green matrix run publishing R=1.
-	test("flags a run step that sets the env but never passes --replicates", () => {
-		const errors = nestingErrors({
-			...wiredFanOut,
-			steps: [
-				{
-					...wiredRunStep,
-					run: 'bun apps/cli/src/bin/bench-suite.ts "$BENCH_PROVIDER" "$BENCH_SUITE" "$GITHUB_RUN_ID"',
-				},
-			],
-		});
-		expect(errors).toHaveLength(1);
-		expect(errors[0]).toContain(EXPECTED_REPLICATES_ARG);
-	});
-
-	test("flags a run step with no run: command at all", () => {
-		const { run: _dropped, ...noRun } = wiredRunStep;
-		const errors = nestingErrors({ ...wiredFanOut, steps: [noRun] });
-		expect(errors).toHaveLength(1);
-		expect(errors[0]).toContain("no run: command");
-	});
-
-	// `replicas` (the dispatch knob) vs `replicates` (the plan's index array) is the plausible typo:
-	// it's a live input name, so it resolves to a value rather than failing the workflow outright.
-	test("flags a replicate array wired to the wrong expression", () => {
-		// biome-ignore lint/suspicious/noTemplateCurlyInString: a GHA expression literal, not a JS template.
-		const wrongExpr = "${{ inputs.replicas }}";
-		const errors = nestingErrors({
-			...wiredFanOut,
-			steps: [{ ...wiredRunStep, env: { [REPLICATES_ENV_KEY]: wrongExpr } }],
-		});
-		expect(errors).toHaveLength(1);
-		expect(errors[0]).toContain(EXPECTED_REPLICATES_ENV_EXPR);
-	});
-});
-
-describe("the gate itself", () => {
-	test("the real workflows are in lockstep with the registries", () => {
-		expect(runCheck()).toEqual([]);
-	});
+test("the integrated workflow gate rejects parallel batches, detached plan axes and legacy promotion", async () => {
+	const { checkExperimentNesting } = await import("./lib/workflow-nesting.ts");
+	const docs = Object.fromEntries(
+		[
+			"bench-matrix.yml",
+			"bench-smoke.yml",
+			"bench-account.yml",
+			"bench-round.yml",
+			"bench-suite.yml",
+			"commit-dataset.yml",
+		].map((file) => [file, readWorkflow(`.github/workflows/${file}`)]),
+	);
+	const source = JSON.stringify(docs);
+	for (const [before, after] of [
+		['"max-parallel":1', '"max-parallel":2'],
+		["fromJSON(needs.plan.outputs.accounts)", "fromJSON(needs.plan.outputs.suites)"],
+		["data/dataset experiment/manifest/plan.json experiment/attempts", "data/dataset"],
+		["workflow-experiment.ts execute", "bench-suite.ts"],
+	] as const) {
+		expect(source).toContain(before);
+		expect(
+			checkExperimentNesting(JSON.parse(source.replace(before, after))).length,
+		).toBeGreaterThan(0);
+	}
 });

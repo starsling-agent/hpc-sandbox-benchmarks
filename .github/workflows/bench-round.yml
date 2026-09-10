@@ -1,0 +1,53 @@
+name: Benchmark round (reusable)
+on:
+  workflow_call:
+    inputs:
+      account:
+        type: string
+        required: true
+      round:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      axis: ${{ steps.plan.outputs.axis }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up workspace
+        uses: ./.github/actions/setup-workspace
+      - name: Read frozen round axis
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BENCH_ACCOUNT: ${{ inputs.account }}
+          BENCH_ROUND: ${{ inputs.round }}
+        run: bun apps/cli/src/bin/workflow-experiment.ts axes "$BENCH_ACCOUNT" "$BENCH_ROUND"
+  execute:
+    needs: plan
+    permissions:
+      contents: write
+      actions: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.axis) }}
+    uses: ./.github/workflows/bench-suite.yml
+    with:
+      providers: ${{ toJSON(fromJSON(format('["{0}"]', matrix.provider))) }}
+      suite: ${{ matrix.suite }}
+      batch_id: ${{ matrix.batch }}
+    secrets: inherit

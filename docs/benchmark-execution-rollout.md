@@ -27,7 +27,7 @@ This is an implementation status record, not a claim that the live fleet meets t
 - A narrow complete-inventory driver capability and Tama ownership projection. Account reconciliation
   validates all variant inventories before deletion, requires observed absence after deletion, and
   checks every inventory again before admission. Unavailable inventory, foreign resources, cancellation,
-  timeout, or new allocations block admission. This module is not yet wired into fleet dispatch.
+  timeout, or new allocations block admission. It is called once by each account-owned batch before allocation.
 - Strict `promote` requires the original plan and attempt directories and independently reconstructs
   the candidate before writing the dataset. Legacy Runs remain available for validation and reading.
 - Publication verifies identity-bound execution and cleanup receipts, including observed absence,
@@ -44,27 +44,58 @@ This is an implementation status record, not a claim that the live fleet meets t
   Implicit create retries default to zero. Explicit retries cannot follow an owner timeout or unresolved
   failed-create cleanup.
 
-## Important current limitation
+## Integrated execution
 
-**The existing matrix dispatcher does not yet produce or execute the new experiment manifest. Its
-dataset publication therefore fails closed.** Account queues limit overlapping jobs, but the legacy
-per-job replicate fleet still requires migration to planned batches. Queueing alone does not enforce
-the new sandbox/resource budgets or establish cleanup after runner loss.
+Matrix and smoke now freeze one immutable plan and dispatch account → collection round → batch.
+Every allocating worker verifies the plan and source revision, reconciles its account once, and runs
+one bounded wave through the existing harness and normalizer. The account and round matrices use
+`max-parallel: 1`; independent accounts can proceed together. Fixed suite defaults and replicate
+indices are preserved. Convergence is rejected by publication planning until its separately reviewed
+measurement revision is admitted; an explicit fixed-pass input is part of the workload identity.
 
-Do not enable fleet publication by bypassing the manifest requirement or synthesizing receipts from
-green GitHub jobs. A launch receipt, valid XML, and “All tasks passed” are insufficient evidence.
+Each attempt uploads independently. The dataset workflow downloads the original plan and complete
+attempt directories, checks durable allocation/release records, and invokes strict aggregate/promote.
+Lost terminal uploads leave durable intents that block publication. Workflow reruns reuse the frozen
+plan and refuse to measure an already attempted cell again; start a fresh experiment instead of
+selecting a favorable rerun. Automatic allocation retries remain disabled.
+
+## Account admission before live rollout
+
+The durable journal uses a separate Git branch per quota domain:
+`benchmark-account-journal-<domain>`. It records immutable intent, allocation and release records with
+fast-forward-only commits. It is evidence storage, not a lease or an artifact allocation claim;
+GitHub account concurrency remains the exclusive scheduling authority. Raw evidence stays in Actions
+artifacts. Missing/truncated journals, unresolved creates and unconfirmed removal block allocation.
+
+Each branch starts with `journal.json` containing `{"schemaVersion":"1","account":"<domain>","records":[]}`.
+The file is an append-only record sequence; immutable Git commits retain every prior snapshot. Reading
+one blob avoids a REST request per historical record on every new batch.
+
+An operator must provision these branches after quiescing existing account writers and confirming a
+clean vendor baseline. Protect them against deletion and force pushes, retain their history, and
+permit the privileged workflow token to append commits. Do not reset a journal to recover an account.
+For an unknown create, obtain the vendor's request outcome and resource identity before recording
+recovery; an empty inventory is insufficient. No branch is automatically created or reset by a worker.
+The allocating workflow needs `contents: write` for this narrow journal update; checkouts still do not
+persist credentials. Accounts without this setup fail admission before allocation.
+
+Managed admission currently requires a migrated driver with complete inventory, observation and
+recovery. Tama supplies that capability; other provider migrations remain separate rollout work.
+Selected unsupported providers produce failed attempt evidence, never green skips. Toolchain and GPU
+jobs share the account queues but still have legacy allocation paths: keep their credentials in
+separate development accounts until those paths adopt the same journal owner. Sharing a queue alone
+is not a guarantee against an interrupted legacy create. Do not admit a publication account with
+uncoordinated legacy writers or direct development credentials.
+
+Publication remains gated on complete evidence and live admission. No provider canary or workload
+baseline result has been inferred from offline tests.
 
 ## Remaining rollout work
 
-1. Wire immutable plan creation, account-domain batch dispatch and incremental attempt uploads into
-   matrix/smoke and publication workflows. Bind each worker's actual resolved environment and artifact
-   to the plan before allocation. Keep batch matrices sequential within each quota domain.
-2. Add driver inventory/reconciliation and move remaining managed adapters onto the driver port.
-   Cancellation and ambiguous creates must retain ownership until observed removal or confirmed expiry.
-   Direct development credentials must stay separate from coordinated publication credentials.
-   The initial Tama inventory and reconciliation implementation still needs durable allocation intents,
-   cross-job recovery history, and the remaining vendor inventories. An empty scan by itself cannot
-   prove that an interrupted create request will not allocate later.
+1. Provision protected account journals and run the integrated privileged canary. Confirm artifact
+   upload/download and Git journal permissions in the actual Actions environment.
+2. Add complete inventories to remaining provider drivers and migrate legacy allocating paths,
+   including GPU and toolchain validation, onto the account owner before sharing publication accounts.
 3. Reproduce E2B launch/descendant/filesystem/exec behaviors and Daytona's nested launch failure through
    the shared executor. The new receipt implementation is not yet a verified fix for the six live E2B
    timeouts. Compare isolated and bounded concurrent Microsandbox startup before changing readiness.
@@ -78,9 +109,12 @@ green GitHub jobs. A launch receipt, valid XML, and “All tasks passed” are i
 
 ## Commands
 
-Local verification after the correctness follow-up: 2,047 repository tests pass. Typecheck, Biome, spelling, catalog/registry/wiring
-drift checks, ShellCheck, Hadolint, queue-compatible actionlint and the configured offline zizmor gate
-pass. Live provider conformance and workload admission have not been run for these changes.
+Offline integration tests cross the real harness, raw collector, normalizer and completeness evaluator.
+They cover account caps, cleanup failure, rerun refusal, missing uploads, interrupted intents, journal
+conflicts and matrix partitioning. Live provider conformance and workload admission remain separate.
+
+Final local verification: 2,042 tests pass, with typecheck, Biome, spelling, generated catalog/registry/
+wiring checks, ShellCheck, Hadolint, queue-compatible actionlint and configured offline zizmor passing.
 
 ```sh
 bun apps/cli/src/bin/plan-experiment.ts request.json plan.json capacity-policy.json

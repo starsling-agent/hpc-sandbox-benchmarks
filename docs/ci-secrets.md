@@ -201,7 +201,10 @@ Do this in the GitHub UI (Settings → Environments / Rules / Actions), then del
    branch dispatch still fails at the environment with *"Branch is not allowed to deploy to
    privileged"* until this list admits the branch. To use `allow_branch`, add the branch patterns you
    want to reach it — e.g. `claude/*`, or a dedicated `bench/*` prefix maintainers push validation
-   branches to. Prefer a narrow pattern over `All branches`: anyone who can push a matching branch can
+   branches to. Patterns use branch-protection syntax, where `*` does not match `/`: a bare `*` admits
+   `main`-style names only, so a `codex/…` branch needs its own entry or a `codex/*` pattern (a smoke
+   dispatch on such a branch otherwise fails in 2 s with *"not allowed to deploy to privileged"*).
+   Prefer a narrow pattern over `All branches`: anyone who can push a matching branch can
    then request a `privileged` run (a reviewer still has to approve it, and the workflows' own
    same-repo guard still excludes forks, so this widens *who can ask*, not *what runs unattended*).
    Leave the list at `main` alone if you do not want branch dispatches at all — the input is inert

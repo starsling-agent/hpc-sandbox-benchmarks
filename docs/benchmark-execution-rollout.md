@@ -97,8 +97,14 @@ baseline result has been inferred from offline tests.
 
 ## Remaining rollout work
 
-1. Provision protected account journals and run the integrated privileged canary. Confirm artifact
-   upload/download and Git journal permissions in the actual Actions environment.
+1. Provision protected account journals for the remaining accounts and run each account's integrated
+   privileged canary. Done for `tama` on 2026-09-10: branch `benchmark-account-journal-tama` seeded
+   with the empty journal (ruleset "Protect benchmark account journals" blocks deletion and
+   force-push on `benchmark-account-journal-*`), then smoke run 34537171216 on main (`tama` ×
+   `system`, one replicate) wrote intent → allocated → released(absent) as three fast-forward
+   commits, uploaded the plan and the attempt from the CLI, confirmed sandbox absence, and its
+   downloaded evidence passed collect → evaluate → aggregate → strict promote locally. Artifact
+   upload/download and journal permissions are confirmed in the Actions environment.
 2. Add complete inventories to remaining provider drivers and migrate legacy allocating paths,
    including GPU and toolchain validation, onto the account owner before sharing publication accounts.
 3. Reproduce E2B launch/descendant/filesystem/exec behaviors and Daytona's nested launch failure through

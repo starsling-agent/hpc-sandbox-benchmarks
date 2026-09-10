@@ -72,17 +72,27 @@ const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 
 export type Phase = "create" | "setup" | "benchmark" | "collect";
 
+/**
+ * One executed ATTEMPT of a step. A retried step (setup steps declare `retries`; the collect loop
+ * re-runs its step through transient read-back failures) logs one entry per attempt, so a receipt
+ * reader must judge a step by its final entry, not by every entry. `allowFailure` records the
+ * declared policy so the reader can tell a tolerated non-zero exit from a real one.
+ */
 export interface StepLogEntry {
 	phase: Phase;
 	label: string;
 	ms: number;
 	exitCode: number | null;
+	/** Present (true) only when the step was declared `allowFailure`. */
+	allowFailure?: boolean;
 }
 
 export interface DetachedStepEvidence {
 	identity: string;
 	label: string;
 	phase: Phase;
+	/** Present (true) only when the step was declared `allowFailure`. */
+	allowFailure?: boolean;
 	state:
 		| "launch-pending"
 		| "launch-accepted"
@@ -426,6 +436,12 @@ abstract class StepExecution<Result extends { stdout?: string; stderr?: string }
 	/** The in-sandbox preamble prepended to every step, carrying this run's PTS pass policy. */
 	private readonly preamble: string;
 	/**
+	 * Credential values to scrub from echoed output, snapshotted once per runner. Deriving them walks
+	 * every registered provider's inputs, and a runner redacts on every stdout/stderr write of every
+	 * step — recomputing there made each output line pay the whole registry walk.
+	 */
+	private readonly secrets: readonly string[] = diagnosticSecretsFromEnv(process.env);
+	/**
 	 * The sandbox filesystem WHILE it is usable — cleared for good the first time it proves it isn't.
 	 *
 	 * "Exposes a filesystem" is not "has a working one": computesdk hands an adapter that declares no
@@ -532,17 +548,23 @@ abstract class StepExecution<Result extends { stdout?: string; stderr?: string }
 				() => stepTimeout(label, timeoutMs),
 			);
 		} catch (error) {
-			this.stepLog.push({
-				phase: this.phase,
-				label,
-				ms: performance.now() - started,
-				exitCode: null,
-			});
+			this.recordStep(label, performance.now() - started, null, opts);
 			throw error;
 		} finally {
 			stopHeartbeat();
 		}
 		return this.finishStep(label, started, result, opts);
+	}
+
+	/** Append one attempt to the step log, carrying the declared failure policy when it was set. */
+	private recordStep(label: string, ms: number, exitCode: number | null, opts: StepOptions): void {
+		this.stepLog.push({
+			phase: this.phase,
+			label,
+			ms,
+			exitCode,
+			...(opts.allowFailure ? { allowFailure: true } : {}),
+		});
 	}
 
 	/**
@@ -578,6 +600,7 @@ abstract class StepExecution<Result extends { stdout?: string; stderr?: string }
 			identity: tag,
 			label,
 			phase: this.phase,
+			...(opts.allowFailure ? { allowFailure: true } : {}),
 			state: "launch-pending",
 			exitCode: null,
 		};
@@ -591,9 +614,7 @@ abstract class StepExecution<Result extends { stdout?: string; stderr?: string }
 			evidence.state = "deadline-exceeded";
 			const rawTail = await this.readLogTail(this.pollFs, logPath);
 			const tail =
-				rawTail === null
-					? null
-					: redactDiagnosticText(rawTail, diagnosticSecretsFromEnv(process.env)).slice(-8192);
+				rawTail === null ? null : redactDiagnosticText(rawTail, this.secrets).slice(-8192);
 			evidence.logTail = tail;
 			// Best-effort stop the detached job; don't let a failing kill mask the timeout.
 			await withTimeout(
@@ -708,12 +729,7 @@ abstract class StepExecution<Result extends { stdout?: string; stderr?: string }
 				await recoverTimeoutEvidence();
 			}
 			if (this.stepLog.length === logCount)
-				this.stepLog.push({
-					phase: this.phase,
-					label,
-					ms: Math.round(performance.now() - started),
-					exitCode: evidence.exitCode,
-				});
+				this.recordStep(label, Math.round(performance.now() - started), evidence.exitCode, opts);
 			throw error;
 		} finally {
 			stopHeartbeat();
@@ -883,19 +899,14 @@ abstract class StepExecution<Result extends { stdout?: string; stderr?: string }
 	private finishStep(label: string, started: number, result: Result, opts: StepOptions): Result {
 		const elapsedMs = Math.round(performance.now() - started);
 		const elapsedS = (elapsedMs / 1000).toFixed(1);
-		this.stepLog.push({
-			phase: this.phase,
-			label,
-			ms: elapsedMs,
-			exitCode: this.exitCode(result),
-		});
+		this.recordStep(label, elapsedMs, this.exitCode(result), opts);
 
 		if (result.stdout && !opts.silent) {
-			const stdout = redactDiagnosticText(result.stdout, diagnosticSecretsFromEnv(process.env));
+			const stdout = redactDiagnosticText(result.stdout, this.secrets);
 			process.stdout.write(stdout.endsWith("\n") ? stdout : `${stdout}\n`);
 		}
 		if (result.stderr && !opts.silent) {
-			const stderr = redactDiagnosticText(result.stderr, diagnosticSecretsFromEnv(process.env));
+			const stderr = redactDiagnosticText(result.stderr, this.secrets);
 			process.stderr.write(stderr.endsWith("\n") ? stderr : `${stderr}\n`);
 		}
 		console.log(`=== [${label}] exit ${this.describeExit(result)} in ${elapsedS}s ===`);
@@ -904,10 +915,7 @@ abstract class StepExecution<Result extends { stdout?: string; stderr?: string }
 			// A silent step withheld its output above; surface it now so the failure is debuggable. The
 			// detached transport merges stderr into stdout (2>&1), so fall back to stdout when no stderr.
 			if (opts.silent) {
-				const tail = redactDiagnosticText(
-					result.stderr || result.stdout || "",
-					diagnosticSecretsFromEnv(process.env),
-				);
+				const tail = redactDiagnosticText(result.stderr || result.stdout || "", this.secrets);
 				if (tail) process.stderr.write(tail.endsWith("\n") ? tail : `${tail}\n`);
 			}
 			const code = this.exitCode(result);

@@ -26,6 +26,13 @@ const stepPropertySchema = nonemptyStringSchema.narrow((value, ctx) =>
 		? true
 		: ctx.mustBe("a GitHub Actions step/output property name"),
 );
+// Names an Actions concurrency group and a journal branch, so it carries the identifier grammar the
+// experiment plan already enforces on its quota domains.
+const quotaDomainSchema = nonemptyStringSchema.narrow((value, ctx) =>
+	/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(value)
+		? true
+		: ctx.mustBe("a quota domain identifier (letters, digits, '.', '_', '-')"),
+);
 const finitePositiveNumberSchema = type("number > 0").narrow(Number.isFinite);
 const httpUrlSchema = type("string.url").narrow((value) => {
 	const protocol = new URL(value).protocol;
@@ -88,6 +95,7 @@ const providerArtifactSchema = noArtifactSchema
 export const providerMetaSourceSchema = type({
 	displayName: nonemptyStringSchema,
 	vendor: nonemptyStringSchema,
+	"quotaDomain?": quotaDomainSchema,
 	website: httpUrlSchema,
 	sdkPackage: nonemptyStringSchema,
 	artifact: providerArtifactSchema,
@@ -249,13 +257,27 @@ export function validateProviderModules(
 	// One input name is one cross-consumer contract. Shared credentials across isolation variants
 	// must normalize identically or generated CI would have to pick one owner's source/default policy.
 	const inputsByName = new Map<string, { owner: ProviderId; signature: string }>();
+	// One credential is one vendor account (ADR-0010): providers that share a secret draw on the same
+	// quota, so they must queue behind the same domain or the account concurrency group lets them
+	// race each other's allocations.
+	const secretDomains = new Map<string, { owner: ProviderId; domain: string }>();
 	for (const id of PROVIDER_IDS) {
 		const { preAuth } = parsed[id].meta;
+		const domain = parsed[id].meta.quotaDomain ?? id;
 		const stepInputs: StepProvidedInput[] = [];
 		for (const raw of parsed[id].meta.inputs) {
 			const input = normalizeProviderInput(raw);
 			if (input.source.kind === "step-env" || input.source.kind === "step-output") {
 				stepInputs.push({ ...input, source: input.source });
+			}
+			if (input.source.kind === "secret") {
+				const shared = secretDomains.get(input.name);
+				if (shared !== undefined && shared.domain !== domain) {
+					throw new Error(
+						`${shared.owner}/${id}: providers sharing secret ${input.name} must declare one quotaDomain (${shared.domain} vs ${domain})`,
+					);
+				}
+				secretDomains.set(input.name, shared ?? { owner: id, domain });
 			}
 			const signature = JSON.stringify({
 				source: input.source,

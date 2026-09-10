@@ -83,6 +83,22 @@ test("missing journal and truncated history cannot become an empty account", asy
 		).read("tama"),
 	).rejects.toThrow("incomplete");
 });
+test("a transient append failure does not poison later appends or reads", async () => {
+	const f = fixture();
+	let blip = true;
+	const journal = githubAccountJournal((method, path, body) => {
+		if (method === "PATCH" && blip) {
+			blip = false;
+			throw new Error("HTTP 502");
+		}
+		return f.request(method, path, body);
+	});
+	await expect(journal.append(intent)).rejects.toThrow("502");
+	// The same client keeps working: the next cell's record lands and reads see it.
+	await journal.append({ ...intent, attempt: "attempt-2" });
+	expect(await journal.read("tama")).toEqual([{ ...intent, attempt: "attempt-2" }]);
+	expect(f.writes).toHaveLength(1);
+});
 test("a competing writer rejects the append rather than forcing the journal ref", async () => {
 	const f = fixture();
 	const journal = githubAccountJournal((method, path, body) => {

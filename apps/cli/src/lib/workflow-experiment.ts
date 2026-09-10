@@ -1,6 +1,11 @@
 import { evidenceDigest } from "@sandbox-benchmarks/results";
-import type { ExperimentCell, ExperimentPlan, ProviderId } from "@sandbox-benchmarks/schema";
-import { accountCapacityPolicySchema, SUITES, TARGET_SPEC } from "@sandbox-benchmarks/schema";
+import type { ExperimentCell, ExperimentPlan } from "@sandbox-benchmarks/schema";
+import {
+	accountCapacityPolicySchema,
+	quotaDomain,
+	SUITES,
+	TARGET_SPEC,
+} from "@sandbox-benchmarks/schema";
 import {
 	VERCEL_PROJECT_NAME_DEFAULT,
 	VERCEL_TEAM_SLUG_DEFAULT,
@@ -9,12 +14,6 @@ import {
 import { resolveDriverArtifact } from "./driver-run.ts";
 import { planExperiment } from "./experiment-plan.ts";
 import { planReplicateMap, selectProviders, selectSuites } from "./matrix.ts";
-
-export function quotaDomain(provider: ProviderId): string {
-	if (provider === "daytona-vm" || provider === "daytona-container") return "daytona";
-	if (provider === "modal-gvisor" || provider === "modal-vm") return "modal";
-	return provider;
-}
 
 /** Resolve declarations without credentials. Workers must independently match these identities. */
 export function workflowExperiment(env: NodeJS.ProcessEnv, createdOn: string): ExperimentPlan {

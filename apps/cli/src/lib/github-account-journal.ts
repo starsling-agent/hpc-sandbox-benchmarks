@@ -93,7 +93,10 @@ export function githubAccountJournal(
 				if (updated.object.sha !== nextCommit.sha)
 					throw new Error("journal append was not acknowledged");
 			});
-			tail = pending;
+			// The chain only orders appends; it must not carry their outcomes. A rejected tail would skip
+			// every later append's callback and fail every read with the first (possibly transient)
+			// error for the rest of the process, silently dropping the batch's remaining records.
+			tail = pending.catch(() => undefined);
 			return pending;
 		},
 	};

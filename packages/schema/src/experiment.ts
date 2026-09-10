@@ -15,16 +15,20 @@ export const executionReceiptSchema = type({
 	provider: providerIdSchema,
 	suite: "string >= 1",
 	sandboxId: "string >= 1",
+	// One entry per ATTEMPT: a retried step keeps its failed attempts, and a step declared
+	// `allowFailure` records that policy so a tolerated non-zero exit is distinguishable from a failure.
 	steps: type({
 		phase,
 		label: "string",
 		ms: "number >= 0",
 		exitCode: "number.integer | null",
+		"allowFailure?": "boolean",
 	}).array(),
 	detached: type({
 		identity: identifier,
 		label: "string",
 		phase,
+		"allowFailure?": "boolean",
 		state:
 			"'launch-pending' | 'launch-accepted' | 'running' | 'observation-unavailable' | 'completed' | 'deadline-exceeded' | 'collection-failed'",
 		exitCode: "number.integer | null",

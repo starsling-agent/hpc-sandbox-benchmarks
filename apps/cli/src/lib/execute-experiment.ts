@@ -19,6 +19,7 @@ import type {
 import {
 	experimentAttemptSchema,
 	PROVIDERS,
+	quotaDomain,
 	SUITES,
 	TARGET_SPEC,
 } from "@sandbox-benchmarks/schema";
@@ -35,7 +36,6 @@ import {
 } from "./experiment-artifacts.ts";
 import type { ExperimentStore } from "./experiment-store.ts";
 import { runReplicate } from "./run-replicate.ts";
-import { quotaDomain } from "./workflow-experiment.ts";
 
 export interface BatchExecution {
 	plan: ExperimentPlan;

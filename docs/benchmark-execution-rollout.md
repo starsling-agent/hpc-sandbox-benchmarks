@@ -12,7 +12,9 @@ This is an implementation status record, not a claim that the live fleet meets t
   conflicting attempts, unapproved retries, missing metrics and unknown cleanup block completeness.
 - File-boundary verification of normalized and raw digests; atomic, no-overwrite JSON publication.
 - Account concurrency groups shared by benchmark/smoke, toolchain validation, and Modal GPU jobs,
-  with `queue: max` and no cancellation of running work.
+  with `queue: max` and no cancellation of running work. The per-cell group expression is generated
+  from each provider's registry `quotaDomain` (`bun run generate-provider-wiring`), the same lookup
+  that names the plan's batches and the journal branch.
 - Required-provider admission in the shared benchmark workflow. A failed Namespace credential setup
   can still reach normalization, but cannot produce a green all-skipped provider job.
 - Separate workflow-attempt artifact names, unconditional diagnostic upload, and upload paths limited

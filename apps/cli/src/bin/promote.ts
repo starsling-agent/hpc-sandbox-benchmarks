@@ -79,7 +79,10 @@ if (import.meta.main) {
 			readExperimentPlan(planFile),
 			readExperimentAttempts(attemptsRoot),
 		);
-		if (evidenceDigest(run) !== evidenceDigest(verified)) {
+		if (!verified.run) {
+			fail(`experiment is incomplete: ${JSON.stringify(verified.coverage)}`);
+		}
+		if (evidenceDigest(run) !== evidenceDigest(verified.run)) {
 			fail("candidate does not match the verified experiment attempts");
 		}
 		outFile = join(datasetDir, "runs", `${run.runId}.json`);

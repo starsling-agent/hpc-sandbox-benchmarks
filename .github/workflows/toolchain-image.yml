@@ -374,7 +374,9 @@ jobs:
   bake:
     name: Bake + verify (${{ matrix.provider }})
     concurrency:
+      # >>> generated: provider-account-group-bake — bun run generate-provider-wiring
       group: benchmark-account-${{ (matrix.provider == 'daytona-vm' || matrix.provider == 'daytona-container') && 'daytona' || (matrix.provider == 'modal-gvisor' || matrix.provider == 'modal-vm') && 'modal' || matrix.provider }}
+      # <<< end generated: provider-account-group-bake
       cancel-in-progress: false
       queue: max
     needs: [plan, build]

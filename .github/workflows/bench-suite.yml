@@ -24,7 +24,9 @@ permissions:
 jobs:
   bench:
     concurrency:
+      # >>> generated: provider-account-group-bench — bun run generate-provider-wiring
       group: benchmark-account-${{ (matrix.provider == 'daytona-vm' || matrix.provider == 'daytona-container') && 'daytona' || (matrix.provider == 'modal-gvisor' || matrix.provider == 'modal-vm') && 'modal' || matrix.provider }}
+      # <<< end generated: provider-account-group-bench
       cancel-in-progress: false
       queue: max
     name: ${{ matrix.provider }}

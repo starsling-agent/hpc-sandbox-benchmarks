@@ -245,6 +245,11 @@ describe("StepRunner", () => {
 		await expect(runner.run("fail", "false", 5_000)).rejects.toThrow(/exit code 1/);
 		const tolerated = await runner.run("fail-ok", "false", 5_000, { allowFailure: true });
 		expect(tolerated.exitCode).toBe(1);
+		// The receipt must let a reader tell the tolerated exit from the real failure.
+		expect(runner.stepLog).toEqual([
+			{ phase: "setup", label: "fail", ms: expect.any(Number), exitCode: 1 },
+			{ phase: "setup", label: "fail-ok", ms: expect.any(Number), exitCode: 1, allowFailure: true },
+		]);
 	});
 });
 

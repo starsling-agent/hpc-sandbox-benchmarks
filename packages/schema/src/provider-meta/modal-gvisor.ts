@@ -4,6 +4,7 @@ import { modalPricing, modalTransport } from "./_modal.ts";
 export default defineProviderMeta("modal-gvisor", {
 	displayName: "Modal (gVisor)",
 	vendor: "Modal",
+	quotaDomain: "modal",
 	website: "https://modal.com",
 	sdkPackage: "modal",
 	artifact: { kind: "image" },

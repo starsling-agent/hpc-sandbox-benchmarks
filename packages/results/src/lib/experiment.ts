@@ -177,6 +177,22 @@ export interface CoverageReport {
 	conflicts: string[];
 }
 
+/**
+ * The harness logs one entry per ATTEMPT of a step (retried setup steps, re-collected results), so
+ * a step is judged by its final attempt: an earlier failure that a later attempt superseded is
+ * evidence of a retry, not of a failed run. Keyed by phase + label because the same label can name
+ * different work in different phases.
+ */
+function finalAttempts<T extends { phase: string; label: string }>(entries: readonly T[]): T[] {
+	return [...new Map(entries.map((entry) => [`${entry.phase}\0${entry.label}`, entry])).values()];
+}
+
+/** A step succeeded, or was declared tolerant of failure AND actually reported an exit code — the
+ *  tolerance covers a non-zero exit, never a step whose completion was not observed. */
+function stepAccepted(step: { exitCode: number | null; allowFailure?: boolean }): boolean {
+	return step.exitCode === 0 || (step.allowFailure === true && step.exitCode !== null);
+}
+
 /** Evaluate whole attempts against the frozen denominator. Artifact order never selects a sample. */
 export function evaluateExperiment(
 	input: unknown,
@@ -283,8 +299,10 @@ export function evaluateExperiment(
 			execution.primaryFailure === null &&
 			execution.steps.some((step) => step.phase === "benchmark") &&
 			execution.steps.some((step) => step.phase === "collect") &&
-			execution.steps.every((step) => step.exitCode === 0) &&
-			execution.detached.every((step) => step.state === "completed" && step.exitCode === 0) &&
+			finalAttempts(execution.steps).every(stepAccepted) &&
+			finalAttempts(execution.detached).every(
+				(step) => step.state === "completed" && stepAccepted(step),
+			) &&
 			artifact?.sandboxId === execution.sandboxId;
 		const completed =
 			receiptsConfirmSuccess &&
@@ -325,13 +343,23 @@ export function evaluateExperiment(
 	return report;
 }
 
-/** Only this path creates a Run with verified experiment linkage. */
+export interface ExperimentAggregation {
+	coverage: CoverageReport;
+	/** Present only when coverage is complete: the one Run carrying verified experiment linkage. */
+	run?: Run;
+}
+
+/**
+ * Only this path creates a Run with verified experiment linkage. It evaluates coverage itself (a
+ * caller-supplied report could not be trusted) and hands that report back, so a caller that must
+ * persist coverage whether or not publication proceeds evaluates exactly once.
+ */
 export function aggregateExperiment(
 	plan: ExperimentPlan,
 	attempts: readonly AttemptWithRun[],
-): Run {
+): ExperimentAggregation {
 	const coverage = evaluateExperiment(plan, attempts);
-	if (!coverage.complete) throw new Error(`experiment is incomplete: ${JSON.stringify(coverage)}`);
+	if (!coverage.complete) return { coverage };
 	const selected = new Set(coverage.selectedAttempts);
 	const runs = attempts
 		.filter(({ evidence }) => selected.has(evidence.id))
@@ -369,7 +397,7 @@ export function aggregateExperiment(
 			]),
 		).values(),
 	].toSorted((a, b) => a.suite.localeCompare(b.suite));
-	return parseRun({
+	const run = parseRun({
 		...merged,
 		schemaVersion: "7",
 		experiment: {
@@ -378,4 +406,5 @@ export function aggregateExperiment(
 			attemptIds: coverage.selectedAttempts,
 		},
 	});
+	return { coverage, run };
 }

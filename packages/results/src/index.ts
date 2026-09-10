@@ -6,7 +6,11 @@
 // are implementation detail. This surface exposes only the entry points consumers (the CLI) need:
 // normalize a raw tree, write the Run, and summarize it.
 export { aggregateRuns } from "./lib/aggregate.ts";
-export type { AttemptWithRun, CoverageReport } from "./lib/experiment.ts";
+export type {
+	AttemptWithRun,
+	CoverageReport,
+	ExperimentAggregation,
+} from "./lib/experiment.ts";
 export {
 	aggregateExperiment,
 	evaluateExperiment,

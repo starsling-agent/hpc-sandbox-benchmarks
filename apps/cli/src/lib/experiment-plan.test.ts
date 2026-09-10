@@ -271,7 +271,7 @@ test("publication requires receipts and restricts measurements to planned eligib
 	provider.metrics.push({ ...provider.metrics[0], metricId: "stream_type_triad" });
 	attempt.evidence.runDigest = evidenceDigest(attempt.run);
 	expect(
-		aggregateExperiment(plan(), [attempt]).providers[0]?.metrics.some(
+		aggregateExperiment(plan(), [attempt]).run?.providers[0]?.metrics.some(
 			(m) => m.metricId === "stream_type_triad",
 		),
 	).toBe(false);
@@ -281,8 +281,65 @@ test("aggregation produces readable v7 linkage only from a complete experiment",
 	const attempt = successful();
 	if (attempt.run) parseRun(attempt.run);
 	const result = aggregateExperiment(plan(), [attempt]);
-	expect(parseRun(result).experiment?.planDigest).toBe(plan().digest);
-	expect(() => aggregateExperiment(plan(2), [attempt])).toThrow("incomplete");
+	expect(result.coverage.complete).toBe(true);
+	if (!result.run) throw new Error("complete experiment produced no Run");
+	expect(parseRun(result.run).experiment?.planDigest).toBe(plan().digest);
+	const incomplete = aggregateExperiment(plan(2), [attempt]);
+	expect(incomplete.coverage.complete).toBe(false);
+	expect(incomplete.run).toBeUndefined();
+});
+
+test("a retried step, a tolerated probe, and a re-collected detached step still publish", () => {
+	const attempt = successful();
+	if (!attempt.execution) throw new Error("fixture has no execution receipt");
+	// The harness logs one entry per attempt: setup steps declare retries, the observed-specs probe
+	// runs allowFailure, and the collect loop re-runs its (detached) step through read-back blips.
+	attempt.execution.steps = [
+		{ phase: "setup", label: "install mise", ms: 1, exitCode: 1 },
+		{ phase: "setup", label: "install mise", ms: 1, exitCode: null },
+		{ phase: "setup", label: "install mise", ms: 1, exitCode: 0 },
+		{ phase: "setup", label: "capture observed specs", ms: 1, exitCode: 1, allowFailure: true },
+		{ phase: "benchmark", label: "memory", ms: 1, exitCode: 0 },
+		{ phase: "collect", label: "collect", ms: 1, exitCode: 0 },
+		{ phase: "collect", label: "collect", ms: 1, exitCode: 0 },
+	];
+	attempt.execution.detached = [
+		{
+			identity: "bench-1",
+			label: "collect",
+			phase: "collect",
+			state: "collection-failed",
+			exitCode: 0,
+		},
+		{ identity: "bench-2", label: "collect", phase: "collect", state: "completed", exitCode: 0 },
+	];
+	expect(evaluateExperiment(plan(), [attempt]).complete).toBe(true);
+
+	// The final attempt still decides: a step whose last try failed cannot publish.
+	const lastTryFailed = successful();
+	if (!lastTryFailed.execution) throw new Error("fixture has no execution receipt");
+	lastTryFailed.execution.steps = [
+		...attempt.execution.steps,
+		{ phase: "setup", label: "install mise", ms: 1, exitCode: 1 },
+	];
+	lastTryFailed.execution.detached = attempt.execution.detached;
+	expect(evaluateExperiment(plan(), [lastTryFailed]).complete).toBe(false);
+
+	// A detached step whose last attempt never completed cannot publish either.
+	const lastCollectLost = successful();
+	if (!lastCollectLost.execution) throw new Error("fixture has no execution receipt");
+	lastCollectLost.execution.steps = attempt.execution.steps;
+	lastCollectLost.execution.detached = [...attempt.execution.detached].reverse();
+	expect(evaluateExperiment(plan(), [lastCollectLost]).complete).toBe(false);
+
+	// Tolerance covers a reported non-zero exit, never an unobserved completion.
+	const probeNeverExited = successful();
+	if (!probeNeverExited.execution) throw new Error("fixture has no execution receipt");
+	probeNeverExited.execution.steps = [
+		...(successful().execution?.steps ?? []),
+		{ phase: "setup", label: "capture observed specs", ms: 1, exitCode: null, allowFailure: true },
+	];
+	expect(evaluateExperiment(plan(), [probeNeverExited]).complete).toBe(false);
 });
 
 test("wrong resources, artifact identity, workload revision and pass policy block coverage", () => {

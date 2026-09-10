@@ -651,6 +651,7 @@ const SUITE_READINESS = {
 
 /** The already-resolved context {@link runSuiteOnSandbox} runs against. */
 export interface SuiteRunContext {
+	readonly sourceRevision?: string;
 	runId: RunId;
 	replicateIndex?: number;
 	suite: Suite;
@@ -795,6 +796,13 @@ export interface ExecuteSuiteOptions {
 	readonly replicateIndex?: number;
 	readonly suiteName: SuiteName;
 	readonly resultsDir: string;
+	readonly managed?: {
+		sourceRevision: string;
+		passes: number;
+		startupDeadline: number;
+		workloadMs: number;
+		collectionMs: number;
+	};
 }
 
 /** Allocate, execute, collect evidence and tear down one suite through the driver session seam. */
@@ -803,11 +811,15 @@ export async function executeSuite(options: ExecuteSuiteOptions): Promise<void> 
 	const { module, driver, request } = allocation;
 	const suite = SUITES[suiteName];
 	const budget = module.createBudget;
-	const timeoutMs =
+	const configuredTimeoutMs =
 		budget?.owner === "driver" ? null : (budget?.timeoutMs ?? SUITE_CREATE_ATTEMPT_TIMEOUT_MS);
+	const timeoutMs = options.managed
+		? Math.min(configuredTimeoutMs ?? Infinity, options.managed.startupDeadline - Date.now())
+		: configuredTimeoutMs;
+	if (timeoutMs !== null && timeoutMs <= 0) throw new Error("startup phase deadline exceeded");
 	const deadlineMs =
 		budget?.owner === "driver"
-			? budget.attemptCeilingMs
+			? Math.min(budget.attemptCeilingMs, timeoutMs ?? Infinity)
 			: (timeoutMs ?? SUITE_CREATE_ATTEMPT_TIMEOUT_MS);
 	const session = await createSuiteSandboxFromPlan(
 		{
@@ -821,7 +833,13 @@ export async function executeSuite(options: ExecuteSuiteOptions): Promise<void> 
 			providerName: module.id,
 			resultsDir: options.resultsDir,
 			createTimeoutMs: timeoutMs,
-			...(budget?.owner === "driver" ? { createAttemptCeilingMs: budget.attemptCeilingMs } : {}),
+			...(budget?.owner === "driver"
+				? {
+						createAttemptCeilingMs: options.managed
+							? Math.min(budget.attemptCeilingMs, timeoutMs ?? Infinity)
+							: budget.attemptCeilingMs,
+					}
+				: {}),
 		},
 	);
 	await runSuiteWork(
@@ -829,6 +847,7 @@ export async function executeSuite(options: ExecuteSuiteOptions): Promise<void> 
 		session.sandboxRef.id,
 		{
 			...options,
+			sourceRevision: options.managed?.sourceRevision,
 			suite,
 			providerName: module.id,
 			artifact: request.artifact,
@@ -851,10 +870,36 @@ export async function executeSuite(options: ExecuteSuiteOptions): Promise<void> 
 			},
 			...(module.costEvidence === undefined ? {} : { costEvidence: module.costEvidence }),
 		},
-		() => new SessionStepRunner(session, module.execution, undefined, resolvePtsPassPolicy(suite)),
+		() => {
+			const managed = options.managed;
+			const deadlines = new Map<string, number>();
+			return new SessionStepRunner(
+				session,
+				module.execution,
+				undefined,
+				managed ? { mode: "fixed", times: managed.passes } : resolvePtsPassPolicy(suite),
+				managed
+					? (phase) => {
+							if (phase === "setup" || phase === "create") return managed.startupDeadline;
+							if (!deadlines.has(phase))
+								deadlines.set(
+									phase,
+									Date.now() + (phase === "benchmark" ? managed.workloadMs : managed.collectionMs),
+								);
+							return deadlines.get(phase) ?? managed.startupDeadline;
+						}
+					: undefined,
+			);
+		},
 		async () => {
 			const readiness = await verifySuiteDriverReadiness({
-				timeoutMs: driverReadinessBudgetMs(module),
+				timeoutMs: Math.max(
+					1,
+					Math.min(
+						driverReadinessBudgetMs(module),
+						options.managed ? options.managed.startupDeadline - Date.now() : Infinity,
+					),
+				),
 				verify: async ({ signal }) => {
 					const result = await verifyDriverReadiness(module, session, { signal });
 					return { ready: result.status === "pass", detail: result.detail };
@@ -960,7 +1005,7 @@ async function runSuiteWork(
 		}
 
 		if (!suiteSkipped) {
-			for (const step of setupSteps(suite)) {
+			for (const step of setupSteps(suite, ctx.sourceRevision)) {
 				const attempts = (step.retries ?? 0) + 1;
 				for (let attempt = 1; ; attempt++) {
 					try {

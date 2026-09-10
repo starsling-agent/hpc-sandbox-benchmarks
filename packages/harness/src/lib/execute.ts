@@ -441,9 +441,16 @@ abstract class StepExecution<Result extends { stdout?: string; stderr?: string }
 		filesystem: SandboxFilesystem | undefined,
 		private readonly sleep: (ms: number) => Promise<void>,
 		passPolicy: PtsPassPolicy,
+		private readonly phaseDeadline?: (phase: Phase) => number,
 	) {
 		this.preamble = buildPreamble(passPolicy);
 		this.pollFs = filesystem;
+	}
+
+	private boundedTimeout(timeoutMs: number): number {
+		const remaining = this.phaseDeadline ? this.phaseDeadline(this.phase) - Date.now() : Infinity;
+		if (remaining <= 0) throw new Error(`${this.phase} phase deadline exceeded`);
+		return Math.min(timeoutMs, remaining);
 	}
 
 	protected abstract execute(command: string): Promise<Result>;
@@ -513,6 +520,7 @@ abstract class StepExecution<Result extends { stdout?: string; stderr?: string }
 		timeoutMs: number,
 		opts: StepOptions = {},
 	): Promise<Result> {
+		timeoutMs = this.boundedTimeout(timeoutMs);
 		console.log(`\n=== [${label}] ===`);
 		const started = performance.now();
 		const stopHeartbeat = startHeartbeat(label, started, timeoutMs);
@@ -523,6 +531,14 @@ abstract class StepExecution<Result extends { stdout?: string; stderr?: string }
 				timeoutMs,
 				() => stepTimeout(label, timeoutMs),
 			);
+		} catch (error) {
+			this.stepLog.push({
+				phase: this.phase,
+				label,
+				ms: performance.now() - started,
+				exitCode: null,
+			});
+			throw error;
 		} finally {
 			stopHeartbeat();
 		}
@@ -550,6 +566,7 @@ abstract class StepExecution<Result extends { stdout?: string; stderr?: string }
 		timeoutMs: number,
 		opts: StepOptions = {},
 	): Promise<Result> {
+		timeoutMs = this.boundedTimeout(timeoutMs);
 		console.log(`\n=== [${label}] (detached) ===`);
 		const started = performance.now();
 		const stopHeartbeat = startHeartbeat(label, started, timeoutMs);
@@ -628,6 +645,7 @@ abstract class StepExecution<Result extends { stdout?: string; stderr?: string }
 					evidence.exitCode = exitCode ?? null;
 					consecutivePollFailures = 0;
 				} catch (err) {
+					if (err instanceof GapError && err.gapCause.kind === "step-timeout") throw err;
 					evidence.state = "observation-unavailable";
 					consecutivePollFailures++;
 					if (consecutivePollFailures >= MAX_CONSECUTIVE_POLL_FAILURES) {
@@ -682,7 +700,8 @@ abstract class StepExecution<Result extends { stdout?: string; stderr?: string }
 			}
 		} catch (error) {
 			if (
-				performance.now() >= deadline &&
+				((error instanceof GapError && error.gapCause.kind === "step-timeout") ||
+					performance.now() >= deadline) &&
 				evidence.state !== "completed" &&
 				evidence.state !== "collection-failed"
 			) {
@@ -942,8 +961,9 @@ export class SessionStepRunner extends StepExecution<ExecResult> {
 		private readonly execution: ExecutionPolicy,
 		sleep: (ms: number) => Promise<void> = delay,
 		passPolicy: PtsPassPolicy = DEFAULT_PTS_PASS_POLICY,
+		phaseDeadline?: (phase: Phase) => number,
 	) {
-		super(session.files, sleep, passPolicy);
+		super(session.files, sleep, passPolicy, phaseDeadline);
 	}
 	protected execute(command: string): Promise<ExecResult> {
 		return this.session.exec(command);

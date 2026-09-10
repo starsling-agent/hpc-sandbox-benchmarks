@@ -115,11 +115,23 @@ export interface SnapshotCapability<Handle = unknown> {
 	delete(snapshotId: string): Promise<void>;
 }
 
+/** Full account observation, not the opaque and possibly paginated diagnostic list probe. */
+export interface InventorySnapshot {
+	readonly owned: readonly SandboxRef[];
+	readonly foreignCount: number;
+}
+
+export interface InventoryCapability {
+	/** Drain all pages. An unavailable or partial inventory must reject, never return an empty list. */
+	list(options?: DriverOperationOptions): Promise<InventorySnapshot>;
+}
+
 export interface SandboxDriver<Handle = unknown> {
 	create(request: CreateRequest, options?: DriverOperationOptions): Promise<SandboxSession<Handle>>;
 	destroyById?(ref: SandboxRef, options?: DriverOperationOptions): Promise<void>;
 	readonly probes?: ControlPlaneProbes;
 	readonly snapshots?: SnapshotCapability<Handle>;
+	readonly inventory?: InventoryCapability;
 }
 
 export type CreateBudget =

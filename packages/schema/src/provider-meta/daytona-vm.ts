@@ -4,6 +4,7 @@ import { daytonaPricing, daytonaTransport } from "./_daytona.ts";
 export default defineProviderMeta("daytona-vm", {
 	displayName: "Daytona (VM)",
 	vendor: "Daytona",
+	quotaDomain: "daytona",
 	website: "https://daytona.io",
 	sdkPackage: "@daytona/sdk",
 	artifact: { kind: "baked" },

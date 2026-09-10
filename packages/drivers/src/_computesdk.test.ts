@@ -1295,6 +1295,28 @@ describe("computeSdkDriver", () => {
 		expect(projected.every(([projectedSandbox]) => projectedSandbox === sandbox)).toBe(true);
 	});
 
+	test("native command failures retain useful diagnostics through the redaction boundary", async () => {
+		const { compute } = fakeCompute(baseSandbox);
+		const session = await bridge(compute, {
+			commands: {
+				exec: async () => {
+					throw new Error("native exec transport refused test-key");
+				},
+				launch: async () => {
+					throw new Error("native launch session unavailable test-key");
+				},
+			},
+		}).create(request);
+		const execError = await session.exec("true").catch((caught: unknown) => caught);
+		const launchError = await session.launch?.("task").catch((caught: unknown) => caught);
+		expectRedacted(execError, "exec-failed");
+		expectRedacted(launchError, "exec-failed");
+		expect(execError).toMatchObject({ vendorMessage: "native exec transport refused [REDACTED]" });
+		expect(launchError).toMatchObject({
+			vendorMessage: "native launch session unavailable [REDACTED]",
+		});
+	});
+
 	test("launch rejects a background command that the wrapper reports as failed", async () => {
 		const { compute } = fakeCompute({
 			...baseSandbox,

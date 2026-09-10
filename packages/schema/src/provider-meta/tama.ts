@@ -12,9 +12,9 @@ export default defineProviderMeta("tama", {
 	// requiredEnvVars is the credential gate, and the gate is what turns an unwired provider into a
 	// recorded SKIP instead of a failed cell: a CLI profile is invisible to it, so treating "no token"
 	// as "maybe the profile works" would mean a matrix cell with no credential at all discovers that
-	// by failing to create a sandbox. The profile preference governs whether `tama login --token`
-	// RUNS (it replaces the stored credential, so a developer must not be signed out by a benchmark),
-	// not whether the provider is credentialed. Local devs export a token from `tama tokens create`
+	// by failing to create a sandbox. Preparation authenticates with the explicit token once per driver
+	// context, serialized across contexts so profile writes do not race. Local devs use separate
+	// benchmark credentials and export a token from `tama tokens create`
 	// — see .env.example.
 	inputs: ["TAMA_TOKEN", { name: "TAMA_CLI", source: { kind: "variable" }, required: false }],
 	isolation: {

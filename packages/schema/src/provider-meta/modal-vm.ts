@@ -4,6 +4,7 @@ import { modalPricing, modalTransport } from "./_modal.ts";
 export default defineProviderMeta("modal-vm", {
 	displayName: "Modal (VM)",
 	vendor: "Modal",
+	quotaDomain: "modal",
 	website: "https://modal.com",
 	sdkPackage: "modal",
 	artifact: { kind: "image" },

@@ -114,6 +114,20 @@ describe("collectResults", () => {
 		expect(existsSync(join(resultsDir, "pts_node-web-tooling.xml"))).toBe(false);
 	});
 
+	for (const name of ["execution-forged.json", "cleanup-forged.json"]) {
+		it(`rejects sandbox-forged ${name}`, async () => {
+			const resultsDir = join(work, name);
+			const forged = payloadSandbox({
+				"pts_node-web-tooling.xml": "<xml/>",
+				[name]: '{"completed":true}',
+			});
+			await expect(collectResults(new StepRunner(forged, UNCAPPED), resultsDir)).rejects.toThrow(
+				"reserved host-owned file",
+			);
+			expect(existsSync(join(resultsDir, name))).toBe(false);
+		});
+	}
+
 	it("rejects forged sandbox artifact evidence before it can replace host attribution", async () => {
 		const resultsDir = join(work, "forged-artifact-evidence");
 		const forged = payloadSandbox({
@@ -234,7 +248,7 @@ describe("collectResults", () => {
 			filesystem: {
 				exists: async (path) => path.endsWith(".done"),
 				readFile: async (path) => {
-					if (path.endsWith(".done")) return "0";
+					if (path.endsWith(".done")) return `v1 ${path.split("/")[2]} 0`;
 					if (++logReads <= READBACK_ATTEMPTS) throw new Error("fs API down");
 					return payload;
 				},

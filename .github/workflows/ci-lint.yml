@@ -59,8 +59,12 @@ jobs:
       # With no path args actionlint scans .github/workflows automatically; .github/actionlint.yaml
       # (the self-hosted runner registry) is picked up from the repo root. shellcheck comes from mise,
       # so actionlint's embedded shell linting runs against the same pinned version as `lint:shell`.
+      - name: Set up queue validation
+        uses: ./.github/actions/setup-workspace
+        with:
+          no-cache: 'true'
       - name: Run actionlint
-        run: mise exec -- actionlint -no-color
+        run: bun run lint:workflows
 
   zizmor:
     name: Audit workflows (zizmor)

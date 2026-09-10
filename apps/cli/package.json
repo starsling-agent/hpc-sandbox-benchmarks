@@ -20,7 +20,11 @@
     "stability": "./src/bin/stability.ts",
     "leaderboard": "./src/bin/leaderboard.ts",
     "reprice-dataset": "./src/bin/reprice-dataset.ts",
-    "driver-check": "./src/bin/driver-check.ts"
+    "driver-check": "./src/bin/driver-check.ts",
+    "plan-experiment": "./src/bin/plan-experiment.ts",
+    "evaluate-experiment": "./src/bin/evaluate-experiment.ts",
+    "aggregate-experiment": "./src/bin/aggregate-experiment.ts",
+    "workflow-experiment": "./src/bin/workflow-experiment.ts"
   },
   "scripts": {
     "test": "bun test",
@@ -29,6 +33,7 @@
     "bake": "bun src/bin/bake.ts"
   },
   "dependencies": {
+    "@actions/artifact": "6.2.1",
     "@actions/core": "1.11.1",
     "@sandbox-benchmarks/schema": "workspace:*",
     "@sandbox-benchmarks/driver": "workspace:*",

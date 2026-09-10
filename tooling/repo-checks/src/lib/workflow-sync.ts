@@ -32,13 +32,7 @@
 // timeout/delegation invariants plus runCheck orchestration, and re-exports the public surface the
 // gate's tests import.
 import { PROVIDERS, SUITE_NAMES, SUITES } from "@sandbox-benchmarks/schema";
-import {
-	checkLaneDelegates,
-	checkSmokeSingleSandboxDefault,
-	checkSuiteMatrixCaller,
-	checkSuiteWorkflowNesting,
-	matrixSuiteCaller,
-} from "./workflow-nesting.ts";
+import { checkExperimentNesting, checkLaneDelegates } from "./workflow-nesting.ts";
 import type { DispatchInput } from "./workflow-yaml.ts";
 import {
 	dispatchInput,
@@ -54,24 +48,7 @@ import {
 } from "./workflow-yaml.ts";
 import { findRepoRoot } from "./workspace.ts";
 
-export type { SuiteMatrixCaller, SuiteMatrixCallerOptions } from "./workflow-nesting.ts";
-export {
-	checkLaneDelegates,
-	checkSmokeSingleSandboxDefault,
-	checkSuiteMatrixCaller,
-	checkSuiteWorkflowNesting,
-	EXPECTED_PROVIDER_NAME_EXPR,
-	EXPECTED_REPLICATES_ARG,
-	EXPECTED_REPLICATES_ENV_EXPR,
-	EXPECTED_REPLICATES_INPUT_EXPR,
-	EXPECTED_REQUIRE_PROVIDERS_INPUT_EXPR,
-	EXPECTED_SMOKE_REPLICAS_INPUT_EXPR,
-	EXPECTED_SUITE_MATRIX_EXPR,
-	EXPECTED_SUITE_NAME_EXPR,
-	matrixSuiteCaller,
-	PLAN_STEP,
-	REPLICATES_ENV_KEY,
-} from "./workflow-nesting.ts";
+export { checkExperimentNesting, checkLaneDelegates } from "./workflow-nesting.ts";
 export type { DispatchInput } from "./workflow-yaml.ts";
 export {
 	dispatchInput,
@@ -234,19 +211,17 @@ export function runCheck(root: string = findRepoRoot()): string[] {
 		...checkLaneDelegates(matrix, MATRIX_WORKFLOW, credentialKeys),
 		...checkWorkflowTimeouts({ [SUITE_WORKFLOW]: suiteTimeout }),
 		...checkCellBudgetEnv(suiteEnv, suiteTimeout, SUITE_WORKFLOW),
-		// Both lanes are held to one caller shape, and each states BOTH flags: the matrix owns the
-		// publish dependency and must not require a provider; the smoke is the mirror image. Spelling
-		// out both at each lane is what makes this the complete, declared list of permitted differences
-		// rather than a default someone can drift past.
-		...checkSuiteMatrixCaller(matrixSuiteCaller(matrix, MATRIX_WORKFLOW), MATRIX_WORKFLOW, {
-			requirePublishNeeds: true,
-			requireProviderAssertion: false,
-		}),
-		...checkSuiteMatrixCaller(matrixSuiteCaller(smoke, SMOKE_WORKFLOW), SMOKE_WORKFLOW, {
-			requirePublishNeeds: false,
-			requireProviderAssertion: true,
-		}),
-		...checkSmokeSingleSandboxDefault(smoke, SMOKE_WORKFLOW),
-		...checkSuiteWorkflowNesting(suiteWf, SUITE_WORKFLOW),
+		...checkExperimentNesting(
+			Object.fromEntries(
+				[
+					"bench-matrix.yml",
+					"bench-smoke.yml",
+					"bench-account.yml",
+					"bench-round.yml",
+					"bench-suite.yml",
+					"commit-dataset.yml",
+				].map((file) => [file, readWorkflow(`.github/workflows/${file}`, root)]),
+			),
+		),
 	];
 }

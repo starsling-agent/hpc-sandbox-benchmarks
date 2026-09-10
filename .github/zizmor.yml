@@ -14,7 +14,7 @@ rules:
       - update-leaderboard.yml
   secrets-inherit:
     ignore:
-      # bench-matrix.yml's and bench-smoke.yml's suite-matrix jobs both call the reusable
+      # Matrix/smoke delegate through account and round workflows to the reusable
       # bench-suite.yml with `secrets: inherit` (the smoke lane is the same pipeline narrowed to one
       # provider × suite and stopped before the dataset commit, so it reaches the cell the same way).
       # The reusable's fan-out job declares `environment: privileged`, which raises the approval gate and
@@ -23,6 +23,8 @@ rules:
       # ''`). `inherit` hands the reusable the caller's secret / token context in one line instead of
       # enumerating each secret as a `workflow_call` input (a `uses:` caller can't declare the
       # environment to resolve them itself). The workflow-hardening drift gate independently verifies the
-      # callee self-gates on `privileged`. (Filename-scoped, not repo-wide.)
+      # entire local call chain reaches a worker gated on `privileged`. (Filename-scoped, not repo-wide.)
       - bench-matrix.yml
       - bench-smoke.yml
+      - bench-account.yml
+      - bench-round.yml

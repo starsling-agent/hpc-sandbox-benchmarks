@@ -82,6 +82,13 @@ export interface ProviderRunnerPolicy {
 export interface ProviderMetaSource {
 	readonly displayName: string;
 	readonly vendor: string;
+	/**
+	 * The vendor account whose quota and credentials this provider consumes. Isolation variants that
+	 * share credentials share one domain (ADR-0010) — it names the Actions concurrency group, the
+	 * account journal branch and the plan's batches, so it must stay stable once provisioned.
+	 * Omitted means the provider id is its own domain.
+	 */
+	readonly quotaDomain?: string;
 	readonly website: string;
 	readonly sdkPackage: string;
 	readonly artifact: ProviderArtifact;

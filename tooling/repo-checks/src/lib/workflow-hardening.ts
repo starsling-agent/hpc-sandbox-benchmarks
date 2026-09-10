@@ -202,7 +202,11 @@ export function checkCiLintGate(doc: unknown, label: string = CI_LINT_WORKFLOW):
 		}
 		// Job existence isn't enough: it must actually invoke the tool, or the gate false-passes if
 		// the real invocation is renamed/removed while an empty job shell survives.
-		if (!jobRun(tool).includes(tool)) {
+		const run = jobRun(tool);
+		const queueCompatibleActionlint =
+			tool === "actionlint" &&
+			run.split("\n").some((line) => line.trim() === "bun run lint:workflows");
+		if (!run.includes(tool) && !queueCompatibleActionlint) {
 			errors.push(
 				`${label}: the "${tool}" job must actually run \`${tool}\` — the gate must not pass on a job that no longer invokes it`,
 			);
@@ -328,16 +332,37 @@ function privilegeReasons(f: {
 
 /** True if any job in a parsed workflow declares `environment: <privileged>`. Used to confirm a local
  *  reusable workflow carries its own approval gate (the caller can't declare one for it). */
-function hasPrivilegedJob(doc: unknown, privileged: string): boolean {
-	const root = asRecord(doc, "reusable workflow: not a YAML mapping");
-	const jobs = asRecord(root.jobs, "reusable workflow: no jobs mapping");
-	return Object.values(jobs).some(
-		(j) =>
-			j !== null &&
-			typeof j === "object" &&
-			!Array.isArray(j) &&
-			jobEnvironmentName(j as Record<string, unknown>) === privileged,
+function hasPrivilegedJob(
+	doc: unknown,
+	privileged: string,
+	resolveLocal: (path: string) => unknown,
+	visited = new Set<string>(),
+): boolean {
+	const root = asRecord(doc, "reusable workflow");
+	const jobs = Object.values(asRecord(root.jobs, "reusable jobs")).map((job) =>
+		asRecord(job, "reusable job"),
 	);
+	const nested = jobs.filter((job) => typeof job.uses === "string");
+	const directGate = jobs.some((job) => jobEnvironmentName(job) === privileged);
+	if (nested.length === 0) return directGate;
+	return nested.every((job) => {
+		if (
+			typeof job.uses !== "string" ||
+			!job.uses.startsWith("./.github/workflows/") ||
+			visited.has(job.uses)
+		)
+			return false;
+		try {
+			return hasPrivilegedJob(
+				resolveLocal(job.uses.slice(2)),
+				privileged,
+				resolveLocal,
+				new Set([...visited, job.uses]),
+			);
+		} catch {
+			return false;
+		}
+	});
 }
 
 /**
@@ -411,7 +436,10 @@ export function checkPrivilegedEnvironment(
 			} catch {
 				calledDoc = undefined;
 			}
-			if (calledDoc !== undefined && !hasPrivilegedJob(calledDoc, privileged)) {
+			if (
+				calledDoc !== undefined &&
+				!hasPrivilegedJob(calledDoc, privileged, resolveLocalWorkflow)
+			) {
 				errors.push(
 					`${key}: calls local reusable workflow ${job.uses} with ${reasons.join(" and ")} but no ` +
 						`job in it sets \`environment: ${privileged}\` — a \`uses:\` caller can't gate itself, so ` +

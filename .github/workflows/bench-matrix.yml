@@ -1,41 +1,5 @@
 name: CPU benchmark
 
-# Fan the live benchmark out across the provider × suite matrix using GitHub's native reusable-workflow
-# nesting. `plan` emits all three axes; a single suite-matrix job calls the reusable bench-suite.yml
-# once per suite (`name: ${{ matrix.suite }}`), and that reusable fans out over providers — so each cell
-# displays as "<suite> / <provider>" (e.g. "system / e2b") and cells nest under their suite in the
-# Actions UI. Adding a suite is a schema change only: the suite axis is
-# `fromJSON(needs.plan.outputs.suites)`, kept in lockstep by the workflow-registry-sync gate.
-#
-# This file owns only the matrix's SHAPE and its publish phase. Planning the axes
-# (./.github/actions/plan-bench-axes) and running a cell (bench-suite.yml) are shared verbatim with
-# bench-smoke.yml, which is this same pipeline narrowed to one provider × suite and stopped before
-# `publish` — so a smoke run exercises the real benchmarking code path, minus the dataset commit.
-#
-# The THIRD axis, replicates, is deliberately NOT a runner axis: `plan` hands each suite's replicate
-# index array to its cells as data, and one runner drives that cell's whole replicate fleet
-# concurrently in-process (`bench-suite --replicates`). A bench runner is ~100% idle waiting on its
-# sandbox, so a runner per replicate billed R idle runners to do one runner's work — at the shipped
-# defaults that is 324 runners where 54 suffice, with identical sandbox load and wall clock. See
-# bench-suite.yml's header for the failure-isolation contract inside a cell.
-#
-# Three configurable inputs tune the statistics, all defaulting to the schema/per-suite config so a bare
-# dispatch reproduces the configured run:
-#   * `suites`   — narrow the suite axis to a subset (blank = every registered suite): the targeted/
-#     pre-merge knob, so a validation dispatch can run just one suite instead of the whole matrix.
-#   * `replicas` — replicate sandboxes per (provider, suite) cell, the BETWEEN-machine axis (blank = each
-#     suite's Suite.defaultReplicas — synthetic R=3, realworld R=12; a number scales every suite). More
-#     replicates → tighter intervals on a provider's fleet variation, at proportional PROVIDER cost
-#     (sandbox minutes) but flat runner cost — the cell's runner drives them all concurrently.
-#   * `pts_passes` — timed PTS passes per case INSIDE a sandbox, the WITHIN-machine axis (blank = each
-#     suite's own policy: the cpu-node and memory suites converge, while every other suite (system, disk,
-#     pgbench, network, realworld) keeps a fixed count; a number or `converge` forces one policy across
-#     every suite).
-#
-# Off the PR path (real sandbox time + provider credentials); main is the default, while an explicit
-# allow_branch dispatch supports pre-merge validation. Every benchmark cell remains gated by Environment
-# `privileged` (required reviewers + environment secrets — see docs/ci-secrets.md, declared inside
-# bench-suite.yml), and publishing stays main-only.
 on:
   workflow_dispatch:
     inputs:
@@ -43,63 +7,21 @@ on:
         description: 'Comma-separated providers to benchmark (blank = every registered provider).'
         required: false
         type: string
-        # The default set spans the isolation technologies compared here: e2b, daytona-vm (the LINUX_VM
-        # reference), modal-gvisor (Modal's default gVisor runtime), modal-vm (Modal's gVisor-free
-        # microVM), blaxel (stock base image), novita (its own pre-baked template), microsandbox-cloud,
-        # namespace (dedicated instance), and vercel (the shared toolchain base mirrored into VCR) have
-        # all produced comparable committed results. modal-vm + blaxel graduated into the default once
-        # committed runs validated them; microsandbox-cloud, vercel, and namespace followed. runloop and
-        # runcloud join the default WITHOUT a committed validation run — the matrix itself is how they
-        # get one, so until then they surface as pending providers / leaderboard coverage gaps rather
-        # than scores, and a cell whose credential is missing skips cleanly instead of failing the run.
-        # daytona-container and microsandbox-local are the registered variants still opt-in (pass either
-        # explicitly);
-        # `plan-providers` rejects any name that is not in the registry. Listed in registry order — the
-        # plan re-sorts to registry order regardless, so the spelling here is cosmetic.
-        #
-        # Vercel reports the fleet's smallest disk (~32 GB against the 40 GB target). That does not
-        # affect comparability — computeSpecMatched covers vCPUs and memory, the two axes providers are
-        # ranked on — but a disk-hungry suite will SKIP there and surface as a leaderboard coverage gap
-        # rather than a bad score. See packages/results/src/lib/specs.ts.
         default: e2b,daytona-vm,blaxel,microsandbox-cloud,modal-gvisor,modal-vm,novita,runloop,namespace,vercel,runcloud
       suites:
         description: 'Comma-separated suites to run (blank = every registered suite). E.g. "network" for a targeted pre-merge run.'
         required: false
         type: string
-        # Blank runs every registered suite (the main-publish default). A subset narrows the suite-matrix
-        # axis to just those suites — the pre-merge/targeted knob so a validation dispatch needn't spend
-        # the whole matrix. `plan-suites` rejects any name that is not in the registry, so a typo fails
-        # the plan.
         default: ''
       replicas:
         description: 'Replicate sandboxes per provider × suite cell — the between-machine axis (captures a provider fleet''s variation). Blank = each suite''s configured default (Suite.defaultReplicas); a whole number overrides every suite. Higher = tighter intervals at proportional runner cost; 1 = a quick single-sandbox pass.'
         required: false
         type: string
-        # Blank keeps each suite's schema default (long-synthetic suites R=3, realworld R=12 — sized from
-        # the committed dataset's between-machine variance so realworld provider CIs separate). A number
-        # scales ALL suites at once — this is the global override; per-category defaults live in the
-        # schema. plan-replicates rejects a non-positive/non-integer value, so a typo fails the plan.
         default: ''
       pts_passes:
-        description: 'Timed PTS passes per test INSIDE each sandbox — the within-machine axis. Blank = each suite''s default policy (the cpu-node and memory suites converge; every other suite — system, disk, pgbench, network, realworld — runs a fixed count). A whole number forces that many on every suite; "converge" forces PTS''s own statistical convergence everywhere.'
+        description: 'Fixed PTS passes per case. Blank preserves fixed suite defaults; convergence requires a separate diagnostic run.'
         required: false
         type: string
-        # Blank uses each suite's declared policy: cpu-node + memory converge (Suite.ptsConverge — both are
-        # cheap/stable enough that DynamicRunCount settles near its minimum and tightens the within-machine
-        # interval safely), while every other suite keeps a fixed count (convergence re-introduces fio's
-        # DynamicRunCount runaway on disk, timed system out on modal-gvisor in run #49, breaks iperf's
-        # fixed-trial rule, or overruns budgets sized for a fixed pass count; their spread is the replicas
-        # axis). A number or "converge" is the GLOBAL override applied to every suite. resolvePtsPassPolicy
-        # rejects any other non-numeric value.
-        default: ''
-      max_concurrency:
-        description: 'Cap replicate sandboxes in flight per (suite, provider) cell (blank = unbounded, i.e. all R at once). Set a number when a provider quota is smaller than R — an over-quota create retries for up to 60 min inside the cell, so an unbounded fan-out against a tight quota burns the job budget queueing. A cap serializes the cell into ceil(R / cap) waves, so wall clock grows proportionally; a cap whose waves cannot fit the cell job timeout (plus the host margin) is rejected before any sandbox is created, and the error names the smallest cap that would fit. Note the realworld suites leave no room to cap at all: R=12 over a 90-minute suite affords ONE wave inside a 180-minute job, so anything below 12 is refused — cap the synthetic suites, or raise the cell timeout first.'
-        required: false
-        type: string
-        # Blank preserves the old behaviour exactly: R separate runners each held one sandbox with
-        # nothing coordinating them, so the fan-out was already unbounded per provider. The difference
-        # now is that GitHub's concurrent-JOB limit no longer incidentally throttles it — see
-        # bench-suite.yml's header on peak provider concurrency.
         default: ''
       allow_branch:
         description: 'Allow benchmark cells on a non-main ref (publish remains main-only).'
@@ -107,127 +29,75 @@ on:
         type: boolean
         default: false
 
-# Least privilege, workflow default: jobs only read the checked-out code and upload artifacts (publish
-# elevates to contents: write). `id-token: write` is deliberately NOT granted here — only the `suite`
-# fan-out needs it (it must pass the scope down to bench-suite.yml's cells for Namespace's GitHub OIDC
-# federation), so it is scoped to that job; zizmor flags a workflow-level id-token: write as overly
-# broad since `plan` and `publish` never touch it.
 permissions:
   contents: read
 
-# Serialize matrix runs on a ref so concurrent dispatches don't contend for provider quota.
 concurrency:
   group: bench-matrix-${{ github.ref }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
-  # Compute both matrix axes once, as the single $GITHUB_OUTPUT contract the suite job reads. No
-  # secrets — plan stays off the privileged environment so approval isn't needed just to dry-run the
-  # axes; a non-main run requires the explicit dispatch opt-in below. The suite job `needs: plan`, so
-  # this guard also gates the fan-out: a skipped plan (fork, or a non-main run without allow_branch)
-  # skips every cell.
   plan:
-    name: Plan matrix
+    name: Freeze experiment
     if: >
       github.repository == 'starslingdev/hpc-sandbox-benchmarks' &&
       (github.ref == 'refs/heads/main' || inputs.allow_branch)
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
     outputs:
-      providers: ${{ steps.plan.outputs.providers }}
-      suites: ${{ steps.plan.outputs.suites }}
-      # A JSON object mapping each selected suite to its replicate index array (e.g.
-      # {"cpu-node":[0,1,2],...}). The suite-matrix job indexes it by matrix.suite and passes that
-      # suite's slice down for the cell to fan out over in-process, so per-category replicate counts
-      # stay registry-driven like the suite axis.
-      replicates: ${{ steps.plan.outputs.replicates }}
+      accounts: ${{ steps.plan.outputs.axis }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Planning only reads code; don't persist the job token in .git/config.
           persist-credentials: false
       - name: Set up workspace
         uses: ./.github/actions/setup-workspace
-      # The shared planner (also used by bench-smoke.yml's plan job, which narrows the same axes to one
-      # provider × suite). plan-replicates reads the SAME BENCH_SUITES selection as plan-suites, so its
-      # map is keyed by exactly the emitted suite axis; `replicas` scales the per-suite counts (blank =
-      # each suite's Suite.defaultReplicas).
+      # The CLI uploads the frozen plan itself (one immutable, run-scoped artifact), which needs the
+      # artifact runtime GitHub gives only to action steps.
+      - name: Expose artifact runtime to scripts
+        uses: ./.github/actions/artifact-runtime
       - name: Plan
         id: plan
-        uses: ./.github/actions/plan-bench-axes
-        with:
-          providers: ${{ inputs.providers }}
-          suites: ${{ inputs.suites }}
-          replicas: ${{ inputs.replicas }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BENCH_PROVIDERS: ${{ inputs.providers }}
+          BENCH_SUITES: ${{ inputs.suites }}
+          BENCH_REPLICAS: ${{ inputs.replicas }}
+          BENCH_PTS_PASSES: ${{ inputs.pts_passes }}
+          BENCH_ACCOUNT_CAPACITY: ${{ vars.BENCH_ACCOUNT_CAPACITY }}
+          BENCH_ARTIFACT_E2B: ${{ vars.E2B_TEMPLATE }}
+          BENCH_ARTIFACT_DAYTONA_VM: ${{ vars.DAYTONA_SNAPSHOT }}
+          BENCH_ARTIFACT_DAYTONA_CONTAINER: ${{ vars.DAYTONA_CONTAINER_SNAPSHOT }}
+          BENCH_ARTIFACT_VERCEL: ${{ vars.BENCH_ARTIFACT_VERCEL }}
+        run: bun apps/cli/src/bin/workflow-experiment.ts plan
 
-  # One matrix cell per selected suite → reusable workflow call. GitHub nests the reusable's provider
-  # matrix under each suite name, so the Actions UI shows expandable "<suite>" groups with "<provider>"
-  # children (display: "<suite> / <provider>"); each of those children drives its own R replicate
-  # sandboxes. fail-fast stays off so one bad suite doesn't cancel peers.
-  # The fork/branch guard is repeated here (not only inherited via `needs: plan`) so the job stays
-  # explicit when read in isolation — matching every other live-run job in the repo.
   suite:
-    name: ${{ matrix.suite }}
+    name: ${{ matrix.account }}
     needs: plan
-    if: >
-      github.repository == 'starslingdev/hpc-sandbox-benchmarks' &&
-      (github.ref == 'refs/heads/main' || inputs.allow_branch)
-    # A called workflow's token can never exceed its caller's, so the id-token: write that
-    # bench-suite.yml's cells need for Namespace's GitHub OIDC federation has to be granted here too.
-    # Scoped to this job, not the workflow level, per zizmor's excessive-permissions audit; `contents`
-    # is restated because a job-level `permissions:` replaces the workflow default rather than adding
-    # to it.
     permissions:
-      contents: read
+      contents: write
+      actions: read
       id-token: write
     strategy:
       fail-fast: false
       matrix:
-        suite: ${{ fromJSON(needs.plan.outputs.suites) }}
-    # `secrets: inherit` keeps repository secrets / token context available to the callee; Environment
-    # secrets on `privileged` are resolved by the reusable job's own `environment:` declaration (a
-    # `uses:` caller can't set `environment:`).
-    uses: ./.github/workflows/bench-suite.yml
+        account: ${{ fromJSON(needs.plan.outputs.accounts) }}
+    uses: ./.github/workflows/bench-account.yml
     with:
-      providers: ${{ needs.plan.outputs.providers }}
-      suite: ${{ matrix.suite }}
-      # Hand this suite its own replicate slice out of the plan's per-suite map (keyed by matrix.suite),
-      # re-serialized to the JSON array string each cell passes straight to `bench-suite --replicates`.
-      replicates: ${{ toJSON(fromJSON(needs.plan.outputs.replicates)[matrix.suite]) }}
-      # Forward the PTS passes-per-case override unchanged (blank = suite default, a number, or converge).
-      pts_passes: ${{ inputs.pts_passes }}
-      # Forward the per-cell replicate concurrency cap unchanged (blank = all R sandboxes at once).
-      max_concurrency: ${{ inputs.max_concurrency }}
+      account: ${{ matrix.account }}
     secrets: inherit
 
-  # Collect every shard Run, aggregate into one candidate, gate it (promote), and commit the machine-
-  # readable dataset onto main. This job only commits the dataset JSON — regenerating the public
-  # LEADERBOARD.md is a deliberate, separate step (the Update leaderboard workflow), so a matrix run
-  # grows the dataset without churning the comparison surface. The logic lives in the reusable
-  # commit-dataset.yml so a maintainer can also run it standalone (workflow_dispatch) to backfill a run
-  # whose commit failed. Environment `privileged` (the dataset release surface, `contents: write`) is
-  # declared inside that reusable workflow — a `uses:` caller can't set `environment:` itself.
-  #
-  # The job id stays `publish` because the workflow-registry-sync nesting gate asserts `publish` needs
-  # the suite-matrix caller (so aggregation waits for every cell); the display name reflects what it now
-  # does.
   publish:
-    name: Commit dataset
-    needs:
-      - plan
-      - suite
-    # Run even if some suite matrix cells failed (fail-fast is off) so the successful shards still
-    # commit: `aggregate` exits non-zero when zero shards are found and `promote` gates on >=1
-    # validated provider, so the quality bar is preserved. `!cancelled()` still lets an explicit cancel
-    # stop it. `!cancelled()` opts out of the implicit success() gate, so require `plan` explicitly: a
-    # skipped or failed plan means there is no provider axis, so there is nothing to commit.
+    name: Commit complete experiment
+    needs: [plan, suite]
     if: >
-      !cancelled() &&
-      needs.plan.result == 'success' &&
+      !cancelled() && needs.plan.result == 'success' &&
       github.ref == 'refs/heads/main' &&
       github.repository == 'starslingdev/hpc-sandbox-benchmarks'
-    # Grant the reusable workflow the token scopes it needs: commit/push the dataset (contents), open
-    # the PR (pull-requests), and download this run's shard artifacts by run-id (actions: read).
     permissions:
       contents: write
       pull-requests: write

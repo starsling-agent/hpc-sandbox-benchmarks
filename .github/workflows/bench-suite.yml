@@ -1,54 +1,5 @@
 name: Benchmark suite (reusable)
 
-# THE benchmark cell — the one implementation of "create real sandboxes, run a suite in them, collect
-# the raw results, normalize them into shard Run documents, upload them". Both live-benchmark
-# dispatches call it and neither has a second copy: bench-matrix.yml fans it out over the whole
-# provider × suite matrix and then commits the aggregated dataset, and bench-smoke.yml calls it with a
-# single provider × suite and stops after the upload. A smoke run is therefore the same code path as a
-# published run minus the commit phase — the credential wiring, the runner routing, the budget guard,
-# the artifact contract and the failure isolation below cannot drift between the two lanes, because
-# there is only one of each.
-#
-# ONE runner per (suite, provider) cell, which drives that cell's whole replicate fleet itself.
-# bench-matrix.yml calls this once per suite via its suite-matrix job (`name: ${{ matrix.suite }}`),
-# passing the plan's selected provider list AND that suite's replicate index array — so cells display
-# as "<suite> / <provider>" and nest under one suite label in the Actions UI. The replicate axis is the
-# BETWEEN-MACHINE knob: R sandboxes of one (provider, suite) capture a provider's fleet variation (two
-# can land on different host hardware), which the aggregate folds into per-metric replicate breakdowns.
-#
-# Replicates are NOT a matrix axis. A bench runner spends effectively all of its wall time waiting on a
-# sandbox (create → poll a detached step → poll again), so a runner-per-replicate matrix billed R idle
-# runners to do one runner's work: at the shipped defaults (6 providers × 9 suites, R=3 synthetic /
-# R=12 realworld) that is 324 runners for 54 runners' worth of driving. `bench-suite --replicates` now
-# creates the same R sandboxes concurrently from one process, so the TOTAL sandbox count is unchanged
-# while the runner-minutes bill stops scaling with R.
-#
-# PEAK provider concurrency is NOT unchanged, and that is the one cost of this design. Under the old
-# axis the 324 jobs contended for GitHub's account-wide concurrent-job limit, which incidentally
-# rate-limited how many sandboxes existed at once. 54 jobs fit under any plan's cap, so a matrix run
-# can now hold all 54 of a provider's replicate sandboxes simultaneously. Providers answer an over-quota
-# create with a capacity error, which `createSuiteSandbox` retries patiently for up to 60 minutes — so
-# the degradation is queueing, not failure, but it spends the job budget. `max_concurrency` below is the
-# control; `strategy.max-parallel` on the caller's suite matrix is the coarser alternative.
-#
-# Replicate-level failure isolation is preserved inside the process: every replicate runs to completion
-# and writes its shard even when a peer throws, and the cell goes red at the end if any did. Note this
-# is NARROWER than the old `fail-fast: false`, which also isolated whole-cell events — a job timeout,
-# runner eviction, OOM, or a "re-run failed jobs" click now costs all R replicates of the cell rather
-# than one. Sizing `max_concurrency` against `timeout-minutes` below is what keeps that risk bounded.
-#
-# The artifact name (bench-<suite>-<provider>-<run_id>) is load-bearing: commit-dataset.yml downloads
-# the shards by the `bench-*-<run_id>` pattern and aggregates them — keep the two in lockstep. One
-# artifact now carries the cell's R shards, each written to its own `data/runs/<run_id>-r<idx>.json`
-# (every shard of one run shares the same `runId` FIELD, so the `-r<idx>` filename suffix is what keeps
-# them distinct); the aggregate keys them by the --replicate index stamped on each Run. A smoke run
-# produces exactly the same shapes; nothing downstream aggregates them, which is the whole difference.
-#
-# Environment `privileged` (required reviewers + environment secrets — see docs/ci-secrets.md) lives on
-# the fan-out job here: a `uses:` caller can't declare `environment:`, so the approval gate and the
-# provider secrets are enforced at this layer for BOTH lanes. Environment secrets resolve from this
-# job's `environment:` declaration; the caller may still pass `secrets: inherit` for repository-level
-# secrets / token context.
 on:
   workflow_call:
     inputs:
@@ -60,114 +11,40 @@ on:
         description: 'Suite to run — the bench-suite.ts arg and the artifact-name key. A registered SUITE_NAMES value.'
         required: true
         type: string
-      replicates:
-        description: >-
-          JSON array of replicate sandbox indices for THIS suite, e.g. "[0,1,2]" — the between-machine
-          fan-out axis. plan-replicates emits it per suite (Suite.defaultReplicas, or the BENCH_REPLICAS
-          override); the caller passes each suite its own slice. Handed to `bench-suite --replicates`
-          VERBATIM: one matrix cell per provider drives every index in the array concurrently, each
-          sandbox tagged with its `--replicate <idx>` so the aggregate folds them by index.
+      batch_id:
+        description: 'Immutable experiment batch identity.'
+        type: string
         required: true
-        type: string
-      max_concurrency:
-        description: >-
-          Cap on replicate sandboxes in flight per cell (BENCH_MAX_CONCURRENCY). Blank = unbounded, i.e.
-          all R at once — the fastest option and the one that matches what R separate runners used to do.
-          Set a number when a provider's account quota is smaller than R: an over-quota create is retried
-          for up to 60 minutes inside the cell, so an unbounded fan-out against a tight quota spends the
-          job budget queueing. A cap makes the cell run in ceil(R / cap) SERIAL waves, so the wall clock
-          becomes waves x suite runtime. A cap whose waves cannot fit the job's timeout-minutes is
-          REJECTED before any sandbox is created (BENCH_CELL_BUDGET_MINUTES below) — losing a whole
-          cell's fleet to a deterministic timeout is not a degradation worth discovering at 180 minutes.
-        required: false
-        type: string
-        default: ''
-      pts_passes:
-        description: >-
-          PTS passes-per-case override for the harness (BENCH_PTS_PASSES) — the within-machine axis.
-          Blank = each suite's own policy (the cpu-node and memory suites converge; every other suite keeps
-          a fixed count); a positive integer forces that many passes on every suite; "converge" forces PTS's
-          own convergence (DynamicRunCount) on every suite.
-        required: false
-        type: string
-        default: ''
-      require_providers:
-        description: >-
-          Comma-separated provider ids that MUST reach "validated" in this cell, or the cell fails
-          (REQUIRE_PROVIDERS). Blank — the MATRIX default — is the graceful posture: a provider whose
-          secret is absent or misnamed is recorded as a skip, so one unauthenticated cell doesn't sink a
-          whole matrix run. bench-smoke.yml sets its dispatched provider here instead, because the entire
-          point of a smoke run is to prove that one lane end to end: without it a missing credential
-          exits 0 having benchmarked nothing, and a green smoke would hide that the provider was never
-          actually smoked.
-        required: false
-        type: string
-        default: ''
 
-# Least privilege: the fan-out only reads the checked-out code and uploads artifacts, plus the OIDC
-# id-token the namespace cell exchanges for a Namespace login (no stored secret — see the
-# ./.github/actions/namespace-token step below). The caller must grant `id-token: write` too: a called
-# workflow's token can never exceed its caller's.
 permissions:
-  contents: read
+  contents: write
+  actions: read
   id-token: write
 
 jobs:
   bench:
-    # Display as "<caller suite job> / <provider>", e.g. "system / e2b" — the provider cells nest under
-    # their suite's job name in the Actions UI (GitHub-native reusable-workflow nesting). One cell owns
-    # all R replicate sandboxes of that (suite, provider), so there is no replicate suffix to
-    # disambiguate; the per-replicate breakdown lives in the cell's job summary + `[r<idx>]` log tags.
+    concurrency:
+      # >>> generated: provider-account-group-bench — bun run generate-provider-wiring
+      group: benchmark-account-${{ (matrix.provider == 'daytona-vm' || matrix.provider == 'daytona-container') && 'daytona' || (matrix.provider == 'modal-gvisor' || matrix.provider == 'modal-vm') && 'modal' || matrix.provider }}
+      # <<< end generated: provider-account-group-bench
+      cancel-in-progress: false
+      queue: max
     name: ${{ matrix.provider }}
     environment: privileged
-    # The ephemeral self-hosted label is reaped after 70 minutes even while a step is healthy. The
-    # full CPU-generic and real-world matrices legitimately exceed that on slower providers, leaving
-    # the step stuck `in_progress` with no logs/artifact. Hosted runners honor timeout-minutes below;
-    # 180 minutes also leaves teardown/artifact margin around the longest 155-minute suite budget.
-    # (workflow-registry-sync asserts this stays above the longest registered sandbox lifetime.)
-    #
-    # Driving R replicates from one runner does not need a bigger budget WHEN THEY RUN CONCURRENTLY: the
-    # cell's wall clock is then the slowest replicate, not their sum — the same bound a single-replicate
-    # cell had. Two things break that assumption and both consume this one shared budget:
-    #   * a `max_concurrency` cap, which makes the cell run ceil(R / cap) serial waves; and
-    #   * provider capacity errors, which `createSuiteSandbox` retries for up to 60 minutes per replicate
-    #     before giving up, so a fan-out wider than the account quota queues inside the budget.
-    # At R=12 against a suite budgeted near 90 minutes, either can exceed 180. Raise this, or lower the
-    # fan-out, rather than discovering it as a cancelled cell that loses all R replicates at once.
-    # The local Microsandbox backend needs KVM; all remote providers only need a driver process. Routing
-    # it to the self-hosted label knowingly re-enters the 70-minute reaping described above — that is
-    # the trade for having any local backend at all — so it also declares BENCH_RUNNER_LIFETIME_MINUTES
-    # below, and bench-suite refuses a suite that cannot finish inside that window rather than letting
-    # the cell be reaped mid-run with no logs and every replicate lost. Keep the three paired.
     # >>> generated: provider-runner — bun run generate-provider-wiring
     runs-on: ${{ 'ubuntu-24.04' }}
     # <<< end generated: provider-runner
     timeout-minutes: 180
     strategy:
-      # One provider's failure (a flaky adapter, a dead account) must not cancel the rest of the matrix.
-      # Replicate-level isolation is handled INSIDE the cell — see the header note.
       fail-fast: false
       matrix:
         provider: ${{ fromJSON(inputs.providers) }}
     steps:
-      # Third-party actions are pinned to a commit SHA (the tag comment is for humans) so a
-      # moved/compromised tag can't silently change what runs.
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # This cell only reads code (the sandbox clones via BENCH_REPO_TOKEN when set, not the
-          # checkout's credentials), so don't persist the job token in .git/config.
           persist-credentials: false
 
-      # Bun + `bun install --frozen-lockfile --ignore-scripts` (bunfig.toml's supply-chain posture),
-      # from the repo's single setup action. Runs before any credential is introduced.
-      #
-      # no-cache is tied to the runner route above, not to a preference: the self-hosted label restores
-      # a setup-bun cache without a working ~/.bun/bin/bun, which fails the setup step outright — so the
-      # microsandbox-local cell, the one cell that lands there, must download Bun fresh. A hosted cell
-      # keeps the cache. (The cache is repo-scoped and OS/arch-keyed, so the entry a hosted cell saves
-      # is exactly what the self-hosted one would restore; ci.yml and setup-toolchain opt out for the
-      # same reason.)
       - name: Set up workspace
         uses: ./.github/actions/setup-workspace
         with:
@@ -175,19 +52,12 @@ jobs:
           no-cache: ${{ false && 'true' || 'false' }}
           # <<< end generated: provider-runner-cache
 
-      # Namespace is the one provider with no stored secret: it federates on this job's OIDC identity
-      # (id-token: write above) and mints a portable token file from the resulting CLI session — see
-      # the action for the grant and why a file is needed at all. The cell's suite + run attempt name
-      # the token, through the action's input rather than the shell.
-      #
-      # continue-on-error buys a LEGIBLE failure, not a passing job. It lives on the `uses:` step so the
-      # whole action degrades as a UNIT (the action's steps could each carry their own, and deliberately
-      # don't — see its header). A not-yet-registered trust relationship (or any
-      # transient mint failure) leaves `token-file` empty and the harness records the standard
-      # "missing credentials" skip, which is graceful in the matrix lane (no REQUIRE_PROVIDERS, so one
-      # unauthenticated cell doesn't sink the run) and fatal in the smoke lane (which requires its
-      # dispatched provider by name). What it avoids in both is the raw step abort, which would kill the
-      # cell with no Run document and no summary to diagnose from.
+      # Each attempt's evidence is uploaded by the CLI as soon as that attempt ends (durable per
+      # attempt, not only at job end), which needs the artifact runtime GitHub gives only to action
+      # steps. The diagnostic bundle below still goes through actions/upload-artifact.
+      - name: Expose artifact runtime to scripts
+        uses: ./.github/actions/artifact-runtime
+
       - name: Set up Namespace credentials
         # >>> generated: preauth-namespace-token-bench — bun run generate-provider-wiring
         if: matrix.provider == 'namespace'
@@ -198,15 +68,6 @@ jobs:
         with:
           token-name: sandbox-benchmarks-${{ inputs.suite }}-${{ github.run_id }}-${{ github.run_attempt }}
 
-      # tama publishes no SDK, so its adapter spawns the `tama` binary for every control-plane call and
-      # a runner without it fails at ENOENT on the first authentication probe — before a sandbox
-      # exists, and reported as a create failure rather than as the missing tool it is. Every other
-      # provider's client arrives with `bun install`; this one has to be put on the runner.
-      #
-      # NOT continue-on-error, unlike the two credential steps above: those degrade into the harness's
-      # missing-credentials skip, which is a real, legible outcome. A missing binary has no such
-      # outcome — the cell would run on to create sandboxes it cannot talk to. The install is
-      # checksum-pinned, so it fails loudly when tama cuts a release (see the action).
       - name: Set up the tama CLI
         if: matrix.provider == 'tama'
         uses: ./.github/actions/setup-tama
@@ -223,42 +84,15 @@ jobs:
           org-id: ${{ secrets.VERCEL_ORG_ID }}
           project-id: ${{ secrets.VERCEL_PROJECT_ID }}
 
-      # Drive the provider SDK to create this cell's R replicate sandboxes, run the suite in each,
-      # collect results, and normalize one shard Run per replicate. The cell's provider is a matrix value
-      # and its suite + replicate array are reusable inputs, all passed through the environment (never
-      # interpolated into the shell) so none can inject into the runner command. On success/failure the
-      # bin writes ONE job summary for the whole fleet (a row per replicate) + a run annotation.
       - name: Run suite and normalize
         env:
           BENCH_REPO_REF: ${{ github.sha }}
-          # Optional once the repo is public (anonymous clone works). Still passed so private forks and
-          # rate-limited clones keep working via the short-lived job token.
           BENCH_REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BENCH_PROVIDER: ${{ matrix.provider }}
           BENCH_SUITE: ${{ inputs.suite }}
-          # The replicate index array this cell drives (the plan's per-suite slice, verbatim). Each index
-          # gets its own sandbox and its own shard Run, stamped with that index so the aggregate folds the
-          # R sandboxes of one (provider, suite) into per-metric replicate breakdowns rather than colliding.
-          BENCH_REPLICATES: ${{ inputs.replicates }}
-          # Blank = unbounded (all R sandboxes at once). See the max_concurrency input above: this is the
-          # control for a provider whose quota is smaller than R, and it trades wall clock for peak load.
-          BENCH_MAX_CONCURRENCY: ${{ inputs.max_concurrency }}
-          # This job's `timeout-minutes`, handed to the CLI so it can REFUSE a cap that cannot fit rather
-          # than be cancelled three hours in with every shard of the cell lost. A cap runs the fan-out in
-          # ceil(R / cap) serial waves, so the cell's worst case is waves x the suite's own budget — and
-          # at the realworld defaults (R=12, a 90-minute suite) the 180 below affords ONE wave once the
-          # host margin is set aside, so any cap short of the full 12 is refused. A literal, not an
-          # expression: `timeout-minutes` cannot be read from an expression context, so workflow-sync's
-          # Invariant 5 asserts the two stay equal instead.
           BENCH_CELL_BUDGET_MINUTES: '180'
-          # PTS passes-per-case policy: blank = the suite's own policy (cpu-node + memory converge, the rest
-          # fixed), a number or "converge" overrides every suite. Read by the harness preamble.
-          BENCH_PTS_PASSES: ${{ inputs.pts_passes }}
-          # Blank in the matrix lane (a skipped provider stays a skip); the smoke lane names its dispatched
-          # provider so a missing/misnamed secret fails the job by name instead of exiting 0 having
-          # benchmarked nothing. See the require_providers input above.
-          REQUIRE_PROVIDERS: ${{ inputs.require_providers }}
-          # Provider inputs are generated from metadata and scoped to their owning matrix cell.
+          BENCH_BATCH_ID: ${{ inputs.batch_id }}
+          GH_TOKEN: ${{ github.token }}
           # >>> generated: provider-inputs-bench — bun run generate-provider-wiring
           E2B_API_KEY: ${{ matrix.provider == 'e2b' && secrets.E2B_API_KEY || '' }}
           E2B_TEMPLATE: ${{ matrix.provider == 'e2b' && (env.E2B_TEMPLATE || vars.E2B_TEMPLATE || secrets.E2B_TEMPLATE) || '' }}
@@ -285,73 +119,15 @@ jobs:
           TAMA_TOKEN: ${{ matrix.provider == 'tama' && secrets.TAMA_TOKEN || '' }}
           TAMA_CLI: ${{ matrix.provider == 'tama' && (env.TAMA_CLI || vars.TAMA_CLI || secrets.TAMA_CLI) || '' }}
           # <<< end generated: provider-inputs-bench
-          # Paired with the microsandbox-local runner route above: that self-hosted label is reaped at
-          # 70 minutes regardless of timeout-minutes, which no expression can encode (the workflow gate
-          # requires a literal). Declaring it here lets bench-suite reject a suite that cannot finish
-          # inside it, before any sandbox is created. Empty on the hosted runner, which outlives the job.
           # >>> generated: provider-runner-lifetime — bun run generate-provider-wiring
           BENCH_RUNNER_LIFETIME_MINUTES: ${{ '' }}
           # <<< end generated: provider-runner-lifetime
-        run: bun apps/cli/src/bin/bench-suite.ts "$BENCH_PROVIDER" "$BENCH_SUITE" "$GITHUB_RUN_ID" --replicates "$BENCH_REPLICATES"
-
-      # Did THIS attempt actually produce shard Runs? The upload below overwrites the cell's artifact,
-      # and overwriting is only safe when there is something to put in its place.
-      #
-      # `if-no-files-found: error` cannot answer this. The cell uploads `path: data/`, and `data/dataset/`
-      # is CHECKED IN — so data/ is non-empty from the moment of checkout, on every attempt, whatever the
-      # benchmark did. That guard has therefore never been able to fire, and combining it with `overwrite`
-      # would be actively harmful: a retry that dies before writing a single shard (runner eviction, a
-      # failed install, an early crash) would still upload the checked-out dataset files, delete the
-      # previous attempt's good shards, and leave commit-dataset.yml to drop this (suite, provider) cell
-      # from the published run entirely. Losing a healthy first attempt to a broken second one is worse
-      # than the duplicate-name rejection `overwrite` exists to avoid.
-      #
-      # So: gate on the shard files by name. A pass that wrote shards replaces the attempt it retried; a
-      # pass that wrote none leaves the previous attempt's artifact standing. The job's own red/green is
-      # unaffected — bench-suite already decided that — this only governs what gets published.
-      #
-      # ...EXCEPT on the first attempt, where there is nothing to protect. The guard exists to stop a
-      # broken retry from deleting a healthy predecessor; at run_attempt 1 no predecessor exists, so
-      # applying it there is pure loss — a cell that dies before normalization (a failed install, a
-      # create that never succeeded, an early crash) would upload nothing at all, discarding the raw
-      # tree and the harness's failure markers. That is the diagnostic the smoke lane exists to
-      # produce, and it is what the old bench-smoke.yml's unconditional `if: always()` upload gave.
-      # Upload on attempt 1 regardless; from attempt 2 on, the shard gate rules.
-      - name: Check this attempt wrote shard Runs
-        id: shards
-        if: always()
-        run: |
-          shopt -s nullglob
-          shards=(data/runs/"$GITHUB_RUN_ID"*.json)
-          echo "count=${#shards[@]}" >> "$GITHUB_OUTPUT"
-          if [ ${#shards[@]} -eq 0 ]; then
-            echo "::warning title=No shards::this attempt wrote no shard Run; keeping any previous attempt's artifact"
-          else
-            echo "this attempt wrote ${#shards[@]} shard Run(s)"
-          fi
+        run: bun apps/cli/src/bin/workflow-experiment.ts execute
 
       - name: Upload Run + raw results
-        if: always() && (steps.shards.outputs.count != '0' || github.run_attempt == '1')
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          # Per-cell artifact name so every (provider, suite) cell uploads independently, carrying its R
-          # replicate shards (data/runs/<run_id>-r<idx>.json — the filename suffix keeps them distinct,
-          # since every shard's Run carries the same `runId` field). commit-dataset.yml matches these by
-          # `bench-*-<run_id>` and globs both the `-r<idx>` shards and the legacy un-suffixed name.
-          # `if: always()` is what preserves failure isolation across the upload boundary: a cell that
-          # goes red because ONE replicate failed still uploads every shard its healthy peers wrote.
-          name: bench-${{ inputs.suite }}-${{ matrix.provider }}-${{ github.run_id }}
-          path: data/
-          # A "Re-run failed jobs" keeps github.run_id and only bumps run_attempt, so this name is
-          # unchanged on the retry — and upload-artifact@v4+ REJECTS a duplicate name by default, which
-          # would compute the retry's whole fleet and then throw it away at the upload boundary. Overwrite
-          # so the replacement fleet supersedes the attempt it retried; the step condition above is what
-          # keeps that replacement from ever being an empty one. Scope is exactly this cell: the name
-          # carries (suite, provider, run_id), so replacing it cannot disturb another cell's artifact.
-          # commit-dataset.yml's per-cell shard preference (see its "Aggregate + promote" step) then
-          # reads one shape per cell, never a mix.
-          overwrite: true
-          # Kept as a backstop, though the step condition above now owns the "did this attempt produce
-          # anything" question — data/ also carries the checked-in data/dataset/ tree, so this alone can
-          # never see an empty upload.
+          name: diagnostic-${{ inputs.batch_id }}-${{ matrix.provider }}-attempt-${{ github.run_attempt }}-${{ github.run_id }}
+          path: experiment/attempts/
           if-no-files-found: error

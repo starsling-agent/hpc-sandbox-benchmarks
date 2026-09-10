@@ -2,6 +2,7 @@
 // and arktype separate from the root driver-kit surface. Both the compile-time slice (define.ts)
 // and this parser derive from REGISTRY[id].inputs, so type and validator cannot drift.
 
+import { PROVIDER_IDS } from "@sandbox-benchmarks/schema/provider-ids";
 import { normalizeProviderInput } from "@sandbox-benchmarks/schema/provider-meta";
 import type { ProviderId } from "@sandbox-benchmarks/schema/providers";
 import { REGISTRY } from "@sandbox-benchmarks/schema/providers";
@@ -99,7 +100,7 @@ export function missingDriverEnvNames<P extends ProviderId>(
  */
 export function sensitiveEnvValuesFor<P extends ProviderId>(
 	id: P,
-	env: EnvOf<P>,
+	env: Readonly<Record<string, string | undefined>>,
 ): readonly string[] {
 	const values: string[] = [];
 	const resolved = env as Readonly<Record<string, string | undefined>>;
@@ -110,4 +111,15 @@ export function sensitiveEnvValuesFor<P extends ProviderId>(
 		if (value !== undefined && value.length > 0) values.push(value);
 	}
 	return values;
+}
+
+/** Explicit credential registry plus the repository-clone credentials used by the harness. */
+export function diagnosticSecretsFromEnv(
+	env: Readonly<Record<string, string | undefined>>,
+): readonly string[] {
+	const values = [env.BENCH_REPO_TOKEN, env.GITHUB_TOKEN, env.GH_TOKEN].filter(
+		(value): value is string => Boolean(value),
+	);
+	for (const provider of PROVIDER_IDS) values.push(...sensitiveEnvValuesFor(provider, env));
+	return [...new Set(values)];
 }

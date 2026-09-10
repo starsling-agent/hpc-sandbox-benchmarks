@@ -1,51 +1,9 @@
 name: Provider smoke test
 
-# A real benchmark run, narrowed to one provider × suite and stopped before the dataset is committed.
-#
-# This is bench-matrix.yml with two of its three phases: the same `plan` step
-# (./.github/actions/plan-bench-axes) with its axes narrowed to the dispatched provider and suite, then
-# the same suite-matrix job calling the same reusable bench-suite.yml — which spins up real sandboxes,
-# runs the suite, normalizes shard Run documents and uploads them as an artifact. What it does NOT do
-# is the third phase: no `publish` job, so nothing is aggregated, promoted or committed back to the
-# repo. That is the whole difference, and it is the point — a smoke run proves the live lane end to end
-# (credentials, runner routing, sandbox lifecycle, the in-sandbox producer, normalization, artifacts)
-# without moving the published dataset.
-#
-# Everything the run actually does therefore has exactly ONE implementation, shared with the matrix:
-# the credential wiring, the 180-minute cell budget, the microsandbox-local runner routing, the
-# Namespace OIDC mint, the replicate fan-out and the artifact contract all live in bench-suite.yml and
-# cannot drift between the lanes. Historically they were copy-pasted here and kept in sync by hand
-# (with a drift gate to catch the mistakes); now there is nothing to keep in sync.
-#
-# Two knobs differ in DEFAULT, not in kind:
-#   * `replicas` defaults to 1 — a smoke is a single sandbox per cell, where the matrix defaults to
-#     each suite's Suite.defaultReplicas (R=3 synthetic, R=12 realworld). Raise it to rehearse a real
-#     replicate fleet.
-#   * the dispatched provider is passed to bench-suite.yml as `require_providers`, so a missing or
-#     misnamed secret FAILS the job by name instead of being recorded as a skip. A green smoke must
-#     never hide that the provider was never actually smoked. The matrix deliberately leaves that
-#     blank so one unauthenticated cell doesn't sink a whole run.
-#
-# Off the PR path (it costs real sandbox time and needs provider credentials) — main is the default,
-# while an explicit `allow_branch` dispatch supports pre-merge validation of a change to the in-sandbox
-# producer (the sandbox clones this repo at the dispatched ref's SHA, so the mise tasks under test are
-# the branch's own). Every dispatch stays gated by Environment `privileged` (required reviewers +
-# environment secrets — see docs/ci-secrets.md), declared inside bench-suite.yml because a `uses:`
-# caller can't declare `environment:` itself.
-#
-# NOTE FOR OPERATORS — two things gate a branch dispatch besides the `if:` below:
-#   1. Environment `privileged` carries its own deployment-branch rule, so a branch dispatch is
-#      refused by GitHub ("Branch is not allowed to deploy to privileged") until that rule also
-#      admits the branch. See docs/ci-secrets.md → Environment `privileged`.
-#   2. GitHub reads the dispatch INPUT DEFINITIONS from the copy of this workflow on the default
-#      branch, so a newly added input is not offerable until this file is merged to `main` — the same
-#      constraint commit-dataset.yml carries. Merging it does not run anything; the inputs stay
-#      opt-in and the environment rule in (1) still has to admit the branch.
 on:
   workflow_dispatch:
     inputs:
       provider:
-        # Generated from PROVIDER_IDS; the plan step still parses it at the external input boundary.
         description: Provider to benchmark
         type: choice
         default: daytona-vm
@@ -66,13 +24,6 @@ on:
           - 'tama'
           # <<< end generated: provider-options
       suite:
-        # Constrained to the SUITE_NAMES registry (packages/schema/src/suites.ts); the
-        # workflow-registry-sync drift gate keeps this list in lockstep, so a new suite must be added
-        # here too. Still passed through the plan step (never interpolated into a shell) as
-        # defense-in-depth.
-        # Defaults to `system` (PyBench + SQLite Speedtest + Git): a quick multi-probe suite that
-        # exercises the broadest slice of the lane in a couple of minutes of benchmark on top of setup.
-        # (`memory`/STREAM has a shorter budget but covers only a single dimension.)
         description: Suite to run
         type: choice
         default: system
@@ -89,145 +40,79 @@ on:
             realworld-openclaw,
           ]
       replicas:
-        # The between-machine axis, same spelling as bench-matrix.yml's input — but defaulting to 1
-        # rather than to each suite's schema default, because a smoke exists to prove the lane, not to
-        # tighten an interval, and R=12 on a realworld suite would spend a matrix cell's worth of
-        # provider quota to do it. Set it higher to rehearse a real replicate fleet (the cell drives
-        # them concurrently from its one runner, exactly as in the matrix).
         description: 'Replicate sandboxes for the cell — the between-machine axis. Default 1 (a single sandbox); a whole number raises it. Blank also means 1 in this lane, NOT the suite''s schema default.'
         required: false
         type: string
         default: '1'
       pts_passes:
-        # The within-machine axis, matched to bench-matrix.yml so a policy can be smoke-tested on one cell
-        # before spending the whole matrix. Blank uses the suite's own policy (the cpu-node and memory
-        # suites converge; every other suite keeps a fixed count); a whole number
-        # forces that many; "converge" forces PTS's convergence. Forwarded verbatim; harness-validated.
-        description: 'PTS passes per case: blank = suite default policy, a number, or "converge".'
-        required: false
-        type: string
-        default: ''
-      max_concurrency:
-        # Inert at the default replicas=1 (one sandbox can't exceed any cap), and forwarded verbatim so
-        # a raised `replicas` can still be held under a tight provider quota — the same knob, and the
-        # same up-front rejection of a cap whose serial waves cannot fit the cell budget, as the matrix.
-        description: 'Cap replicate sandboxes in flight (blank = unbounded, i.e. all at once). Only meaningful when replicas > 1.'
+        description: 'Fixed PTS passes per case. Blank preserves fixed suite defaults; convergence requires a separate diagnostic run.'
         required: false
         type: string
         default: ''
       allow_branch:
-        # Same name, type and default as bench-matrix.yml's input: one opt-in spelling across both
-        # live-benchmark dispatches. Default false keeps main the unsurprising target — dispatching
-        # from a branch is a deliberate act, and recording it in the run's inputs is the provenance
-        # that says the numbers came from unmerged code.
         description: 'Allow the smoke run on a non-main ref (for pre-merge validation of the in-sandbox producer).'
         required: false
         type: boolean
         default: false
 
-# Least privilege, workflow default: the plan job only reads the checked-out code. `id-token: write` is
-# deliberately NOT granted here — only the `suite` fan-out needs it (it must pass the scope down to
-# bench-suite.yml's cell for Namespace's GitHub OIDC federation), so it is scoped to that job; zizmor
-# flags a workflow-level id-token: write as overly broad since `plan` never touches it.
 permissions:
   contents: read
 
-# Serialize smoke runs per (ref, provider, suite) so two dispatches of the same cell don't contend for
-# the same provider quota; different cells still run in parallel.
 concurrency:
   group: bench-smoke-${{ github.ref }}-${{ inputs.provider }}-${{ inputs.suite }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
-  # The matrix's plan phase, narrowed to the dispatched cell: the same three planners re-validate the
-  # provider and suite against the registries (a stale dispatch option fails here rather than running
-  # nothing) and emit the replicate map. No secrets — plan stays off the privileged environment so
-  # approval isn't needed just to dry-run the axes. The suite job `needs: plan`, so this guard also
-  # gates the run: a skipped plan (fork, or a non-main run without allow_branch) skips the cell.
   plan:
-    name: Plan smoke
-    # The fork guard is unconditional; only the ref constraint is opt-out-able. A dispatch can only be
-    # triggered by someone with write access, and `workflow_dispatch` resolves refs in THIS repository
-    # (never a fork's branch), so widening the ref does not widen who can spend provider quota.
+    name: Freeze experiment
     if: >
       github.repository == 'starslingdev/hpc-sandbox-benchmarks' &&
       (github.ref == 'refs/heads/main' || inputs.allow_branch)
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
     outputs:
-      providers: ${{ steps.plan.outputs.providers }}
-      suites: ${{ steps.plan.outputs.suites }}
-      # A JSON object mapping the selected suite to its replicate index array (e.g. {"system":[0]}).
-      # The suite job indexes it by matrix.suite and passes that slice down, exactly as the matrix does.
-      replicates: ${{ steps.plan.outputs.replicates }}
+      accounts: ${{ steps.plan.outputs.axis }}
     steps:
-      # Third-party actions are pinned to a commit SHA (the tag comment is for humans) so a
-      # moved/compromised tag can't silently change what runs.
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Planning only reads code; don't persist the job token in .git/config.
           persist-credentials: false
       - name: Set up workspace
         uses: ./.github/actions/setup-workspace
-      # Single-element axes: the dispatched provider and suite. They reach the planners through the
-      # action's inputs (never interpolated into a shell), and an unregistered name fails the step.
+      # The CLI uploads the frozen plan itself (one immutable, run-scoped artifact), which needs the
+      # artifact runtime GitHub gives only to action steps.
+      - name: Expose artifact runtime to scripts
+        uses: ./.github/actions/artifact-runtime
       - name: Plan
         id: plan
-        uses: ./.github/actions/plan-bench-axes
-        with:
-          providers: ${{ inputs.provider }}
-          suites: ${{ inputs.suite }}
-          # `|| '1'` is load-bearing, not belt-and-braces: the `default:` above only applies when the
-          # field is ABSENT, and both the dispatch UI (clear the box) and an API dispatch can send an
-          # empty string. Blank reaches plan-replicates as an unset BENCH_REPLICAS, which means "each
-          # suite's Suite.defaultReplicas" — R=12 on every realworld suite. A cleared field would then
-          # quietly spend twelve real sandboxes on the lane whose entire premise is one. Blank means 1
-          # here; raising it is an explicit act. (workflow-registry-sync pins this expression.)
-          replicas: ${{ inputs.replicas || '1' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BENCH_PROVIDERS: ${{ inputs.provider }}
+          BENCH_SUITES: ${{ inputs.suite }}
+          BENCH_REPLICAS: ${{ inputs.replicas || '1' }}
+          BENCH_PTS_PASSES: ${{ inputs.pts_passes }}
+          BENCH_ACCOUNT_CAPACITY: ${{ vars.BENCH_ACCOUNT_CAPACITY }}
+          BENCH_ARTIFACT_E2B: ${{ vars.E2B_TEMPLATE }}
+          BENCH_ARTIFACT_DAYTONA_VM: ${{ vars.DAYTONA_SNAPSHOT }}
+          BENCH_ARTIFACT_DAYTONA_CONTAINER: ${{ vars.DAYTONA_CONTAINER_SNAPSHOT }}
+          BENCH_ARTIFACT_VERCEL: ${{ vars.BENCH_ARTIFACT_VERCEL }}
+        run: bun apps/cli/src/bin/workflow-experiment.ts plan
 
-  # The matrix's benchmark phase, over a one-element suite axis → one reusable-workflow call → one
-  # provider cell. Structurally identical to bench-matrix.yml's `suite` job (same job id, same nesting
-  # wiring, same reusable) so the Actions UI reads the same "<suite> / <provider>", and so the
-  # workflow-registry-sync gate can hold both callers to one set of invariants.
-  # The fork/branch guard is repeated here (not only inherited via `needs: plan`) so the job stays
-  # explicit when read in isolation — matching every other live-run job in the repo.
   suite:
-    name: ${{ matrix.suite }}
+    name: ${{ matrix.account }}
     needs: plan
-    if: >
-      github.repository == 'starslingdev/hpc-sandbox-benchmarks' &&
-      (github.ref == 'refs/heads/main' || inputs.allow_branch)
-    # A called workflow's token can never exceed its caller's, so the id-token: write that
-    # bench-suite.yml's cell needs for Namespace's GitHub OIDC federation has to be granted here too.
-    # Scoped to this job, not the workflow level, per zizmor's excessive-permissions audit; `contents`
-    # is restated because a job-level `permissions:` replaces the workflow default rather than adding
-    # to it.
     permissions:
-      contents: read
+      contents: write
+      actions: read
       id-token: write
     strategy:
-      # A one-element axis today, kept as a matrix (rather than a bare call) so this caller is the same
-      # shape as the matrix lane's: `fromJSON(needs.plan.outputs.suites)` is what makes the suite axis
-      # registry-driven, and fail-fast off is what it means for a cell to own its own outcome.
       fail-fast: false
       matrix:
-        suite: ${{ fromJSON(needs.plan.outputs.suites) }}
-    # `secrets: inherit` keeps repository secrets / token context available to the callee; Environment
-    # secrets on `privileged` are resolved by the reusable job's own `environment:` declaration (a
-    # `uses:` caller can't set `environment:`).
-    uses: ./.github/workflows/bench-suite.yml
+        account: ${{ fromJSON(needs.plan.outputs.accounts) }}
+    uses: ./.github/workflows/bench-account.yml
     with:
-      providers: ${{ needs.plan.outputs.providers }}
-      suite: ${{ matrix.suite }}
-      # This suite's slice of the plan's per-suite map, re-serialized to the JSON array string the cell
-      # passes straight to `bench-suite --replicates` — the matrix expression, verbatim.
-      replicates: ${{ toJSON(fromJSON(needs.plan.outputs.replicates)[matrix.suite]) }}
-      # Forward the PTS passes-per-case override unchanged (blank = suite default, a number, or converge).
-      pts_passes: ${{ inputs.pts_passes }}
-      # Forward the replicate concurrency cap unchanged (blank = all replicates at once).
-      max_concurrency: ${{ inputs.max_concurrency }}
-      # The one input the matrix lane leaves blank: require the dispatched provider to reach
-      # "validated", so an absent or misnamed credential fails the job ("required providers did not
-      # pass") instead of being recorded as a skip on a job that still exits 0.
-      require_providers: ${{ inputs.provider }}
+      account: ${{ matrix.account }}
     secrets: inherit

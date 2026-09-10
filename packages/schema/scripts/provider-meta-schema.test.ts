@@ -95,6 +95,16 @@ describe("Tier-3 provider metadata schema", () => {
 		).toThrow(/daytona-vm\/daytona-container.*derive the same release name/);
 	});
 
+	test("rejects a quota domain that splits providers sharing one credential", () => {
+		expect(() =>
+			validateProviderModules(meta("daytona-vm", { quotaDomain: "daytona-vm" })),
+		).toThrow(/sharing secret DAYTONA_API_KEY must declare one quotaDomain/);
+		expect(() => validateProviderModules(meta("modal-vm", { quotaDomain: "modal vm" }))).toThrow(
+			/quota domain identifier/,
+		);
+		expect(validateProviderModules(meta("e2b", { quotaDomain: "e2b-benchmark" }))).toBeDefined();
+	});
+
 	test("rejects duplicate, secret-defaulted, and required-defaulted inputs", () => {
 		expect(() =>
 			validateProviderModules(meta("e2b", { inputs: ["E2B_API_KEY", "E2B_API_KEY"] })),

@@ -369,6 +369,11 @@ function mergeProvider(
  * at the boundary.
  */
 export function aggregateRuns(runs: readonly Run[]): Run {
+	if (runs.some((run) => run.experiment !== undefined)) {
+		throw new Error(
+			"aggregateRuns cannot merge completed experiments; use original planned attempts to preserve eligibility and provenance",
+		);
+	}
 	if (runs.length === 0) {
 		throw new Error("aggregateRuns requires at least one shard Run");
 	}

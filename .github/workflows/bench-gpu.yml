@@ -29,11 +29,16 @@ permissions:
 concurrency:
   group: gpu-benchmark-${{ github.repository }}-shared-model-cache
   cancel-in-progress: false
+  queue: max
 
 jobs:
   prepare-assets:
     name: Prepare revision-pinned benchmark assets (CPU only)
     environment: privileged
+    concurrency:
+      group: benchmark-account-modal
+      cancel-in-progress: false
+      queue: max
     runs-on: ubuntu-24.04
     timeout-minutes: 300
     steps:
@@ -60,6 +65,10 @@ jobs:
     name: Seed revision-pinned SM120 kernel snapshot
     needs: prepare-assets
     environment: privileged
+    concurrency:
+      group: benchmark-account-modal
+      cancel-in-progress: false
+      queue: max
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
@@ -103,6 +112,10 @@ jobs:
       ${{ inputs.mode == 'full' && '20 replicates' || '1 replicate' }}
     needs: prepare-kernels
     environment: privileged
+    concurrency:
+      group: benchmark-account-modal
+      cancel-in-progress: false
+      queue: max
     runs-on: ubuntu-24.04
     # The job deadline is a final safety net; each replicate must complete creation through artifact
     # collection within ten minutes. That ceiling covers the whole sandbox lifecycle, not the measured

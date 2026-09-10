@@ -6,6 +6,17 @@
 // are implementation detail. This surface exposes only the entry points consumers (the CLI) need:
 // normalize a raw tree, write the Run, and summarize it.
 export { aggregateRuns } from "./lib/aggregate.ts";
+export type {
+	AttemptWithRun,
+	CoverageReport,
+	ExperimentAggregation,
+} from "./lib/experiment.ts";
+export {
+	aggregateExperiment,
+	evaluateExperiment,
+	evidenceDigest,
+	verifyExperimentPlan,
+} from "./lib/experiment.ts";
 // The dataset↔figures seam: the registries the figure model is built from, the figure list the
 // Markdown links, where the charts land, the caption under each one — and the chart HTML itself. All of it pure and browser-free: `renderLeaderboardFigureHtml` builds
 // strings, and rasterising them is the CLI's job (`@sandbox-benchmarks/figures/screenshot`).

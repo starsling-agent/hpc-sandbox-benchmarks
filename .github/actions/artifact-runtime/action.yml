@@ -1,0 +1,28 @@
+name: Expose artifact runtime to scripts
+description: >-
+  Export the Actions artifact runtime (ACTIONS_RUNTIME_TOKEN + ACTIONS_RESULTS_URL) into the job
+  environment so a `run:` step can upload artifacts through @actions/artifact. GitHub injects that
+  runtime only into action steps, and the CLI's experiment store (apps/cli/src/lib/experiment-store.ts)
+  uploads each frozen plan and each attempt itself so the evidence is durable per attempt rather than
+  only at job end. Downloads need no runtime (they go through the REST API with the job token), so only
+  the uploading jobs use this: the matrix/smoke plan jobs and the bench job. The token is scoped to this
+  run's artifact and cache services and expires with the job; exporting it widens which steps of THIS
+  job can write artifacts, nothing else. It is registered as a secret so it never appears in logs.
+
+runs:
+  using: composite
+  steps:
+    # First-party action, pinned to a commit SHA like every other action in this repo.
+    - name: Export the artifact runtime
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+      with:
+        script: |
+          for (const name of ["ACTIONS_RUNTIME_TOKEN", "ACTIONS_RESULTS_URL"]) {
+            const value = process.env[name];
+            if (!value) {
+              core.setFailed(`${name} is not available to this action step`);
+              continue;
+            }
+            if (name === "ACTIONS_RUNTIME_TOKEN") core.setSecret(value);
+            core.exportVariable(name, value);
+          }

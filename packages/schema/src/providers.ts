@@ -13,6 +13,7 @@ import { REGISTRY } from "./provider-meta/index.ts";
 import type {
 	NormalizedProviderInput,
 	ProviderArtifact,
+	ProviderMetaSource,
 	ProviderPreAuth,
 	ProviderRunnerPolicy,
 } from "./provider-meta.ts";
@@ -138,6 +139,8 @@ export interface ProviderMeta {
 	displayName: string;
 	/** Stable vendor label shared by isolation variants. */
 	vendor: string;
+	/** The account whose quota this provider consumes; see {@link quotaDomain}. */
+	quotaDomain: string;
 	website: string;
 	/** The npm package the harness adapter wraps, e.g. "@computesdk/e2b". */
 	sdkPackage: string;
@@ -221,11 +224,25 @@ export const PROVIDERS: readonly ProviderMeta[] = deepFreeze(
 		return {
 			id,
 			...source,
+			quotaDomain: quotaDomain(id),
 			inputs,
 			requiredEnvVars: inputs.filter((input) => input.required).map((input) => input.name),
 		};
 	}),
 );
+
+/**
+ * The vendor account a provider's sandboxes are charged to and queued behind. Isolation variants
+ * that share credentials share one domain (daytona-vm and daytona-container → `daytona`); every
+ * other provider is its own. This one lookup names the Actions concurrency group (generated wiring),
+ * the account journal branch and the experiment plan's batches, so they cannot disagree.
+ */
+export function quotaDomain(id: ProviderId): string {
+	// Widen from the descriptor's literal type: most descriptors omit the field, so it is not on the
+	// registry's union type, only on the declared source shape.
+	const meta: ProviderMetaSource = REGISTRY[id];
+	return meta.quotaDomain ?? id;
+}
 
 /**
  * Retired provider ids that committed run documents still carry, each mapped to the current variant

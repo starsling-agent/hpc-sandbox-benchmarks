@@ -35,6 +35,11 @@ export interface RunnerBinding {
 	readonly owners: readonly ProviderId[];
 }
 
+export interface QuotaDomainBinding {
+	readonly domain: string;
+	readonly owners: readonly ProviderId[];
+}
+
 export type WiringLane = "matrix" | "release-scope";
 
 export interface DriverMigrationWaiver {
@@ -138,6 +143,16 @@ export function runnerBindings(): RunnerBinding[] {
 	return [...bindings.values()];
 }
 
+/** Every quota domain with the providers charged to it, in registry order. */
+export function quotaDomainBindings(): QuotaDomainBinding[] {
+	const bindings = new Map<string, ProviderId[]>();
+	for (const id of PROVIDER_IDS) {
+		const domain = providerMeta(id).quotaDomain ?? id;
+		bindings.set(domain, [...(bindings.get(domain) ?? []), id]);
+	}
+	return [...bindings].map(([domain, owners]) => ({ domain, owners }));
+}
+
 function ghaString(value: string): string {
 	return `'${value.replaceAll("'", "''")}'`;
 }
@@ -223,6 +238,20 @@ export function renderRunnerNoCache(indent = "          "): string {
 		.flatMap(({ owners: policyOwners }) => policyOwners);
 	const condition = owners.length === 0 ? "false" : ownerCondition(owners, "matrix");
 	return `${indent}no-cache: \${{ ${condition} && 'true' || 'false' }}`;
+}
+
+/**
+ * The per-cell Actions concurrency group that serialises every job charged to one vendor account.
+ * Providers whose domain is their own id fall through to `matrix.provider`; only shared domains
+ * need a clause, so the expression stays readable in the workflow.
+ */
+export function renderAccountConcurrencyGroup(indent = "      "): string {
+	const clauses = quotaDomainBindings().flatMap(({ domain, owners }) =>
+		owners.length === 1 && owners[0] === domain
+			? []
+			: [`${ownerCondition(owners, "matrix")} && ${ghaString(domain)}`],
+	);
+	return `${indent}group: benchmark-account-\${{ ${[...clauses, "matrix.provider"].join(" || ")} }}`;
 }
 
 export function renderRunnerLifetime(indent = "          "): string {
@@ -338,6 +367,16 @@ export function generatedProviderRegions(): GeneratedRegion[] {
 			file: ".github/workflows/bench-smoke.yml",
 			label: "provider-options",
 			body: renderSmokeProviderOptions(),
+		},
+		{
+			file: ".github/workflows/bench-suite.yml",
+			label: "provider-account-group-bench",
+			body: renderAccountConcurrencyGroup(),
+		},
+		{
+			file: ".github/workflows/toolchain-image.yml",
+			label: "provider-account-group-bake",
+			body: renderAccountConcurrencyGroup(),
 		},
 		{
 			file: ".github/workflows/bench-suite.yml",

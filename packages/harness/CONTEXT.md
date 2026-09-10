@@ -15,3 +15,11 @@ control-plane operation. Operational readiness alone does not define the measure
 **Result gap**:
 A recorded absence of a benchmark result, such as a skipped or failed workload. A gap is not a
 zero-valued measurement.
+
+**Execution receipt**:
+Evidence binding benchmark step outcomes to a particular sandbox and logical replicate. Launch
+acceptance and recognizable output are not successful completion outcomes.
+
+**Cleanup confirmation**:
+Observation that the allocated sandbox is absent after teardown. A successful request to destroy it
+is only an acknowledgement until removal is observed.

@@ -16,6 +16,7 @@ export * from "./cost-evidence.ts";
 // The derived economics Dimension ($/run): its MetricDefs, the pricing-driven derivation, and the
 // pure cost models (burst vs fixed-infra amortization) they build on.
 export * from "./economics.ts";
+export * from "./experiment.ts";
 // The non-PTS, harness-measured Metric slice (lifecycle + control-plane) and its operation→id contract.
 export * from "./harness-metrics.ts";
 // Canonical persisted identifiers shared by Run and evidence schemas.

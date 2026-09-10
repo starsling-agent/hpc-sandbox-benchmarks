@@ -55,6 +55,7 @@
     "smoke": "bun --filter @sandbox-benchmarks/cli smoke",
     "format": "biome format . --write",
     "lint": "biome check . --error-on-warnings",
+    "lint:workflows": "bun tooling/repo-checks/src/lint-workflows.ts",
     "lint:fix": "biome check . --write",
     "lint:fix:unsafe": "biome check . --fix --unsafe",
     "lint:shell": "find packages/templates/images packages/schema/src/pts-profiles lib .mise/tasks -type f \\( -name '*.sh' -o -path '*.mise/tasks/*' \\) -exec mise exec -- shellcheck {} + && scripts/lint-action-shell.sh $(find .github/actions -name 'action.y*ml')",

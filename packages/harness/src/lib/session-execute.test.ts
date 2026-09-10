@@ -57,7 +57,7 @@ describe("session execution", () => {
 				files: {
 					exists: async () => true,
 					readFile: async (path) => {
-						if (path.endsWith(".done")) return "7";
+						if (path.endsWith(".done")) return receipt(path, "7");
 						if (++reads === 1) throw new Error("transient file read");
 						return "stdout and stderr\n";
 					},
@@ -86,7 +86,8 @@ describe("session execution", () => {
 			session({
 				exec: async (command) => {
 					commands.push(command);
-					if (command.includes("cat /tmp") && command.includes(".done")) return result("0");
+					if (command.includes("cat /tmp") && command.includes(".done"))
+						return result(receipt(command));
 					return result("output");
 				},
 			}),
@@ -114,3 +115,8 @@ describe("session execution", () => {
 		expect(runner.stepLog[0]?.exitCode).toBeNull();
 	});
 });
+
+function receipt(location: string, code = "0"): string {
+	const identity = /bench-[a-f0-9-]+/.exec(location)?.[0];
+	return `v1 ${identity} ${code}`;
+}

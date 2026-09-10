@@ -1140,12 +1140,9 @@ function computeSdkMethodTable<TCompute extends ComputeSdkLike>(
 					});
 				} else {
 					if (ref === undefined) throw new Error("canonical sandbox identity is unavailable");
-					rawResult = await invokeComputeSdkProviderCallbackAsync(
-						provider,
-						"command exec",
-						() => commands.exec(sandbox, command, execOptions, ref),
-						{ code: "exec-failed", ref },
-					);
+					// The outer operation boundary projects and redacts the native failure. Wrapping here
+					// first erased its diagnostic before that boundary could preserve it.
+					rawResult = await commands.exec(sandbox, command, execOptions, ref);
 				}
 				result = normalizeCommandResult(
 					provider,
@@ -1204,15 +1201,7 @@ function computeSdkMethodTable<TCompute extends ComputeSdkLike>(
 				const ref = refFor(sandbox);
 				try {
 					if (ref === undefined) throw new Error("canonical sandbox identity is unavailable");
-					await invokeComputeSdkProviderCallbackAsync(
-						provider,
-						"command launch",
-						() => commands.launch(sandbox, command, execOptions, ref),
-						{
-							code: "exec-failed",
-							...(refFor(sandbox) === undefined ? {} : { ref: refFor(sandbox) }),
-						},
-					);
+					await commands.launch(sandbox, command, execOptions, ref);
 					return;
 				} catch (caught) {
 					throw wrapperFailure(

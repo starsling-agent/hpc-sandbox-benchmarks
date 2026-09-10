@@ -17,7 +17,9 @@ import {
 	parseDriverMigrationWaivers,
 	preAuthBindings,
 	providerInputBindings,
+	quotaDomainBindings,
 	REPO_ROOT,
+	renderAccountConcurrencyGroup,
 	renderCiSecretTable,
 	renderCiVariableTable,
 	renderDotenvValue,
@@ -92,6 +94,23 @@ describe("provider wiring projections", () => {
 		expect(renderRunnerSelection()).toBe(`    runs-on: \${{ 'ubuntu-24.04' }}`);
 		expect(renderRunnerNoCache("")).toBe(`no-cache: \${{ false && 'true' || 'false' }}`);
 		expect(renderRunnerLifetime("")).toBe(`BENCH_RUNNER_LIFETIME_MINUTES: \${{ '' }}`);
+	});
+
+	test("queues every provider behind its registry quota domain", () => {
+		const bindings = quotaDomainBindings();
+		// Every provider is charged to exactly one domain; only shared-credential variants share one.
+		expect(bindings.flatMap(({ owners }) => owners)).toEqual([...PROVIDER_IDS]);
+		expect(bindings.filter(({ owners }) => owners.length > 1)).toEqual([
+			{ domain: "daytona", owners: ["daytona-vm", "daytona-container"] },
+			{ domain: "modal", owners: ["modal-gvisor", "modal-vm"] },
+		]);
+		// A provider that shares no credential is its own domain — never a stray custom name.
+		expect(
+			bindings.filter(({ domain, owners }) => owners.length === 1 && owners[0] !== domain),
+		).toEqual([]);
+		expect(renderAccountConcurrencyGroup("")).toBe(
+			`group: benchmark-account-\${{ (matrix.provider == 'daytona-vm' || matrix.provider == 'daytona-container') && 'daytona' || (matrix.provider == 'modal-gvisor' || matrix.provider == 'modal-vm') && 'modal' || matrix.provider }}`,
+		);
 	});
 
 	test("scopes secrets, shared inputs, capability literals, and pre-auth values safely", () => {

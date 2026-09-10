@@ -48,7 +48,10 @@ export interface SetupStep {
 	retries?: number;
 }
 
-export function setupSteps(suite: Suite): SetupStep[] {
+export function setupSteps(suite: Suite, sourceRevision?: string): SetupStep[] {
+	if (sourceRevision !== undefined && !/^[a-f0-9]{40}$/.test(sourceRevision))
+		throw new Error("managed source revision must be a commit SHA");
+	const ref = sourceRevision ?? REPO_REF;
 	const steps: SetupStep[] = [
 		{
 			label: "install base packages",
@@ -63,7 +66,7 @@ export function setupSteps(suite: Suite): SetupStep[] {
 			label: "clone repo",
 			// Drop the token from the remote immediately so later steps can't leak it. Branch refs need
 			// the origin/ fallback: bare `checkout --detach <branch>` DWIMs a remote branch into -b mode.
-			script: `rm -rf ${DIR} && git clone "${CLONE_URL}" ${DIR} && cd ${DIR} && git remote set-url origin "${REPO_URL}" && (git checkout --detach "${REPO_REF}" 2>/dev/null || git checkout --detach "origin/${REPO_REF}") && git log -1 --oneline`,
+			script: `rm -rf ${DIR} && git clone "${CLONE_URL}" ${DIR} && cd ${DIR} && git remote set-url origin "${REPO_URL}" && (git checkout --detach "${ref}" 2>/dev/null || git checkout --detach "origin/${ref}") && git log -1 --oneline${sourceRevision ? ` && test "$(git rev-parse HEAD)" = "${sourceRevision}"` : ""}`,
 			timeoutMs: 5 * MIN,
 		},
 		{

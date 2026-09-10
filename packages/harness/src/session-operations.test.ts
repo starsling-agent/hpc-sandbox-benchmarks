@@ -37,6 +37,7 @@ function fixture(exec: SandboxSession["exec"]) {
 		},
 	};
 	const driver: SandboxDriver = {
+		probes: { observe: async () => ({ state: calls.includes("destroy") ? "absent" : "running" }) },
 		async create(request, options) {
 			expect(request.artifact).toEqual(artifact);
 			expect(request.deadlineMs).toBe(1000);

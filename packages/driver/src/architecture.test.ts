@@ -34,6 +34,7 @@ describe("driver package boundaries", () => {
 			"index.ts",
 			"lib/accelerator.ts",
 			"lib/define.ts",
+			"lib/diagnostics.ts",
 			"lib/errors.ts",
 			"lib/output.ts",
 			"lib/policy.ts",

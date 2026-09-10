@@ -50,6 +50,7 @@ describe("Tama proof driver", () => {
 		expect(spec.createCommandTimeoutMs).toBe(20 * 60_000);
 		expect(spec.requestCoverage).toEqual(TAMA_REQUEST_COVERAGE);
 		expect(spec.prepare).toEqual({
+			authenticateFirst: true,
 			probe: ["list", "--all", "--json"],
 			fallback: ["login", "--token", "tama_test-token"],
 		});
@@ -129,6 +130,7 @@ describe("Tama proof driver", () => {
 	test("rejects unsupported request axes before invoking the CLI", async () => {
 		const calls: string[][] = [];
 		const run: CliRunner = async (_binary, args) => {
+			if (args[0] === "login") return { stdout: "", stderr: "", code: 0 };
 			calls.push([...args]);
 			return { stdout: "", stderr: "", code: 0 };
 		};
@@ -156,6 +158,7 @@ describe("Tama proof driver", () => {
 		let name = "";
 		let destroyed = false;
 		const run: CliRunner = async (_binary, args) => {
+			if (args[0] === "login") return { stdout: "", stderr: "", code: 0 };
 			if (args[0] === "new") {
 				name = args[1] ?? "";
 				return { stdout: "{}", stderr: "", code: 0 };
@@ -186,6 +189,58 @@ describe("Tama proof driver", () => {
 		expect(await driver.probes?.observe(session.sandboxRef)).toEqual({ state: "absent" });
 	});
 
+	test("serializes profile authentication across contexts and preserves a failed list without relogin", async () => {
+		let active = 0;
+		let peak = 0;
+		const calls: string[] = [];
+		const run: CliRunner = async (_binary, args) => {
+			calls.push(args[0] ?? "");
+			if (args[0] === "login") {
+				peak = Math.max(peak, ++active);
+				await new Promise((resolve) => setTimeout(resolve, 5));
+				active--;
+				return { stdout: "", stderr: "", code: 0 };
+			}
+			return { stdout: "", stderr: "control plane unavailable", code: 1 };
+		};
+		const create = () =>
+			driverFromTable(
+				cliMethodTable("tama", tamaSpec(context), {
+					run,
+					createAttemptCeilingMs: TAMA_CREATE_CEILING_MS,
+				}),
+				async () => ({}),
+			).create(request);
+		const results = await Promise.allSettled([create(), create()]);
+		expect(peak).toBe(1);
+		expect(calls).toEqual(["login", "list", "login", "list"]);
+		for (const result of results) {
+			expect(result.status).toBe("rejected");
+			if (result.status === "rejected")
+				expect(result.reason.vendorMessage).toContain("control plane unavailable");
+		}
+	});
+
+	test("inventory distinguishes exact benchmark names from foreign machines", async () => {
+		const rows = [
+			{ ...readyMachine, name: "bench-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" },
+			{ ...readyMachine, id: "machine-aaaaaaaaaaaa", name: "developer-machine" },
+		];
+		const run: CliRunner = async (_binary, args) => ({
+			stdout: args[0] === "login" ? "" : JSON.stringify(rows),
+			stderr: "",
+			code: 0,
+		});
+		const driver = driverFromTable(
+			cliMethodTable("tama", tamaSpec(context), { run }),
+			async () => ({}),
+		);
+		expect(await driver.inventory?.list()).toEqual({
+			owned: [{ provider: "tama", id: readyMachine.id }],
+			foreignCount: 1,
+		});
+	});
+
 	test("retains teardown ownership when an unrelated local dependency is not found", async () => {
 		let name = "";
 		let destroyAttempts = 0;
@@ -198,6 +253,7 @@ describe("Tama proof driver", () => {
 			`error: machine ${readyMachine.id} not found\nerror: connection reset`,
 		];
 		const run: CliRunner = async (_binary, args) => {
+			if (args[0] === "login") return { stdout: "", stderr: "", code: 0 };
 			if (args[0] === "new") {
 				name = args[1] ?? "";
 				return { stdout: "{}", stderr: "", code: 0 };

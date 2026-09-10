@@ -22,6 +22,14 @@ const INACTIVE = `Failed to create Daytona sandbox: Snapshot ${CFG.snapshot} is 
 
 const captured: string[] = [];
 
+/**
+ * Stand in for the SDK's transport factory: record each request's URL, then fail it.
+ *
+ * Failing is deliberate — it leaves the activation in the state these tests care about (attempted,
+ * unsuccessful), which is what proves the recovery stays best-effort and never replaces the control
+ * plane's own create error with its own. The recorded URLs are how a test asserts the snapshot API
+ * was reached at all.
+ */
 function stubAxios() {
 	return {
 		interceptors: { request: { use: () => 0 }, response: { use: () => 0 } },

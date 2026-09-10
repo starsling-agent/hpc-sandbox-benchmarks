@@ -48,6 +48,7 @@ function activateOnce(cfg: DaytonaConfig): Promise<void> {
 	const key = `${cfg.target ?? ""}:${cfg.snapshot}`;
 	const inFlight = activating.get(key);
 	if (inFlight) return inFlight;
+	/** The activation itself: read the snapshot, and wake it unless another caller already did. */
 	const started = (async () => {
 		// Explicit target, not the DAYTONA_TARGET pin daytonaClientTarget uses: this client is ours and
 		// is constructed here, so the region can be passed the way the SDK actually documents.
@@ -79,6 +80,11 @@ export function daytonaActivateSnapshot(
 		methods: ["create"],
 	});
 	const { create } = manager.methods;
+	/**
+	 * The wrapped create: pass every outcome through untouched except the one this module exists for.
+	 * An inactive snapshot starts the reactivation and comes back marked, so the harness re-issues it;
+	 * anything else — success or another failure — is returned exactly as the wrapper produced it.
+	 */
 	const activatingCreate: DaytonaSandboxMethods["create"] = async (config, options) => {
 		try {
 			return await create(config, options);

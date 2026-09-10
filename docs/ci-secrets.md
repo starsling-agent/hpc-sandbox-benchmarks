@@ -176,14 +176,17 @@ Ungated: `ci.yml`, `ci-lint.yml`, and the toolchain `pr-gate` (Docker smoke, no 
    provider's first release. The plan's visibility guard still checks the package and warns if it is
    ever not public.
 
-> **Two approval gates per bench-matrix run.** The suite-matrix fan-out (each cell calling
-> `bench-suite.yml` with `environment: privileged`) and the `publish` job both carry the environment
-> and run sequentially. Every suite × provider cell becomes pending together the moment `plan`
-> finishes, so they surface as one batch in "Review pending deployments" and a single approval of the
-> `privileged` environment releases the whole matrix; `publish` becomes pending only after the long
-> matrix (~150 min), raising a **second** gate before the dataset is committed. A reviewer who
-> approves only the matrix and walks away leaves the run parked at `publish` until the second approval
-> lands or the protection rule times out.
+> **Approval gates per bench-matrix run: one per collection round, plus `publish`.** Every batch
+> job (each calling `bench-suite.yml` with `environment: privileged`) and the `publish` job carry the
+> environment. GitHub approves only the jobs that are pending at that moment, so the workflows are
+> shaped to make jobs pend together: a round's batch jobs are created at once (no `max-parallel`;
+> the `benchmark-account-<domain>` concurrency queue serialises them), and every account's first
+> round starts as soon as `plan` finishes, so one approval of `privileged` releases the whole first
+> wave. An account with more batches than one round holds (64, see `ROUND_BATCH_LIMIT`) raises a
+> further gate when its next round starts; `publish` becomes pending only after the last account
+> finishes, raising the final gate before the dataset is committed. A reviewer who approves only the
+> first wave and walks away leaves the run parked at the next gate until an approval lands or the
+> protection rule times out.
 
 ## Operator setup (before flipping the repo public)
 

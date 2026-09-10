@@ -37,6 +37,6 @@ test("large account cohorts partition into bounded collection rounds", () => {
 		{ ...env, BENCH_PROVIDERS: "tama", BENCH_SUITES: "system", BENCH_REPLICAS: "257" },
 		"2026-09-10",
 	);
-	expect(plan.rounds.map((round) => round.batches.length)).toEqual([256, 1]);
+	expect(plan.rounds.map((round) => round.batches.length)).toEqual([64, 64, 64, 64, 1]);
 	expect(plan.cells.at(-1)?.replicate).toBe(256);
 });

@@ -124,10 +124,21 @@ export function checkExperimentNesting(docs: Record<string, unknown>): string[] 
 		if (!file || !callee || !axis) continue;
 		const caller = job(file, "execute");
 		const strategy = asRecord(caller.strategy, file);
-		expect(
-			strategy["max-parallel"] === 1 && strategy["fail-fast"] === false,
-			`${file}: account work must be sequential without cancelling peers`,
-		);
+		// Rounds run one at a time so a later round's approval gate is raised only once the previous
+		// round has finished; a round's batches are created together — no max-parallel, the account
+		// concurrency queue serialises them — so ONE `privileged` approval releases the whole round
+		// (GitHub approves only the jobs already pending). Neither level may cancel its peers.
+		if (axis === "round") {
+			expect(
+				strategy["max-parallel"] === 1 && strategy["fail-fast"] === false,
+				`${file}: rounds must run one at a time without cancelling peers`,
+			);
+		} else {
+			expect(
+				strategy["max-parallel"] === undefined && strategy["fail-fast"] === false,
+				`${file}: a round's batches must be created together (no max-parallel) without cancelling peers`,
+			);
+		}
 		expect(caller.uses === `./.github/workflows/${callee}`, `${file}: wrong execution delegate`);
 		expect(
 			asRecord(strategy.matrix, file)[axis] === "${{ fromJSON(needs.plan.outputs.axis) }}",

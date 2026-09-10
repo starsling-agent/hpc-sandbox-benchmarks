@@ -70,7 +70,7 @@ docs/       methodology, ADRs, CI & secrets
 | `@sandbox-benchmarks/harness`    | providers, schema                               | —                                   |
 | `@sandbox-benchmarks/figures`    | schema                                          | `arktype`, fonts (`@fontsource/*`)  |
 | `@sandbox-benchmarks/results`    | schema, figures                                 | `arktype`, XML tooling (`catalog:xml`) |
-| `@sandbox-benchmarks/cli` (app)  | schema, driver, drivers, providers, templates, harness, results, figures | `dotenv`, `@actions/core`, provider SDKs (`catalog:computesdk`) |
+| `@sandbox-benchmarks/cli` (app)  | schema, driver, drivers, providers, templates, harness, results, figures | `arktype`, `dotenv`, `@actions/core`, provider SDKs (`catalog:computesdk`) |
 | `@repo/tsconfig`            | —                                               | —                                   |
 | `@repo/repo-checks`         | —                                               | —                                   |
 

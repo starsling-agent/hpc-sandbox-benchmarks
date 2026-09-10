@@ -1,0 +1,9 @@
+{
+  "filename": "fio-3.36.tar.gz",
+  "sha256": "0a07354876ca4d23518f8aa88682f23866455bbd2ff2d0f055d6e4b72f156553",
+  "urls": [
+    "http://archive.ubuntu.com/ubuntu/pool/universe/f/fio/fio_3.36.orig.tar.gz",
+    "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/fio/3.36-1/fio_3.36.orig.tar.gz",
+    "https://web.archive.org/web/2020/http://brick.kernel.dk/snaps/fio-3.36.tar.gz"
+  ]
+}

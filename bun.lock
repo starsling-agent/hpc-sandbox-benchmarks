@@ -33,6 +33,7 @@
         "stability": "./src/bin/stability.ts",
         "leaderboard": "./src/bin/leaderboard.ts",
         "driver-check": "./src/bin/driver-check.ts",
+        "warm-pts": "./src/bin/warm-pts.ts",
       },
       "dependencies": {
         "@actions/core": "1.11.1",
@@ -47,6 +48,7 @@
         "@sandbox-benchmarks/results": "workspace:*",
         "@sandbox-benchmarks/schema": "workspace:*",
         "@sandbox-benchmarks/templates": "workspace:*",
+        "arktype": "catalog:",
         "dotenv": "catalog:",
         "modal": "catalog:computesdk",
         "novita-sandbox": "catalog:computesdk",

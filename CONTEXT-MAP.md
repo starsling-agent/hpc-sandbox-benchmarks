@@ -2,6 +2,8 @@
 
 ## Contexts
 
+- [Benchmark experiments](./packages/schema/CONTEXT.md): planned work, attempts and comparison cohorts.
+
 - [Sandbox drivers](./packages/driver/CONTEXT.md): sandbox sessions and their observable behavior.
 - [Benchmark execution](./packages/harness/CONTEXT.md): benchmark steps, lifecycle measurements,
   and result gaps.

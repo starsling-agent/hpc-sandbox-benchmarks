@@ -20,7 +20,10 @@
     "stability": "./src/bin/stability.ts",
     "leaderboard": "./src/bin/leaderboard.ts",
     "reprice-dataset": "./src/bin/reprice-dataset.ts",
-    "driver-check": "./src/bin/driver-check.ts"
+    "driver-check": "./src/bin/driver-check.ts",
+    "plan-experiment": "./src/bin/plan-experiment.ts",
+    "evaluate-experiment": "./src/bin/evaluate-experiment.ts",
+    "aggregate-experiment": "./src/bin/aggregate-experiment.ts"
   },
   "scripts": {
     "test": "bun test",

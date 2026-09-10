@@ -310,6 +310,7 @@ export interface AbsentProvider {
 /** The full comparison surface derived from one Run. */
 export interface Leaderboard {
 	runId: string;
+	comparisonCohort?: string;
 	sha: string;
 	generatedAt: string;
 	/** The requested comparison target recorded on this Run — never substituted from global config. */
@@ -709,6 +710,7 @@ export function buildLeaderboard(run: Run): Leaderboard {
 
 	return {
 		runId: run.runId,
+		...(run.experiment?.cohortDigest ? { comparisonCohort: run.experiment.cohortDigest } : {}),
 		sha: run.sha,
 		generatedAt: run.generatedAt,
 		targetSpec: run.targetSpec,
@@ -1117,6 +1119,12 @@ export function renderLeaderboardMarkdown(
 		"",
 		`Run ${runSourceLinks(board.runId)} · commit ${commitSourceLink(board.sha)} ·`,
 		`dataset ${datasetSourceLink(board.runId)} · generated ${board.generatedAt}`,
+		...(board.comparisonCohort
+			? [
+					"",
+					`Comparison cohort: \`${board.comparisonCohort}\`. Compare scores only with the same workload and eligible metric cohort.`,
+				]
+			: []),
 		"",
 		`Requested target for every provider: **${spec}**. This run contains **${rows.length} metric records**`,
 		`backed by **${observationCount} retained trial observations**, across **${metricCount} ${metricNoun}** and`,

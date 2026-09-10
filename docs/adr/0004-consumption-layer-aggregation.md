@@ -4,6 +4,9 @@ status: accepted
 
 # Raw-first history, consumption-layer candidate→promote
 
+The publication threshold below is superseded by [ADR-0010](./0010-experiment-completeness.md).
+Its raw-first history and candidate→promote decisions remain in force.
+
 ## Context
 
 A benchmark run is produced by the CI matrix as one Run document per `(provider, suite)` shard. Those

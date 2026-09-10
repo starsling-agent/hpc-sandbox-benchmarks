@@ -820,7 +820,8 @@ export function providerStatusText(p: ProviderRun): string {
 /**
  * A full benchmark Run: every provider measured against one pinned target spec at one SHA.
  *
- * `schemaVersion` accepts `"2"` through `"6"`. v1's `skips: { suite, reason }[]` could not say
+ * `schemaVersion` accepts `"2"` through `"7"`. Version 7 adds experiment plan/attempt linkage;
+ * older documents do not establish experiment completeness. v1's `skips: { suite, reason }[]` could not say
  * whether a benchmark was deliberately not run or had crashed, and carried no positive record of what
  * DID run — so a suite that vanished (job died, artifact never uploaded) left no trace anywhere in the
  * document. v2 replaced it with {@link resultGapSchema} + {@link ProviderRun.suitesCovered}. v3 adds
@@ -856,7 +857,7 @@ export function providerStatusText(p: ProviderRun): string {
  * migrates them in place.
  */
 export const runSchema = type({
-	schemaVersion: "'2' | '3' | '4' | '5' | '6'",
+	schemaVersion: "'2' | '3' | '4' | '5' | '6' | '7'",
 	runId: runIdSchema,
 	sha: "string",
 	// ISO-8601 timestamp the Run was generated at — validated so the RunIndex sort key can't be a
@@ -867,6 +868,11 @@ export const runSchema = type({
 	// a per-replicate shard; the aggregate reads it to key {@link MetricResult.replicates} and drops it
 	// from the merged Run (which spans every replicate). Absent on legacy shards and aggregated Runs.
 	"replicateIndex?": "number.integer >= 0",
+	"experiment?": {
+		planDigest: /^sha256:[a-f0-9]{64}$/,
+		"cohortDigest?": /^sha256:[a-f0-9]{64}$/,
+		attemptIds: "string[] >= 1",
+	},
 	targetSpec: targetSpecSchema,
 	providers: providerRunSchema.array(),
 }).narrow((run, ctx) => {
@@ -874,6 +880,9 @@ export const runSchema = type({
 	// v4 and beyond, so "=== '3'" would have made every version bump retroactively reject the previous
 	// version's own fields (the v4 aggregate below carries folded `replicates`).
 	const version = Number(run.schemaVersion);
+	if (version >= 7 !== (run.experiment !== undefined)) {
+		return ctx.mustBe("experiment linkage exactly on Run v7 or newer");
+	}
 	// The replicate fields (`replicateIndex`, `MetricResult.replicates`) are v3-or-later, so "v2 == the
 	// pre-replicate schema" stays a real guarantee: a producer that writes a replicate field but forgets
 	// to bump schemaVersion is rejected here rather than silently read by a v3-gated consumer that then

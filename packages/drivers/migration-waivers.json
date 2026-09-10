@@ -19,11 +19,6 @@
     "reason": "The Namespace adapter has not yet migrated from packages/providers to DriverModule.",
     "expires": "2026-12-31"
   },
-  "vercel": {
-    "owner": "@dbworku",
-    "reason": "The Vercel adapter has not yet migrated from packages/providers to DriverModule.",
-    "expires": "2026-12-31"
-  },
   "runcloud": {
     "owner": "@dbworku",
     "reason": "The run.cloud adapter has not yet migrated from packages/providers to DriverModule.",

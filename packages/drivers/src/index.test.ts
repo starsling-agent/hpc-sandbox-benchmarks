@@ -19,6 +19,7 @@ describe("generated driver loader", () => {
 			"modal-gvisor",
 			"modal-vm",
 			"novita",
+			"vercel",
 			"tama",
 		]);
 		expect(Object.values(DRIVERS).every((load) => typeof load === "function")).toBe(true);

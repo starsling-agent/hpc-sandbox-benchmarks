@@ -13,7 +13,6 @@ import { microsandboxCloudCompute } from "./microsandbox.ts";
 import { RUNCLOUD_CREATE_CEILING_MS, runcloudCompute } from "./runcloud.ts";
 import { runloopCompute } from "./runloop.ts";
 import type { ProviderAdapter } from "./types.ts";
-import { vercelCompute } from "./vercel.ts";
 
 /**
  * Provider ids whose production path is a registered DriverModule, not a `packages/providers`
@@ -33,6 +32,7 @@ export const MIGRATED_DRIVER_IDS = [
 	"novita",
 	"daytona-vm",
 	"daytona-container",
+	"vercel",
 ] as const satisfies readonly ProviderId[];
 
 /** A schema id served by a registered DriverModule. Derived from the list, so the two cannot drift. */
@@ -152,13 +152,6 @@ export const adapters: Record<LegacyAdapterId, ProviderAdapter> = {
 		// from `options.image` (computesdk's open CreateSandboxOptions passthrough), so, like modal's
 		// fromRegistry boot, this points directly at the published toolchain image; nothing to bake.
 		createOptions: { image: config.toolchainImage },
-	},
-	vercel: {
-		artifact: { kind: "mirror", ref: config.vercelImage },
-		// @computesdk/vercel still targets Sandbox v1. Keep its defineProvider shape, but use the latest
-		// native SDK so the shared VCR image and v2 lifecycle/filesystem APIs remain available.
-		createCompute: () => vercelCompute({ image: config.vercelImage, vcpus: TARGET_SPEC.vcpus }),
-		createOptions: {},
 	},
 	runcloud: {
 		artifact: { kind: "image", ref: config.toolchainImage },

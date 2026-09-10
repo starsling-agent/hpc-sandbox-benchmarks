@@ -513,6 +513,7 @@ export function renderDriversProvenance(root = REPO_ROOT): Map<string, string> {
 		["TAMA", "tama CLI", tamaCliVersion(root)],
 		["NOVITA", "novita-sandbox", catalogVersion(catalog, "novita-sandbox")],
 		["DAYTONA", "@daytona/sdk", catalogVersion(catalog, "@daytona/sdk")],
+		["VERCEL", "@vercel/sandbox", catalogVersion(catalog, "@vercel/sandbox")],
 	] as const;
 	const packages = new Set(
 		driverFleetProjection(root).moduleIds.map((id) => driverModuleLocation(id).directory),

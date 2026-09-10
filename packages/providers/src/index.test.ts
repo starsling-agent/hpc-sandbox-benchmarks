@@ -81,17 +81,6 @@ describe("@sandbox-benchmarks/providers", () => {
 			kind: "image",
 			ref: config.toolchainImage,
 		});
-		expect(providers.find((provider) => provider.name === "vercel")?.artifact).toEqual({
-			kind: "mirror",
-			ref: config.vercelImage,
-		});
-	});
-
-	it("configures Vercel through its custom provider factory", () => {
-		const adapter = providers.find((provider) => provider.name === "vercel");
-		expect(adapter?.requiredEnvVars).toEqual(["VERCEL_OIDC_TOKEN"]);
-		expect(adapter?.createOptions).toEqual({});
-		expect(adapter?.createCompute().name).toBe("vercel");
 	});
 
 	it("pins Runloop's custom Devbox to the shared target spec", () => {

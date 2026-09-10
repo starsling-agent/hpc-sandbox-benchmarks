@@ -66,6 +66,7 @@
     "check:provider-registry-drift": "bun --filter '@sandbox-benchmarks/schema' check:provider-registry-drift",
     "generate-provider-wiring": "bun --filter '@sandbox-benchmarks/schema' generate-provider-wiring",
     "check:provider-wiring": "bun --filter '@sandbox-benchmarks/schema' check:provider-wiring",
+    "warm:pts": "bun apps/cli/src/bin/warm-pts.ts",
     "prepare": "lefthook install"
   },
   "devDependencies": {

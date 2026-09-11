@@ -92,7 +92,10 @@ export async function reconcileAccount(
 			if (!destroy || !probes) throw new Error("managed recovery capability disappeared");
 			for (const ref of snapshot.owned) {
 				await bounded(() => destroy.call(driver, ref, { signal: controller.signal }));
-				while ((await bounded(() => probes.observe(ref))).state !== "absent") {
+				// Only the control plane's own observation releases the loop, never the delete response.
+				// `absent` and `terminal` both qualify: a terminated sandbox holds no allocation, and some
+				// vendors (Modal, run.cloud) retain terminated records forever, so absence never arrives.
+				while ((await bounded(() => probes.observe(ref))).state === "running") {
 					await bounded(
 						() => new Promise((resolve) => setTimeout(resolve, options.pollMs ?? 1000)),
 					);

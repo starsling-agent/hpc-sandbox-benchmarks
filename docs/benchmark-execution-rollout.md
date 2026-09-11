@@ -30,13 +30,16 @@ This is an implementation status record, not a claim that the live fleet meets t
 - Native command projections retain their errors until the shared redaction boundary, instead of
   replacing them with a generic callback failure. Regression tests cover both exec and launch.
 - A narrow complete-inventory driver capability and Tama ownership projection. Account reconciliation
-  validates all variant inventories before deletion, requires observed absence after deletion, and
-  checks every inventory again before admission. Unavailable inventory, foreign resources, cancellation,
+  validates all variant inventories before deletion, requires the control plane to observe each
+  deleted sandbox as no longer running (absent, or terminal where the vendor retains terminated
+  records — Modal and run.cloud never report absence), and checks every inventory again before
+  admission. Unavailable inventory, foreign resources, cancellation,
   timeout, or new allocations block admission. It is called once by each account-owned batch before allocation.
 - Strict `promote` requires the original plan and attempt directories and independently reconstructs
   the candidate before writing the dataset. Legacy Runs remain available for validation and reading.
-- Publication verifies identity-bound execution and cleanup receipts, including observed absence,
-  benchmark and collection completion, and sandbox attribution. Matching byte digests alone do not
+- Publication verifies identity-bound execution and cleanup receipts, including a control-plane
+  observation that the sandbox is no longer running, benchmark and collection completion, and
+  sandbox attribution. Matching byte digests alone do not
   satisfy the gate. Unterminated allocation intents also block publication.
 - Aggregation selects only planned eligible measurements. Published Runs carry a comparison cohort
   digest covering workload/environment revisions, passes, resources and eligible metrics; leaderboard
@@ -45,7 +48,8 @@ This is an implementation status record, not a claim that the live fleet meets t
 - Launch-settlement timeouts now collect diagnostic tails through the same recovery path as polling
   timeouts. Unreadable output has an unknown cause, not an inferred memory or agent failure.
 - Raw exception formatting in the reviewed CLI and collection failure sinks uses diagnostic projection.
-  Failed teardown fails suite execution; driver-session execution observes absence after destruction.
+  Failed teardown fails suite execution; driver-session execution confirms destruction from a
+  control-plane observation (absent or terminal), never from the destroy response.
   Implicit create retries default to zero. Explicit retries cannot follow an owner timeout or unresolved
   failed-create cleanup.
 

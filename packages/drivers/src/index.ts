@@ -10,6 +10,7 @@ export interface DriverModuleMap {
 	"modal-gvisor": typeof import("@sandbox-benchmarks/modal/gvisor").default;
 	"modal-vm": typeof import("@sandbox-benchmarks/modal/vm").default;
 	novita: typeof import("@sandbox-benchmarks/novita").default;
+	vercel: typeof import("@sandbox-benchmarks/vercel").default;
 	tama: typeof import("@sandbox-benchmarks/tama").default;
 }
 
@@ -34,6 +35,7 @@ export const DRIVERS: {
 	"modal-gvisor": () => import("@sandbox-benchmarks/modal/gvisor").then((module) => module.default),
 	"modal-vm": () => import("@sandbox-benchmarks/modal/vm").then((module) => module.default),
 	novita: () => import("@sandbox-benchmarks/novita").then((module) => module.default),
+	vercel: () => import("@sandbox-benchmarks/vercel").then((module) => module.default),
 	tama: () => import("@sandbox-benchmarks/tama").then((module) => module.default),
 });
 

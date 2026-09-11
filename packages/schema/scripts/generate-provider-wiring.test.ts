@@ -245,6 +245,7 @@ describe("provider wiring projections", () => {
 			"modal-gvisor",
 			"modal-vm",
 			"novita",
+			"vercel",
 			"tama",
 		]);
 		expect([...PROVIDER_IDS].filter((id) => fleet.waivers[id] !== undefined)).toEqual([
@@ -252,7 +253,6 @@ describe("provider wiring projections", () => {
 			"microsandbox-cloud",
 			"runloop",
 			"namespace",
-			"vercel",
 			"runcloud",
 		]);
 

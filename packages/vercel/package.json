@@ -1,0 +1,26 @@
+{
+  "name": "@sandbox-benchmarks/vercel",
+  "version": "0.0.0",
+  "private": true,
+  "description": "vercel sandbox integration for driverkit.",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@sandbox-benchmarks/driver": "workspace:*",
+    "@vercel/sandbox": "catalog:computesdk",
+    "arktype": "catalog:"
+  },
+  "devDependencies": {
+    "@repo/tsconfig": "workspace:*",
+    "@types/bun": "catalog:",
+    "typescript": "catalog:"
+  }
+}

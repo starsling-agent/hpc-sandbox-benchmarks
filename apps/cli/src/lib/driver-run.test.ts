@@ -22,6 +22,11 @@ import { cleanupOwnedSandboxes, createSuiteSandboxFromPlan } from "@sandbox-benc
 import type { LegacyAdapterId } from "@sandbox-benchmarks/providers";
 import type { ProviderId } from "@sandbox-benchmarks/schema";
 import { PROVIDERS, REGISTRY, SUITES, TOOLCHAIN_VERSION } from "@sandbox-benchmarks/schema";
+import {
+	VERCEL_PROJECT_NAME_DEFAULT,
+	VERCEL_TEAM_SLUG_DEFAULT,
+	vercelVcrImageRefs,
+} from "@sandbox-benchmarks/schema/toolchain";
 import type { OpenedDriver } from "./driver-run.ts";
 import {
 	createOwnedDriverSession,
@@ -92,6 +97,7 @@ describe("bench-suite driver vs legacy selection (Phase A unit 1)", () => {
 			"modal-vm",
 			"novita",
 			"tama",
+			"vercel",
 		]);
 		expect([...driverIds, ...adapterIds].sort()).toEqual(PROVIDERS.map((meta) => meta.id).sort());
 		expect(driverIds.filter((id) => adapterIds.includes(id))).toEqual([]);
@@ -267,6 +273,32 @@ describe("driverArtifactResolution", () => {
 	test("a driver with no declared override is unaffected", () => {
 		const env = parseDriverEnv("tama", { TAMA_TOKEN: "token", TAMA_CLI: "/opt/tama" });
 		expect(driverArtifactResolution("tama", env)).toEqual({});
+	});
+
+	test("resolves Vercel's mirrored image from its namespace inputs, with defaults", () => {
+		const defaults = vercelVcrImageRefs(VERCEL_TEAM_SLUG_DEFAULT, VERCEL_PROJECT_NAME_DEFAULT);
+		const env = parseDriverEnv("vercel", { VERCEL_OIDC_TOKEN: "a.b.c" });
+		expect(driverArtifactResolution("vercel", env)).toEqual({ ref: defaults.version });
+		expect(driverArtifactResolution("vercel", env, { phase: "candidate" })).toEqual({
+			phase: "candidate",
+			ref: defaults.candidate,
+		});
+		expect(resolveDriverArtifact("vercel", driverArtifactResolution("vercel", env))).toEqual({
+			kind: "mirror",
+			ref: defaults.version,
+		});
+		const scoped = parseDriverEnv("vercel", {
+			VERCEL_OIDC_TOKEN: "a.b.c",
+			VERCEL_TEAM_SLUG: "other-team",
+			VERCEL_PROJECT_NAME: "other-project",
+		});
+		expect(driverArtifactResolution("vercel", scoped)).toEqual({
+			ref: vercelVcrImageRefs("other-team", "other-project").version,
+		});
+		// An explicit ref (the bake's mirrored candidate digest) still wins over the projection.
+		expect(
+			driverArtifactResolution("vercel", env, { ref: "vcr.vercel.com/x/y/z@sha256:0" }),
+		).toEqual({ ref: "vcr.vercel.com/x/y/z@sha256:0" });
 	});
 });
 

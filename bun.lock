@@ -102,6 +102,7 @@
         "@sandbox-benchmarks/modal": "workspace:*",
         "@sandbox-benchmarks/novita": "workspace:*",
         "@sandbox-benchmarks/tama": "workspace:*",
+        "@sandbox-benchmarks/vercel": "workspace:*",
       },
       "devDependencies": {
         "@repo/tsconfig": "workspace:*",
@@ -260,6 +261,20 @@
         "@sandbox-benchmarks/providers": "workspace:*",
         "@sandbox-benchmarks/schema": "workspace:*",
         "computesdk": "catalog:computesdk",
+      },
+      "devDependencies": {
+        "@repo/tsconfig": "workspace:*",
+        "@types/bun": "catalog:",
+        "typescript": "catalog:",
+      },
+    },
+    "packages/vercel": {
+      "name": "@sandbox-benchmarks/vercel",
+      "version": "0.0.0",
+      "dependencies": {
+        "@sandbox-benchmarks/driver": "workspace:*",
+        "@vercel/sandbox": "catalog:computesdk",
+        "arktype": "catalog:",
       },
       "devDependencies": {
         "@repo/tsconfig": "workspace:*",
@@ -856,6 +871,8 @@
     "@sandbox-benchmarks/tama": ["@sandbox-benchmarks/tama@workspace:packages/tama"],
 
     "@sandbox-benchmarks/templates": ["@sandbox-benchmarks/templates@workspace:packages/templates"],
+
+    "@sandbox-benchmarks/vercel": ["@sandbox-benchmarks/vercel@workspace:packages/vercel"],
 
     "@sinclair/typebox": ["@sinclair/typebox@0.25.24", "", {}, "sha512-XJfwUVUKDHF5ugKwIcxEgc9k8b7HbznCp6eUfWgu710hMPNIO4aw4/zB5RogDQz8nd6gyCDpU9O/m6qYEWY6yQ=="],
 

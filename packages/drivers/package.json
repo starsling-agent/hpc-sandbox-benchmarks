@@ -19,7 +19,8 @@
     "@sandbox-benchmarks/e2b": "workspace:*",
     "@sandbox-benchmarks/modal": "workspace:*",
     "@sandbox-benchmarks/novita": "workspace:*",
-    "@sandbox-benchmarks/tama": "workspace:*"
+    "@sandbox-benchmarks/tama": "workspace:*",
+    "@sandbox-benchmarks/vercel": "workspace:*"
   },
   "devDependencies": {
     "@repo/tsconfig": "workspace:*",

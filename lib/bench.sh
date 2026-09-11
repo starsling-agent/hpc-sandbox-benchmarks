@@ -757,6 +757,16 @@ install_vendored_pts_profile() {
 	echo "Staged vendored PTS override: ${profile_dst} (removed ${installed_dst})"
 }
 
+# Stage only fio's result definitions after installation. Keep the compiled binary and upstream
+# install metadata; each new PTS process resolves the local profile before its upstream cache.
+_stage_fio_pts_parser() {
+	local destination
+	destination="$(pts_user_dir)/test-profiles/pts/fio-2.1.0" || return 1
+	mkdir -p "$destination" || return 1
+	cp "${REPO_ROOT}/packages/schema/src/pts-profiles/fio-2.1.0/test-definition.xml" "$destination/" || return 1
+	cp "${REPO_ROOT}/packages/schema/src/pts-profiles/fio-2.1.0/results-definition.xml" "$destination/"
+}
+
 # Count the <Value> elements in a PTS composite whose content is a plain number. Failed PTS trials
 # leave empty <Value></Value> elements behind while batch-run still exits 0, so this count is the
 # only in-sandbox signal separating a measured composite from an all-trials-failed one. Always
@@ -837,6 +847,10 @@ run_pts_benchmark() {
 			skip_result "PTS install of ${test_name} failed (exit 0, not in list-installed-tests)" "$prefix"
 			return 0
 		fi
+	fi
+
+	if [ "$test_name" = "pts/fio-2.1.0" ]; then
+		_stage_fio_pts_parser || return 1
 	fi
 
 	# Stamp the instant before the run: the composite search below must only accept output THIS

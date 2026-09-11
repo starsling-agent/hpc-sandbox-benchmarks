@@ -528,3 +528,45 @@ test("stock boots do not require verification of an artifact they never requeste
 	attempt.evidence.runDigest = evidenceDigest(attempt.run);
 	expect(evaluateExperiment(stockPlan, [attempt]).complete).toBe(true);
 });
+
+test("mixed suites share resource-bounded waves with the longest member budget", () => {
+	const cells = [
+		cell(),
+		{
+			...cell(),
+			id: "e2b-system-r0",
+			suite: "system",
+			workloadRevision: "system-fixed-v1",
+			workloadMinutes: 60,
+			passes: 1,
+		},
+		cell(1),
+	];
+	const result = planExperiment(
+		{ id: "mixed", sha, createdOn: "2026-09-10", cells },
+		{ "e2b-benchmark": { sandboxes: 30, vcpus: 8, memoryGb: 16 } },
+	);
+	expect(result.batches.map((batch) => batch.cells)).toEqual([
+		["e2b-memory-r0", "e2b-system-r0"],
+		["e2b-memory-r1"],
+	]);
+	expect(result.batches.map((batch) => batch.budgetMinutes)).toEqual([105, 85]);
+});
+
+test("different allocation requirements stay in separate waves", () => {
+	for (const change of [
+		{ artifactIdentity: "other" },
+		{ environmentRevision: "other" },
+		{ startupMinutes: 30 },
+	]) {
+		const cells = [
+			cell(),
+			{ ...cell(), id: "e2b-system-r0", suite: "system", workloadRevision: "system-v1", ...change },
+		];
+		const result = planExperiment(
+			{ id: "mixed", sha, createdOn: "2026-09-10", cells },
+			{ "e2b-benchmark": { sandboxes: 30 } },
+		);
+		expect(result.batches).toHaveLength(2);
+	}
+});

@@ -59,10 +59,18 @@ This is an implementation status record, not a claim that the live fleet meets t
 
 Matrix and smoke now freeze one immutable plan and dispatch account → collection round → batch.
 Every allocating worker verifies the plan and source revision, reconciles its account once, and runs
-one bounded wave through the existing harness and normalizer. The account and round matrices use
-`max-parallel: 1`; independent accounts can proceed together. Fixed suite defaults and replicate
-indices are preserved. Convergence is rejected by publication planning until its separately reviewed
-measurement revision is admitted; an explicit fixed-pass input is part of the workload identity.
+one bounded wave through the existing harness and normalizer. Different suites with compatible
+provider allocations share a wave up to the account's sandbox and resource caps. Each cell retains
+its suite, replica index, pass count, and phase deadlines; the batch reserves the longest member's
+budget. Collection rounds proceed sequentially, and the account concurrency group serializes batches;
+independent accounts can proceed together.
+
+Bounded publication uses each suite's fixed pass default (two unless the suite declares another
+count). An explicit fixed-pass override changes every selected suite's workload identity; explicit
+convergence remains inadmissible. With a 30-sandbox cap, all nine suites use 54 sandboxes per provider
+in waves of 30 and 24, preserving three replicas per synthetic suite and twelve per real-world suite.
+These are peak wave sizes, not a promise of 30 continuously occupied slots: the next batch waits for
+all current members and cleanup to finish. Scheduling changes apply only to newly frozen plans.
 
 Each attempt uploads independently. The CLI performs those uploads (and the plan's) through
 `@actions/artifact`, which needs the run-scoped artifact runtime GitHub injects only into action

@@ -46,10 +46,7 @@ export function workflowExperiment(env: NodeJS.ProcessEnv, createdOn: string): E
 		);
 		for (const suiteName of selectSuites(env.BENCH_SUITES)) {
 			const suite = SUITES[suiteName];
-			if (
-				passOverride === "converge" ||
-				(!passOverride && "ptsConverge" in suite && suite.ptsConverge)
-			)
+			if (passOverride === "converge")
 				throw new Error(
 					`${suiteName}: convergence is not admitted for bounded publication; select an explicitly versioned fixed-pass experiment`,
 				);
@@ -105,6 +102,9 @@ export function workflowAxes(plan: ExperimentPlan, account?: string, round?: str
 		const cell = plan.cells.find((entry) => entry.id === batch?.cells[0]);
 		if (!batch || !cell || batch.quotaDomain !== quotaDomain(cell.provider))
 			throw new Error("invalid workflow quota domain");
-		return { batch: id, provider: cell.provider, suite: cell.suite };
+		const suites = new Set(
+			plan.cells.filter((entry) => batch.cells.includes(entry.id)).map((entry) => entry.suite),
+		);
+		return { batch: id, provider: cell.provider, suite: suites.size === 1 ? cell.suite : "mixed" };
 	});
 }

@@ -241,3 +241,59 @@ test("a typed clean create refusal releases its intent while an ambiguous failur
 		).toBe(true);
 	}
 });
+
+test("different suites enter measurement together and retain independent attempt identities", async () => {
+	const f = await fixture("mixed-suites");
+	const mixed = workflowExperiment(
+		{
+			GITHUB_RUN_ID: "mixed",
+			GITHUB_SHA: plan.sha,
+			BENCH_PROVIDERS: "tama",
+			BENCH_SUITES: "cpu-node,memory",
+			BENCH_REPLICAS: "1",
+			BENCH_ACCOUNT_CAPACITY: '{"tama":{"sandboxes":2}}',
+		},
+		"2026-09-10",
+	);
+	const opened = await f.options.open();
+	const started = new Set<string>();
+	const gate = Promise.withResolvers<void>();
+	const timeout = setTimeout(() => gate.reject(new Error("suites did not overlap")), 2000);
+	try {
+		const attempts = await executeExperimentBatch({
+			...f.options,
+			plan: mixed,
+			open: async () => ({
+				...opened,
+				driver: {
+					...opened.driver,
+					create: async (...args) => {
+						const session = await opened.driver.create(...args);
+						return {
+							...session,
+							exec: async (command, options) => {
+								if (command.includes("benchmark:cpu") || command.includes("benchmark:memory")) {
+									started.add(session.sandboxRef.id);
+									if (started.size === 2) gate.resolve();
+									await gate.promise;
+								}
+								return session.exec(command, options);
+							},
+						};
+					},
+				},
+			}),
+		});
+		expect(started.size).toBe(2);
+		expect(f.peak()).toBe(2);
+		expect(attempts.map((attempt) => attempt.cellId)).toEqual(mixed.cells.map((cell) => cell.id));
+		expect(
+			attempts.every((attempt) => attempt.measurementStarted && attempt.cleanup === "confirmed"),
+		).toBe(true);
+		// The CPU-only fixture cannot fabricate the missing memory metrics.
+		expect(batchIsComplete(mixed, f.options.root, attempts)).toBe(false);
+		expect(f.present.size).toBe(0);
+	} finally {
+		clearTimeout(timeout);
+	}
+});

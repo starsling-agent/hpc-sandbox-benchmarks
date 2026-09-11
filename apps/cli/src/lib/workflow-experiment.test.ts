@@ -25,9 +25,12 @@ test("workflow planning preserves samples and defaults shared accounts to one sa
 	]);
 });
 test("convergence and implicit per-cell quota overrides fail admission", () => {
-	expect(() => workflowExperiment({ ...env, BENCH_SUITES: "memory" }, "2026-09-10")).toThrow(
-		"convergence",
-	);
+	expect(() =>
+		workflowExperiment(
+			{ ...env, BENCH_SUITES: "memory", BENCH_PTS_PASSES: "converge" },
+			"2026-09-10",
+		),
+	).toThrow("convergence");
 	expect(() => workflowExperiment({ ...env, BENCH_MAX_CONCURRENCY: "12" }, "2026-09-10")).toThrow(
 		"retired",
 	);
@@ -39,4 +42,30 @@ test("large account cohorts partition into bounded collection rounds", () => {
 	);
 	expect(plan.rounds.map((round) => round.batches.length)).toEqual([64, 64, 64, 64, 1]);
 	expect(plan.cells.at(-1)?.replicate).toBe(256);
+});
+
+test("full provider plans overlap suites under the account cap without adding replicas", () => {
+	const plan = workflowExperiment(
+		{
+			...env,
+			BENCH_PROVIDERS: "e2b",
+			BENCH_SUITES: "",
+			BENCH_ACCOUNT_CAPACITY: JSON.stringify({ e2b: { sandboxes: 30 } }),
+		},
+		"2026-09-10",
+	);
+	expect(plan.cells).toHaveLength(54);
+	expect(plan.batches.map((batch) => batch.cells.length)).toEqual([30, 24]);
+	for (const suite of new Set(plan.cells.map((cell) => cell.suite))) {
+		const cells = plan.cells.filter((cell) => cell.suite === suite);
+		const realworld = suite.startsWith("realworld-");
+		expect(cells.map((cell) => cell.replicate)).toEqual(
+			Array.from({ length: realworld ? 12 : 3 }, (_, i) => i),
+		);
+		expect(cells.every((cell) => cell.passes === (realworld ? 1 : 2))).toBe(true);
+	}
+	expect(workflowAxes(plan, "e2b", plan.rounds[0]?.id)).toEqual([
+		{ batch: "batch-0", provider: "e2b", suite: "mixed" },
+		{ batch: "batch-1", provider: "e2b", suite: "mixed" },
+	]);
 });

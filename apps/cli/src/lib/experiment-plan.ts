@@ -18,6 +18,19 @@ export interface AccountCapacity {
  */
 export const ROUND_BATCH_LIMIT = 64;
 
+// Suite workloads retain their own identities and deadlines inside a concurrent wave.
+function allocationIdentity(cell: ExperimentCell): string {
+	return evidenceDigest({
+		provider: cell.provider,
+		quotaDomain: cell.quotaDomain,
+		target: cell.target,
+		gpu: cell.gpu ?? null,
+		artifactIdentity: cell.artifactIdentity,
+		environmentRevision: cell.environmentRevision,
+		startupMinutes: cell.startupMinutes,
+	});
+}
+
 /** Pure admission planning. No credential reads, remote calls, or implicit wall-clock input. */
 export function planExperiment(
 	request: {
@@ -53,7 +66,7 @@ export function planExperiment(
 		if (cap < 1) throw new Error(`target exceeds account capacity: ${cell.id}`);
 		const budgetMinutes = cell.startupMinutes + cell.workloadMinutes + cell.finishMinutes + 15;
 		if (budgetMinutes > 180) throw new Error(`replicate cannot fit a 180-minute job: ${cell.id}`);
-		// A batch is one simultaneous wave of identical requests. Never hide serial waves in a job.
+		// A batch is one simultaneous wave of compatible allocations. Never hide serial waves in a job.
 		const previous = batches.at(-1);
 		const first = cells.find((entry) => entry.id === previous?.cells[0]);
 		if (
@@ -62,11 +75,10 @@ export function planExperiment(
 			previous.quotaDomain === cell.quotaDomain &&
 			previous.cells.length < cap &&
 			first.provider === cell.provider &&
-			first.suite === cell.suite &&
-			evidenceDigest({ ...first, id: "", replicate: 0 }) ===
-				evidenceDigest({ ...cell, id: "", replicate: 0 })
+			allocationIdentity(first) === allocationIdentity(cell)
 		) {
 			previous.cells.push(cell.id);
+			previous.budgetMinutes = Math.max(previous.budgetMinutes, budgetMinutes);
 		} else {
 			batches.push({
 				id: `batch-${batches.length}`,

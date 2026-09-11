@@ -6,7 +6,7 @@
     <LineHint>: bw=</LineHint>
     <ResultAfterString>bw</ResultAfterString>
     <StripFromResult>KiB/s</StripFromResult>
-    <DivideResultBy>1000</DivideResultBy>
+    <MultiplyResultBy>0.001024</MultiplyResultBy>
     <ResultScale>MB/s</ResultScale>
     <ResultProportion>HIB</ResultProportion>
   </ResultsParser>
@@ -15,6 +15,16 @@
     <LineHint>: bw=</LineHint>
     <ResultAfterString>bw</ResultAfterString>
     <StripFromResult>MiB/s</StripFromResult>
+    <MultiplyResultBy>1.048576</MultiplyResultBy>
+    <ResultScale>MB/s</ResultScale>
+    <ResultProportion>HIB</ResultProportion>
+  </ResultsParser>
+  <ResultsParser>
+    <OutputTemplate>   READ: bw=#_RESULT_# (861MB/s), 821MiB/s-821MiB/s (861MB/s-861MB/s), io=16.4GiB (17.3GB), run=20002-20002msec</OutputTemplate>
+    <LineHint>: bw=</LineHint>
+    <ResultAfterString>bw</ResultAfterString>
+    <StripFromResult>GiB/s</StripFromResult>
+    <MultiplyResultBy>1073.741824</MultiplyResultBy>
     <ResultScale>MB/s</ResultScale>
     <ResultProportion>HIB</ResultProportion>
   </ResultsParser>

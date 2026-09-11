@@ -5,10 +5,10 @@
 # Everything is owned by default and the LAST matching entry wins; an entry with NO owner un-owns
 # its paths. Only the artifacts the github-actions bot lands hands-off are deliberately unowned
 # (docs/ci-secrets.md rules 5 and 7). A PR touching only those needs no code-owner review; anything
-# else — code, workflows, docs — requires @dbworku. In particular the leaderboard
+# else — code, workflows, docs — requires review from @dbworku or @cosmic-emerald. In particular the leaderboard
 # renderer and its backing packages must stay owned: their output is committed by a job inside the
 # `privileged` environment, so unreviewed renderer changes would run with release credentials.
-* @dbworku
+* @dbworku @cosmic-emerald
 
 # Bot-landed release artifacts — no owner, so the bot's direct merge needs no human review.
 # These must stay in lockstep with the path allowlists the landing jobs assert against

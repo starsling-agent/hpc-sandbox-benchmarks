@@ -20,6 +20,7 @@
     "@sandbox-benchmarks/e2b": "workspace:*",
     "@sandbox-benchmarks/microsandbox-cloud": "workspace:*",
     "@sandbox-benchmarks/modal": "workspace:*",
+    "@sandbox-benchmarks/namespace": "workspace:*",
     "@sandbox-benchmarks/novita": "workspace:*",
     "@sandbox-benchmarks/runcloud": "workspace:*",
     "@sandbox-benchmarks/runloop": "workspace:*",

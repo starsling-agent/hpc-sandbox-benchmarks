@@ -97,6 +97,7 @@ describe("bench-suite driver vs legacy selection (Phase A unit 1)", () => {
 			"microsandbox-cloud",
 			"modal-gvisor",
 			"modal-vm",
+			"namespace",
 			"novita",
 			"runcloud",
 			"runloop",
@@ -123,14 +124,9 @@ describe("bench-suite driver vs legacy selection (Phase A unit 1)", () => {
 		}
 	});
 
-	test("waived ids stay on the legacy path unless --driver-path forces the driver lane", () => {
-		expect(usesDriverSuite("namespace")).toBe(false);
-		expect(usesDriverSuite("namespace", false)).toBe(false);
-		expect(usesDriverSuite("namespace", true)).toBe(true);
-		expect(isDriverProviderId("namespace")).toBe(false);
-		// A migrated id leaves the legacy path for good.
-		expect(usesDriverSuite("runcloud")).toBe(true);
-		expect(isDriverProviderId("runcloud")).toBe(true);
+	test("the final Namespace migration uses the driver lane by default", () => {
+		expect(usesDriverSuite("namespace")).toBe(true);
+		expect(isDriverProviderId("namespace")).toBe(true);
 	});
 
 	test("an unknown id does not invent a DriverModule", () => {

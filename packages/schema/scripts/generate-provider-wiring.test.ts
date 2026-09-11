@@ -248,13 +248,12 @@ describe("provider wiring projections", () => {
 			"modal-vm",
 			"novita",
 			"runloop",
+			"namespace",
 			"vercel",
 			"runcloud",
 			"tama",
 		]);
-		expect([...PROVIDER_IDS].filter((id) => fleet.waivers[id] !== undefined)).toEqual([
-			"namespace",
-		]);
+		expect([...PROVIDER_IDS].filter((id) => fleet.waivers[id] !== undefined)).toEqual([]);
 
 		const source = renderDriversIndex(fleet.moduleIds);
 		const scanned = new Bun.Transpiler({ loader: "ts" }).scan(source);

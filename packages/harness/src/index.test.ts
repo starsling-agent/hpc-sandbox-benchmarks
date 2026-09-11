@@ -455,17 +455,16 @@ describe("runSuite (resolution + credential gate)", () => {
 		).rejects.toBeInstanceOf(SuiteUsageError);
 	});
 
-	it("records a skip marker (not a failure) when credentials are missing", async () => {
-		const resultsDir = freshDir();
-		// Empty env → daytona's required key is absent, so the suite skips before any sandbox is created.
-		await runSuite({
-			runId: "test",
-			providerName: "namespace",
-			suiteName: "cpu-node",
-			resultsDir,
-			env: {},
-		});
-		expect(existsSync(join(resultsDir, "sandbox-namespace-cpu-node--skipped.json"))).toBe(true);
+	it("rejects migrated providers on the retired legacy entry point", async () => {
+		await expect(
+			runSuite({
+				runId: "test",
+				providerName: "namespace",
+				suiteName: "cpu-node",
+				resultsDir: freshDir(),
+				env: {},
+			}),
+		).rejects.toBeInstanceOf(SuiteUsageError);
 	});
 });
 

@@ -91,16 +91,16 @@ describe("DriverModule benchmark path", () => {
 		expect(readFileSync(resultsDir, "utf8")).toBe("not a directory");
 	});
 
-	test("rejects an unmigrated provider instead of falling back to packages/providers", async () => {
+	test("rejects an unknown provider instead of falling back to packages/providers", async () => {
 		await expect(
 			runDriverSuite({
 				runId: "driver-spike-no-fallback",
-				providerName: "namespace",
+				providerName: "nope",
 				suiteName: "cpu-node",
 				resultsDir: freshRoot(),
 				env: { DAYTONA_API_KEY: "must-not-be-used" },
 			}),
-		).rejects.toThrow(/namespace has no DriverModule/);
+		).rejects.toThrow(/nope has no DriverModule/);
 	});
 
 	test("persists verified E2B artifact evidence and normalizes a valid Run v6", async () => {

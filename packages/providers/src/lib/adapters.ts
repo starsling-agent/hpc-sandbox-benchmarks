@@ -2,10 +2,8 @@
 // maintained @computesdk wrappers. Vercel uses its native SDK because the published wrapper still
 // pins Sandbox v1; run.cloud also uses its native SDK because no @computesdk wrapper is published.
 
-import { namespace } from "@computesdk/namespace";
 import type { ProviderId } from "@sandbox-benchmarks/schema";
-import { PROVIDER_IDS, TARGET_SPEC } from "@sandbox-benchmarks/schema";
-import { config } from "../config.ts";
+import { PROVIDER_IDS } from "@sandbox-benchmarks/schema";
 import type { ProviderAdapter } from "./types.ts";
 
 /**
@@ -31,6 +29,7 @@ export const MIGRATED_DRIVER_IDS = [
 	"microsandbox-cloud",
 	"runloop",
 	"runcloud",
+	"namespace",
 ] as const satisfies readonly ProviderId[];
 
 /** A schema id served by a registered DriverModule. Derived from the list, so the two cannot drift. */
@@ -46,25 +45,7 @@ export type LegacyAdapterId = Exclude<ProviderId, MigratedDriverId>;
  * `loadDriverModule`, and a CLI partition test proves this set and `DRIVERS` are disjoint and
  * jointly complete.
  */
-export const adapters: Record<LegacyAdapterId, ProviderAdapter> = {
-	namespace: {
-		artifact: { kind: "image", ref: config.toolchainImage },
-		// The token rides the factory's own NSC_TOKEN_FILE env fallback (getAndValidateCredentials) —
-		// CI's OIDC federation (nscloud-setup) lands the token there, not in NSC_TOKEN — never read
-		// here, same as blaxel's BL_API_KEY. virtualCpu/memoryMegabytes are per-instance knobs on this
-		// factory config (not per-create options), so the target spec is pinned once, at construction,
-		// like blaxel's/modal's cpu/memory.
-		createCompute: () =>
-			namespace({
-				virtualCpu: TARGET_SPEC.vcpus,
-				memoryMegabytes: TARGET_SPEC.memoryGb * 1024,
-			}),
-		// Namespace has no template/snapshot system — `create()` pulls an arbitrary OCI ref straight
-		// from `options.image` (computesdk's open CreateSandboxOptions passthrough), so, like modal's
-		// fromRegistry boot, this points directly at the published toolchain image; nothing to bake.
-		createOptions: { image: config.toolchainImage },
-	},
-};
+export const adapters: Record<LegacyAdapterId, ProviderAdapter> = {};
 
 /**
  * Whether `id` is a schema provider this package is still expected to serve.

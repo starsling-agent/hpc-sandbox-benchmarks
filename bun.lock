@@ -117,6 +117,7 @@
         "@sandbox-benchmarks/microsandbox-cloud": "workspace:*",
         "@sandbox-benchmarks/modal": "workspace:*",
         "@sandbox-benchmarks/novita": "workspace:*",
+        "@sandbox-benchmarks/runcloud": "workspace:*",
         "@sandbox-benchmarks/runloop": "workspace:*",
         "@sandbox-benchmarks/tama": "workspace:*",
         "@sandbox-benchmarks/vercel": "workspace:*",
@@ -249,6 +250,20 @@
         "@nodable/flexible-xml-parser": "catalog:xml",
         "@sandbox-benchmarks/figures": "workspace:*",
         "@sandbox-benchmarks/schema": "workspace:*",
+        "arktype": "catalog:",
+      },
+      "devDependencies": {
+        "@repo/tsconfig": "workspace:*",
+        "@types/bun": "catalog:",
+        "typescript": "catalog:",
+      },
+    },
+    "packages/runcloud": {
+      "name": "@sandbox-benchmarks/runcloud",
+      "version": "0.0.0",
+      "dependencies": {
+        "@run-cloud/sdk": "catalog:computesdk",
+        "@sandbox-benchmarks/driver": "workspace:*",
         "arktype": "catalog:",
       },
       "devDependencies": {
@@ -914,6 +929,8 @@
     "@sandbox-benchmarks/providers": ["@sandbox-benchmarks/providers@workspace:packages/providers"],
 
     "@sandbox-benchmarks/results": ["@sandbox-benchmarks/results@workspace:packages/results"],
+
+    "@sandbox-benchmarks/runcloud": ["@sandbox-benchmarks/runcloud@workspace:packages/runcloud"],
 
     "@sandbox-benchmarks/runloop": ["@sandbox-benchmarks/runloop@workspace:packages/runloop"],
 

@@ -249,11 +249,11 @@ describe("provider wiring projections", () => {
 			"novita",
 			"runloop",
 			"vercel",
+			"runcloud",
 			"tama",
 		]);
 		expect([...PROVIDER_IDS].filter((id) => fleet.waivers[id] !== undefined)).toEqual([
 			"namespace",
-			"runcloud",
 		]);
 
 		const source = renderDriversIndex(fleet.moduleIds);

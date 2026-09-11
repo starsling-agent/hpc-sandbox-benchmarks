@@ -1,12 +1,7 @@
+// The sanitizers every cost-evidence sink shares; provider-specific capture hooks live beside their
+// driver modules in packages/drivers.
 import { types as utilTypes } from "node:util";
-import type { MissingProviderCostEvidence, SdkProvenance } from "@sandbox-benchmarks/schema";
 import { canonicalJsonString, PROVIDER_RESPONSE_LIMITS } from "@sandbox-benchmarks/schema";
-import type { CostEvidenceCaptureInput, ProviderCostEvidenceCapability } from "./types.ts";
-
-export const RUNCLOUD_SDK_PROVENANCE = {
-	packageName: "@run-cloud/sdk",
-	version: "0.9.0",
-} as const satisfies SdkProvenance;
 
 const REDACTED = "[REDACTED]";
 const CREDENTIAL_KEYS = new Set([
@@ -177,45 +172,3 @@ export function sanitizeProviderResponse(value: unknown): string {
 export function sanitizeEvidenceDetail(_error: unknown): string {
 	return "Provider cost evidence operation failed; provider-supplied error details were not persisted.";
 }
-
-function baseMissing(
-	input: CostEvidenceCaptureInput,
-	sdk: SdkProvenance,
-	reason: MissingProviderCostEvidence["reason"],
-	detail: string,
-	context: Record<string, string> = {},
-): MissingProviderCostEvidence {
-	return {
-		kind: "missing",
-		cell: input.cell,
-		subject: { kind: "sandbox", sandboxId: input.sandboxId, ...context },
-		capturedAt: new Date().toISOString(),
-		sdk,
-		reason,
-		detail,
-	};
-}
-
-async function runcloudCapture(
-	input: CostEvidenceCaptureInput,
-): Promise<MissingProviderCostEvidence> {
-	if (!input.teardown.completed) {
-		return baseMissing(
-			input,
-			RUNCLOUD_SDK_PROVENANCE,
-			"sandbox_teardown_unconfirmed",
-			"Sandbox teardown was not confirmed; no provider usage was considered.",
-		);
-	}
-	return baseMissing(
-		input,
-		RUNCLOUD_SDK_PROVENANCE,
-		"not_sandbox_scoped",
-		"The installed public run.cloud usage API is organization-wide cumulative usage and was not called or delta-attributed to this sandbox.",
-	);
-}
-
-export const runcloudCostEvidence: ProviderCostEvidenceCapability = {
-	sdk: RUNCLOUD_SDK_PROVENANCE,
-	captureAfterTeardown: runcloudCapture,
-};

@@ -98,6 +98,7 @@ describe("bench-suite driver vs legacy selection (Phase A unit 1)", () => {
 			"modal-gvisor",
 			"modal-vm",
 			"novita",
+			"runcloud",
 			"runloop",
 			"tama",
 			"vercel",
@@ -124,10 +125,12 @@ describe("bench-suite driver vs legacy selection (Phase A unit 1)", () => {
 
 	test("waived ids stay on the legacy path unless --driver-path forces the driver lane", () => {
 		expect(usesDriverSuite("namespace")).toBe(false);
-		expect(usesDriverSuite("runcloud")).toBe(false);
 		expect(usesDriverSuite("namespace", false)).toBe(false);
-		expect(usesDriverSuite("runcloud", true)).toBe(true);
-		expect(isDriverProviderId("runcloud")).toBe(false);
+		expect(usesDriverSuite("namespace", true)).toBe(true);
+		expect(isDriverProviderId("namespace")).toBe(false);
+		// A migrated id leaves the legacy path for good.
+		expect(usesDriverSuite("runcloud")).toBe(true);
+		expect(isDriverProviderId("runcloud")).toBe(true);
 	});
 
 	test("an unknown id does not invent a DriverModule", () => {

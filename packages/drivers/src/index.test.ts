@@ -23,6 +23,7 @@ describe("generated driver loader", () => {
 			"novita",
 			"runloop",
 			"vercel",
+			"runcloud",
 			"tama",
 		]);
 		expect(Object.values(DRIVERS).every((load) => typeof load === "function")).toBe(true);
@@ -44,8 +45,8 @@ describe("generated driver loader", () => {
 	});
 
 	test("does not pretend a migration-waived provider has a DriverModule", () => {
-		// @ts-expect-error — runcloud remains explicitly migration-waived, not a lying loader entry
-		const loadWaivedProvider = () => loadDriverModule("runcloud");
+		// @ts-expect-error — namespace remains explicitly migration-waived, not a lying loader entry
+		const loadWaivedProvider = () => loadDriverModule("namespace");
 		void loadWaivedProvider;
 		expect(true).toBe(true);
 	});

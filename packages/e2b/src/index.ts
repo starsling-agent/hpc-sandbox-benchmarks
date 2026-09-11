@@ -158,6 +158,8 @@ export async function launchE2bCommandAsRoot(
 	const handle = await sandbox.getInstance().commands.run(command, {
 		user: "root",
 		background: true,
+		// E2B's default 60-second timeout kills the receipt-writing shell. The harness owns this deadline.
+		timeoutMs: 0,
 		...(options?.signal === undefined ? {} : { signal: options.signal }),
 	});
 	if (!Number.isSafeInteger(handle.pid) || handle.pid <= 0) {

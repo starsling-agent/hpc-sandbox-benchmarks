@@ -2,6 +2,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import type { CreateRequest } from "@sandbox-benchmarks/driver";
 import { DriverError, FailedCreateCleanupError, sandboxRef } from "@sandbox-benchmarks/driver";
 import type { ComputeSdkSandboxOf } from "@sandbox-benchmarks/driver/computesdk";
+import type { CommandStartOpts } from "e2b";
 import {
 	AuthenticationError,
 	CommandExitError,
@@ -554,15 +555,12 @@ describe("E2B proof driver", () => {
 		}
 	});
 
-	test("splits foreground results from genuine background acceptance", async () => {
-		const calls: Array<[string, { readonly user?: string; readonly background?: boolean }]> = [];
+	test("background acceptance leaves the workload deadline to the harness", async () => {
+		const calls: Array<[string, CommandStartOpts]> = [];
 		const wrapper = {
 			getInstance: () => ({
 				commands: {
-					run: async (
-						command: string,
-						options: { readonly user?: string; readonly background?: boolean },
-					) => {
+					run: async (command: string, options: CommandStartOpts) => {
 						calls.push([command, options]);
 						return options.background ? { pid: 42 } : { exitCode: 0, stdout: "0\n", stderr: "" };
 					},
@@ -578,7 +576,7 @@ describe("E2B proof driver", () => {
 		expect(await launchE2bCommandAsRoot(wrapper, "daemon")).toBeUndefined();
 		expect(calls).toEqual([
 			["id -u", { user: "root", background: false }],
-			["daemon", { user: "root", background: true }],
+			["daemon", { user: "root", background: true, timeoutMs: 0 }],
 		]);
 	});
 

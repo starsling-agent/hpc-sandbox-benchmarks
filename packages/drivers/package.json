@@ -21,6 +21,7 @@
     "@sandbox-benchmarks/microsandbox-cloud": "workspace:*",
     "@sandbox-benchmarks/modal": "workspace:*",
     "@sandbox-benchmarks/novita": "workspace:*",
+    "@sandbox-benchmarks/runloop": "workspace:*",
     "@sandbox-benchmarks/tama": "workspace:*",
     "@sandbox-benchmarks/vercel": "workspace:*"
   },

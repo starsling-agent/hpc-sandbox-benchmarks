@@ -8,7 +8,6 @@ import { PROVIDER_IDS, TARGET_SPEC } from "@sandbox-benchmarks/schema";
 import { config } from "../config.ts";
 import { runcloudCostEvidence } from "./cost-evidence.ts";
 import { RUNCLOUD_CREATE_CEILING_MS, runcloudCompute } from "./runcloud.ts";
-import { runloopCompute } from "./runloop.ts";
 import type { ProviderAdapter } from "./types.ts";
 
 /**
@@ -32,6 +31,7 @@ export const MIGRATED_DRIVER_IDS = [
 	"vercel",
 	"blaxel",
 	"microsandbox-cloud",
+	"runloop",
 ] as const satisfies readonly ProviderId[];
 
 /** A schema id served by a registered DriverModule. Derived from the list, so the two cannot drift. */
@@ -43,13 +43,6 @@ export type LegacyAdapterId = Exclude<ProviderId, MigratedDriverId>;
  * benchmark sandboxes self-expiring. */
 const RUNCLOUD_MAX_DURATION_SECS = 3 * 60 * 60;
 
-/** The longest suite has a 155-minute budget; leave setup/collection margin while ensuring a leaked
- * Runloop Devbox expires. Runloop allows keep-alive durations up to 48 hours. */
-const RUNLOOP_KEEP_ALIVE_SECS = 3 * 60 * 60;
-/** Bound Runloop's create-and-await-running poll. The hardened adapter tears down an accepted
- * allocation if this deadline expires, so a cold start cannot hang the runner or leak a Devbox. */
-const RUNLOOP_CREATE_TIMEOUT_MS = 20 * 60 * 1000;
-
 /**
  * Harness adapters for providers not yet on DriverModule. The `Record<LegacyAdapterId, …>` type
  * forces exactly one adapter per unmigrated schema id, so a waived provider added to the schema
@@ -59,25 +52,6 @@ const RUNLOOP_CREATE_TIMEOUT_MS = 20 * 60 * 1000;
  * jointly complete.
  */
 export const adapters: Record<LegacyAdapterId, ProviderAdapter> = {
-	runloop: {
-		artifact: { kind: "baked", ref: config.runloopBlueprint },
-		// Boot the immutable version-scoped Blueprint by name. Runloop resolves that name to its latest
-		// successful build; the release lane owns creation from the shared toolchain image. Per-run launch
-		// parameters retain the benchmark's target sizing and keep-alive override. The API key stays in
-		// the SDK's RUNLOOP_API_KEY fallback and never enters guest-visible create options.
-		createCompute: runloopCompute,
-		createOptions: {
-			timeout: RUNLOOP_CREATE_TIMEOUT_MS,
-			blueprint_name: config.runloopBlueprint,
-			launch_parameters: {
-				resource_size_request: "CUSTOM_SIZE",
-				custom_cpu_cores: TARGET_SPEC.vcpus,
-				custom_gb_memory: TARGET_SPEC.memoryGb,
-				custom_disk_size: TARGET_SPEC.diskGb,
-				keep_alive_time_seconds: RUNLOOP_KEEP_ALIVE_SECS,
-			},
-		},
-	},
 	namespace: {
 		artifact: { kind: "image", ref: config.toolchainImage },
 		// The token rides the factory's own NSC_TOKEN_FILE env fallback (getAndValidateCredentials) —

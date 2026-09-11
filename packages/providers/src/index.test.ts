@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 // The stock wrapper factory, imported so the novita test can prove the connection methods were
 // actually REPLACED (identity inequality against an unpatched instance's methods table).
 import { e2b } from "@computesdk/e2b";
-import { PROVIDERS, TARGET_SPEC, TOOLCHAIN_IMAGE_NAME } from "@sandbox-benchmarks/schema";
+import { PROVIDERS, TARGET_SPEC } from "@sandbox-benchmarks/schema";
 import { normalizeProviderInput } from "@sandbox-benchmarks/schema/provider-meta";
 import { REGISTRY } from "@sandbox-benchmarks/schema/providers";
 import { ENV_KEYS } from "./config.ts";
@@ -80,33 +80,6 @@ describe("@sandbox-benchmarks/providers", () => {
 			kind: "image",
 			ref: config.toolchainImage,
 		});
-	});
-
-	it("pins Runloop's custom Devbox to the shared target spec", () => {
-		const adapter = providers.find((provider) => provider.name === "runloop");
-		expect(adapter).toBeDefined();
-		expect(adapter?.requiredEnvVars).toEqual(["RUNLOOP_API_KEY"]);
-		const compute = adapter?.createCompute();
-		expect(compute?.name).toBe("runloop");
-		expect(compute?.snapshot).toBeDefined();
-		expect(adapter?.createOptions).toEqual({
-			timeout: 20 * 60 * 1000,
-			blueprint_name: config.runloopBlueprintVersion,
-			launch_parameters: {
-				resource_size_request: "CUSTOM_SIZE",
-				custom_cpu_cores: TARGET_SPEC.vcpus,
-				custom_gb_memory: TARGET_SPEC.memoryGb,
-				custom_disk_size: TARGET_SPEC.diskGb,
-				keep_alive_time_seconds: 3 * 60 * 60,
-			},
-		});
-		expect(config.runloopBlueprint).toBe(config.runloopBlueprintVersion);
-		expect(config.runloopBlueprintVersion).toBe(
-			`${TOOLCHAIN_IMAGE_NAME}-${config.toolchainVersion}`,
-		);
-		expect(config.runloopBlueprintCandidate).toBe(`${config.runloopBlueprintVersion}-candidate`);
-		// The credential belongs only to the SDK control plane, never guest-visible create options.
-		expect(JSON.stringify(adapter?.createOptions)).not.toContain("RUNLOOP_API_KEY");
 	});
 
 	it("pins run.cloud to the shared image and target spec", () => {

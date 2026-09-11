@@ -280,6 +280,7 @@ const ARTIFACT_REF_OVERRIDE_ENV = {
 	e2b: "E2B_TEMPLATE",
 	"daytona-vm": "DAYTONA_SNAPSHOT",
 	"daytona-container": "DAYTONA_CONTAINER_SNAPSHOT",
+	runloop: "RUNLOOP_BLUEPRINT",
 } as const satisfies Partial<Record<DriverProviderId, string>>;
 
 /**
@@ -374,7 +375,8 @@ export function usesSessionOperations(id: DriverProviderId): boolean {
 		id === "daytona-container" ||
 		id === "vercel" ||
 		id === "blaxel" ||
-		id === "microsandbox-cloud"
+		id === "microsandbox-cloud" ||
+		id === "runloop"
 	);
 }
 

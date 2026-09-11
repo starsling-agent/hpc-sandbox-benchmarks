@@ -512,6 +512,7 @@ export function renderDriversProvenance(root = REPO_ROOT): Map<string, string> {
 		["MODAL_NATIVE", "modal", catalogVersion(catalog, "modal")],
 		["TAMA", "tama CLI", tamaCliVersion(root)],
 		["NOVITA", "novita-sandbox", catalogVersion(catalog, "novita-sandbox")],
+		["RUNLOOP", "@runloop/api-client", catalogVersion(catalog, "@runloop/api-client")],
 		["DAYTONA", "@daytona/sdk", catalogVersion(catalog, "@daytona/sdk")],
 		["VERCEL", "@vercel/sandbox", catalogVersion(catalog, "@vercel/sandbox")],
 		["BLAXEL", REGISTRY.blaxel.sdkPackage, catalogVersion(catalog, REGISTRY.blaxel.sdkPackage)],

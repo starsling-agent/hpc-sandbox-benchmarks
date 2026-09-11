@@ -98,6 +98,7 @@ describe("bench-suite driver vs legacy selection (Phase A unit 1)", () => {
 			"modal-gvisor",
 			"modal-vm",
 			"novita",
+			"runloop",
 			"tama",
 			"vercel",
 		]);
@@ -122,10 +123,10 @@ describe("bench-suite driver vs legacy selection (Phase A unit 1)", () => {
 	});
 
 	test("waived ids stay on the legacy path unless --driver-path forces the driver lane", () => {
-		expect(usesDriverSuite("runloop")).toBe(false);
+		expect(usesDriverSuite("namespace")).toBe(false);
 		expect(usesDriverSuite("runcloud")).toBe(false);
 		expect(usesDriverSuite("namespace", false)).toBe(false);
-		expect(usesDriverSuite("runloop", true)).toBe(true);
+		expect(usesDriverSuite("runcloud", true)).toBe(true);
 		expect(isDriverProviderId("runcloud")).toBe(false);
 	});
 

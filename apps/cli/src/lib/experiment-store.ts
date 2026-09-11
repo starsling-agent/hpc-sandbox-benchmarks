@@ -12,6 +12,7 @@ const artifactPage = type({
 		workflow_run: { id: "number.integer > 0" },
 	}).array(),
 });
+const workflowRunId = type(/^[1-9][0-9]*$/);
 export type StoredArtifact = (typeof artifactPage.infer.artifacts)[number];
 export interface ExperimentStore {
 	list(prefix: string): Promise<readonly StoredArtifact[]>;
@@ -19,7 +20,7 @@ export interface ExperimentStore {
 	download(artifact: StoredArtifact, directory: string): Promise<void>;
 }
 
-/** The account queue is the exclusive writer. Concurrent repository changes invalidate a scan. */
+/** Require a complete inventory within the selected workflow run. */
 export async function scanArtifactPages(
 	read: (page: number) => Promise<unknown>,
 ): Promise<StoredArtifact[]> {
@@ -44,7 +45,11 @@ export async function scanArtifactPages(
 	throw new Error("artifact history exceeds supported scan; archival reconciliation is required");
 }
 
-export function githubExperimentStore(env: NodeJS.ProcessEnv = process.env): ExperimentStore {
+export function githubExperimentStore(
+	runId: string,
+	env: NodeJS.ProcessEnv = process.env,
+): ExperimentStore {
+	const run = workflowRunId.assert(runId);
 	const repository = env.GITHUB_REPOSITORY;
 	const token = env.GH_TOKEN || env.GITHUB_TOKEN;
 	if (!repository || !/^[\w.-]+\/[\w.-]+$/.test(repository) || !token)
@@ -56,7 +61,7 @@ export function githubExperimentStore(env: NodeJS.ProcessEnv = process.env): Exp
 		async list(prefix) {
 			const entries = await scanArtifactPages(async (page) => {
 				const response = await fetch(
-					`https://api.github.com/repos/${repository}/actions/artifacts?per_page=100&page=${page}`,
+					`https://api.github.com/repos/${repository}/actions/runs/${run}/artifacts?per_page=100&page=${page}`,
 					{
 						headers: {
 							Authorization: `Bearer ${token}`,

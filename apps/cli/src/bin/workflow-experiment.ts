@@ -16,7 +16,7 @@ if (import.meta.main) {
 		const [command, account, round] = process.argv.slice(2);
 		const id = process.env.BENCH_EXPERIMENT_ID ?? process.env.GITHUB_RUN_ID;
 		if (!id) throw new Error("experiment id is required");
-		const store = githubExperimentStore();
+		const store = githubExperimentStore(id);
 		const root = "experiment";
 		const planRoot = join(root, "manifest");
 		mkdirSync(planRoot, { recursive: true });

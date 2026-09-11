@@ -1,8 +1,8 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { githubExperimentStore, scanArtifactPages } from "./experiment-store.ts";
 
 test("an upload outside the artifact runtime names the step that provides it", async () => {
-	const store = githubExperimentStore({ GITHUB_REPOSITORY: "owner/repo", GH_TOKEN: "token" });
+	const store = githubExperimentStore("1", { GITHUB_REPOSITORY: "owner/repo", GH_TOKEN: "token" });
 	await expect(store.upload("experiment-plan-1", ".")).rejects.toThrow(
 		"run .github/actions/artifact-runtime before this step",
 	);
@@ -13,6 +13,45 @@ const artifact = (id: number) => ({
 	name: `artifact-${id}`,
 	expired: false,
 	workflow_run: { id: 1 },
+});
+
+test("unrelated workflow uploads cannot invalidate a frozen-plan inventory", async () => {
+	const requests: string[] = [];
+	const fetchMock = spyOn(globalThis, "fetch").mockImplementation(
+		Object.assign(
+			async (input: Parameters<typeof fetch>[0]) => {
+				const url = String(input);
+				requests.push(url);
+				if (url.includes("/actions/runs/123/artifacts"))
+					return Response.json({
+						total_count: 1,
+						artifacts: [{ ...artifact(1), name: "experiment-plan-123", workflow_run: { id: 123 } }],
+					});
+				const page = Number(new URL(url).searchParams.get("page"));
+				return Response.json({ total_count: page + 1, artifacts: [artifact(page)] });
+			},
+			{ preconnect: fetch.preconnect },
+		),
+	);
+	try {
+		const store = githubExperimentStore("123", {
+			// Backfill executes in a different run; artifact reads must use the explicit source id.
+			GITHUB_REPOSITORY: "owner/repo",
+			GH_TOKEN: "token",
+			GITHUB_RUN_ID: "999",
+		});
+		expect((await store.list("experiment-plan-123")).map((item) => item.id)).toEqual([1]);
+		expect(requests).toHaveLength(1);
+	} finally {
+		fetchMock.mockRestore();
+	}
+});
+
+test("artifact run identity rejects malformed paths before making requests", () => {
+	for (const id of ["", "0", "../artifacts", "123?page=2"])
+		expect(() =>
+			githubExperimentStore(id, { GITHUB_REPOSITORY: "owner/repo", GH_TOKEN: "token" }),
+		).toThrow();
 });
 test("artifact scans require complete stable pagination", async () => {
 	expect(

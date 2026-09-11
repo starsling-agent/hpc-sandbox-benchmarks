@@ -22,6 +22,7 @@ describe("generated driver loader", () => {
 			"modal-vm",
 			"novita",
 			"runloop",
+			"namespace",
 			"vercel",
 			"runcloud",
 			"tama",
@@ -44,9 +45,9 @@ describe("generated driver loader", () => {
 		expect(loadRuntimeProvider).toBeFunction();
 	});
 
-	test("does not pretend a migration-waived provider has a DriverModule", () => {
-		// @ts-expect-error — namespace remains explicitly migration-waived, not a lying loader entry
-		const loadWaivedProvider = () => loadDriverModule("namespace");
+	test("rejects unregistered provider ids", () => {
+		// @ts-expect-error — Unknown ids cannot enter the driver loader
+		const loadWaivedProvider = () => loadDriverModule("not-a-provider");
 		void loadWaivedProvider;
 		expect(true).toBe(true);
 	});

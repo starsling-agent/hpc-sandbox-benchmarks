@@ -7,7 +7,6 @@ import { normalizeProviderInput } from "@sandbox-benchmarks/schema/provider-meta
 import { REGISTRY } from "@sandbox-benchmarks/schema/providers";
 import { ENV_KEYS } from "./config.ts";
 import {
-	config,
 	isLegacyAdapterId,
 	MIGRATED_DRIVER_IDS,
 	NOVITA_E2B_DOMAIN,
@@ -59,27 +58,10 @@ describe("@sandbox-benchmarks/providers", () => {
 		}
 	});
 
-	it("carries each provider's schema-owned transport capability through to the config", () => {
-		// The join must surface the same transport the schema declares, so the harness selects a
-		// transport from the provider's real capability rather than a hardcoded default.
-		expect(providers.length).toBeGreaterThan(0);
-		for (const adapter of providers) {
-			const meta = PROVIDERS.find((m) => m.id === adapter.name);
-			if (meta === undefined) throw new Error(`missing schema meta for ${adapter.name}`);
-			expect(adapter.transport).toEqual(meta.transport);
-		}
-	});
-
-	it("carries the exact boot artifact beside each legacy create policy", () => {
-		expect(providers.length).toBe(PROVIDERS.length - MIGRATED_DRIVER_IDS.length);
-		for (let i = 0; i < providers.length; i++) {
-			const meta = PROVIDERS.find((m) => m.id === providers[i]?.name);
-			expect(providers[i]?.artifact.kind).toBe(meta?.artifact.kind);
-		}
-		expect(providers.find((provider) => provider.name === "namespace")?.artifact).toEqual({
-			kind: "image",
-			ref: config.toolchainImage,
-		});
+	it("has no legacy adapters after the final driver migration", () => {
+		expect(providers).toEqual([]);
+		expect(Object.keys(adapters)).toEqual([]);
+		expect([...MIGRATED_DRIVER_IDS].sort()).toEqual(PROVIDERS.map(({ id }) => id).sort());
 	});
 
 	it("re-points the e2b wrapper at Novita without the e2b_ key-format guard", () => {
@@ -260,20 +242,6 @@ describe("assertProviderJoin", () => {
 		expect(() => assertProviderJoin(["e2b", "daytona", "modal"], ["e2b", "daytona"])).toThrow(
 			/missing a harness adapter: modal/,
 		);
-	});
-
-	it("still sees a missing adapter with the live expected set", () => {
-		// Regression guard for the shape of the real call. Deriving the expected ids from `adapters`
-		// (an `id in adapters` predicate) would drop the very id that lost its adapter from BOTH sides,
-		// leaving a guard that can never fail. Drop one waived adapter and the guard must still name it.
-		const expected = PROVIDERS.map((meta) => meta.id).filter(isLegacyAdapterId);
-		const withoutNamespace = Object.keys(adapters).filter((id) => id !== "namespace");
-		expect(() => assertProviderJoin(expected, withoutNamespace)).toThrow(
-			/missing a harness adapter: namespace/,
-		);
-		// …and a migrated id is still excluded by the list, not by its absence from the table.
-		expect(expected).not.toContain("e2b");
-		expect(expected.length).toBe(PROVIDERS.length - MIGRATED_DRIVER_IDS.length);
 	});
 
 	it("throws naming an adapter that has no schema entry", () => {

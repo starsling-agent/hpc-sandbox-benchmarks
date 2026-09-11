@@ -95,7 +95,10 @@ The allocating workflow needs `contents: write` for this narrow journal update; 
 persist credentials. Accounts without this setup fail admission before allocation.
 
 Managed admission currently requires a migrated driver with complete inventory, observation and
-recovery. Tama supplies that capability; other provider migrations remain separate rollout work.
+recovery. All thirteen registered provider variants now expose those capabilities through driverkit.
+E2B and Novita use benchmark metadata; both Daytona variants share benchmark names in one org,
+and both Modal variants share a benchmark app while counting resources in other apps as foreign.
+Namespace uses the official TypeScript SDK and drains inventory pagination before admission.
 Selected unsupported providers produce failed attempt evidence, never green skips. Toolchain and GPU
 jobs share the account queues but still have legacy allocation paths: keep their credentials in
 separate development accounts until those paths adopt the same journal owner. Sharing a queue alone
@@ -115,8 +118,8 @@ baseline result has been inferred from offline tests.
    commits, uploaded the plan and the attempt from the CLI, confirmed sandbox absence, and its
    downloaded evidence passed collect → evaluate → aggregate → strict promote locally. Artifact
    upload/download and journal permissions are confirmed in the Actions environment.
-2. Add complete inventories to remaining provider drivers and migrate legacy allocating paths,
-   including GPU and toolchain validation, onto the account owner before sharing publication accounts.
+2. Migrate legacy allocating paths, including GPU and toolchain validation, onto the account owner
+   before sharing publication accounts. Driver inventories alone do not coordinate those writers.
 3. Reproduce E2B launch/descendant/filesystem/exec behaviors and Daytona's nested launch failure through
    the shared executor. The new receipt implementation is not yet a verified fix for the six live E2B
    timeouts. Compare isolated and bounded concurrent Microsandbox startup before changing readiness.
@@ -134,7 +137,7 @@ Offline integration tests cross the real harness, raw collector, normalizer and 
 They cover account caps, cleanup failure, rerun refusal, missing uploads, interrupted intents, journal
 conflicts and matrix partitioning. Live provider conformance and workload admission remain separate.
 
-Final local verification: 2,042 tests pass, with typecheck, Biome, spelling, generated catalog/registry/
+Prior rollout verification: 2,042 tests passed, with typecheck, Biome, spelling, generated catalog/registry/
 wiring checks, ShellCheck, Hadolint, queue-compatible actionlint and configured offline zizmor passing.
 
 ```sh

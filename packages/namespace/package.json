@@ -1,0 +1,29 @@
+{
+  "name": "@sandbox-benchmarks/namespace",
+  "version": "0.0.0",
+  "private": true,
+  "description": "namespace sandbox integration for driverkit.",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "catalog:computesdk",
+    "@connectrpc/connect": "catalog:computesdk",
+    "@connectrpc/connect-node": "catalog:computesdk",
+    "@namespacelabs/sdk": "catalog:computesdk",
+    "@sandbox-benchmarks/driver": "workspace:*",
+    "arktype": "catalog:"
+  },
+  "devDependencies": {
+    "@repo/tsconfig": "workspace:*",
+    "@types/bun": "catalog:",
+    "typescript": "catalog:"
+  }
+}

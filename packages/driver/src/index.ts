@@ -76,6 +76,12 @@ export type {
 } from "./lib/port.ts";
 export { sandboxRef, succeeded } from "./lib/port.ts";
 export { withSessionTeardown } from "./lib/session.ts";
-export { launchDetached, readTextFile, shellQuote, writeTextFile } from "./lib/shell.ts";
+export {
+	detachedShellCommand,
+	launchDetached,
+	readTextFile,
+	shellQuote,
+	writeTextFile,
+} from "./lib/shell.ts";
 export type { MethodTable, MethodTableCreateResult } from "./lib/table.ts";
 export { DeferredTeardownError, driverFromTable } from "./lib/table.ts";

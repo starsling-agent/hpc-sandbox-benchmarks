@@ -31,12 +31,17 @@ export async function launchDetached(
 		await session.launch(command, options);
 		return;
 	}
-	await execOrThrow(
-		session,
-		"launchDetached",
-		`nohup /bin/sh -lc ${shellQuote(command)} </dev/null >/dev/null 2>&1 & child=$!; finish() { wait "$child"; exit $?; }; sleep 0.05; if ! kill -0 "$child" 2>/dev/null; then finish; fi; if command -v ps >/dev/null 2>&1; then state=$(ps -o state= -p "$child" 2>/dev/null || :); case "$state" in *Z*) finish ;; "") if ! kill -0 "$child" 2>/dev/null; then finish; fi ;; esac; fi; exit 0`,
-		options,
-	);
+	await execOrThrow(session, "launchDetached", detachedShellCommand(command), options);
+}
+
+/**
+ * The one shell launcher behind {@link launchDetached}'s fallback, exported so a driver whose
+ * vendor exec is synchronous-only can offer the same acceptance contract as its native `launch`
+ * instead of hand-rolling a fourth nohup line: the outer shell exits 0 once the child has survived
+ * the acceptance window, and non-zero (with the child's status) if it died inside it.
+ */
+export function detachedShellCommand(command: string): string {
+	return `nohup /bin/sh -lc ${shellQuote(command)} </dev/null >/dev/null 2>&1 & child=$!; finish() { wait "$child"; exit $?; }; sleep 0.05; if ! kill -0 "$child" 2>/dev/null; then finish; fi; if command -v ps >/dev/null 2>&1; then state=$(ps -o state= -p "$child" 2>/dev/null || :); case "$state" in *Z*) finish ;; "") if ! kill -0 "$child" 2>/dev/null; then finish; fi ;; esac; fi; exit 0`;
 }
 
 /**

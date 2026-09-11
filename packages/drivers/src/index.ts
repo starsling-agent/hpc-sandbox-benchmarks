@@ -13,6 +13,7 @@ export interface DriverModuleMap {
 	"modal-vm": typeof import("@sandbox-benchmarks/modal/vm").default;
 	novita: typeof import("@sandbox-benchmarks/novita").default;
 	runloop: typeof import("@sandbox-benchmarks/runloop").default;
+	namespace: typeof import("@sandbox-benchmarks/namespace").default;
 	vercel: typeof import("@sandbox-benchmarks/vercel").default;
 	runcloud: typeof import("@sandbox-benchmarks/runcloud").default;
 	tama: typeof import("@sandbox-benchmarks/tama").default;
@@ -43,6 +44,7 @@ export const DRIVERS: {
 	"modal-vm": () => import("@sandbox-benchmarks/modal/vm").then((module) => module.default),
 	novita: () => import("@sandbox-benchmarks/novita").then((module) => module.default),
 	runloop: () => import("@sandbox-benchmarks/runloop").then((module) => module.default),
+	namespace: () => import("@sandbox-benchmarks/namespace").then((module) => module.default),
 	vercel: () => import("@sandbox-benchmarks/vercel").then((module) => module.default),
 	runcloud: () => import("@sandbox-benchmarks/runcloud").then((module) => module.default),
 	tama: () => import("@sandbox-benchmarks/tama").then((module) => module.default),

@@ -2,18 +2,11 @@
   "name": "@sandbox-benchmarks/drivers",
   "version": "0.0.0",
   "private": true,
-  "description": "Lazy provider driver modules; vendor SDKs are confined to this fleet package.",
+  "description": "Generated lazy loader for independently packaged provider integrations.",
   "type": "module",
   "sideEffects": false,
   "exports": {
     ".": "./src/index.ts",
-    "./e2b": "./src/e2b.ts",
-    "./daytona-vm": "./src/daytona-vm.ts",
-    "./daytona-container": "./src/daytona-container.ts",
-    "./modal-gvisor": "./src/modal-gvisor.ts",
-    "./modal-vm": "./src/modal-vm.ts",
-    "./novita": "./src/novita.ts",
-    "./tama": "./src/tama.ts",
     "./package.json": "./package.json"
   },
   "scripts": {
@@ -21,27 +14,12 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@blaxel/core": "catalog:computesdk",
-    "@computesdk/blaxel": "catalog:computesdk",
-    "@computesdk/daytona": "catalog:computesdk",
-    "@computesdk/e2b": "catalog:computesdk",
-    "@computesdk/modal": "catalog:computesdk",
-    "@computesdk/namespace": "catalog:computesdk",
-    "@computesdk/provider": "catalog:computesdk",
-    "@computesdk/runloop": "catalog:computesdk",
-    "@daytona/api-client": "catalog:computesdk",
-    "@daytona/sdk": "catalog:computesdk",
-    "@run-cloud/sdk": "catalog:computesdk",
-    "@runloop/api-client": "catalog:computesdk",
+    "@sandbox-benchmarks/daytona": "workspace:*",
     "@sandbox-benchmarks/driver": "workspace:*",
-    "@vercel/sandbox": "catalog:computesdk",
-    "arktype": "catalog:",
-    "computesdk": "catalog:computesdk",
-    "e2b": "catalog:computesdk",
-    "microsandbox": "catalog:computesdk",
-    "modal": "catalog:computesdk",
-    "nice-grpc": "catalog:computesdk",
-    "novita-sandbox": "catalog:computesdk"
+    "@sandbox-benchmarks/e2b": "workspace:*",
+    "@sandbox-benchmarks/modal": "workspace:*",
+    "@sandbox-benchmarks/novita": "workspace:*",
+    "@sandbox-benchmarks/tama": "workspace:*"
   },
   "devDependencies": {
     "@repo/tsconfig": "workspace:*",

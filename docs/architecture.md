@@ -64,7 +64,8 @@ docs/       methodology, ADRs, CI & secrets
 |-----------------------------|-------------------------------------------------|-------------------------------------|
 | `@sandbox-benchmarks/schema`     | —                                               | `arktype`                           |
 | `@sandbox-benchmarks/driver`     | schema                                          | `arktype`                           |
-| `@sandbox-benchmarks/drivers`    | driver                                          | `arktype`, provider SDKs (`catalog:computesdk`) |
+| `@sandbox-benchmarks/drivers`    | driver, provider workspace packages              | — |
+| `@sandbox-benchmarks/<provider>` | driver                                          | `arktype`, that provider's SDKs |
 | `@sandbox-benchmarks/providers`  | schema                                          | `arktype`, computesdk packages (`catalog:computesdk`) |
 | `@sandbox-benchmarks/templates`  | providers, schema                               | `computesdk` (`catalog:computesdk`) |
 | `@sandbox-benchmarks/harness`    | providers, schema                               | —                                   |
@@ -76,11 +77,16 @@ docs/       methodology, ADRs, CI & secrets
 
 ## Native SDK driver configuration
 
-E2B, Novita, both Daytona variants, and both Modal variants allocate through the catalog-pinned native SDKs. `_native.ts` projects
-those exact SDK handles into the shared driver session machinery; it does not invoke ComputeSDK
-wrappers or cast between vendored SDK copies. Provider create-option schemas validate the boundary,
-and each request mapper must satisfy its schema's inferred type. Native SDK error classes reach the
-provider's retry predicate before the shared bridge normalizes and redacts the error.
+Each provider family owns a workspace package: for example, `packages/blaxel` exports
+`@sandbox-benchmarks/blaxel`. Daytona and Modal expose their isolation variants through package
+subpaths. Implementations, SDK dependencies, behavioral tests, and generated SDK provenance stay
+in that provider package. `packages/drivers` contains only the generated, correlated lazy loader.
+
+The SDK-free kit exposes `@sandbox-benchmarks/driver/computesdk`, `/native`, and `/errors` as explicit
+subpaths. Native SDK request and handle types flow through the declarative mapper without a second
+request schema. External values are parsed at their trust boundaries; trusted requests are passed
+internally without revalidation. SDK errors reach the provider's retry predicate before the kit
+normalizes and redacts them.
 
 `DriverError.vendorHttpStatus` carries HTTP response status; `vendorExitCode` carries process exit
 status. Only the HTTP field participates in the 429 retry rule. CLI readiness can return

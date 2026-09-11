@@ -4,6 +4,11 @@ status: accepted
 
 # The sandbox driver kit: one port, one file per provider, ComputeSDK as one driver
 
+> Package layout amendment: provider implementations now live in `packages/<provider>` and own
+> their SDK dependencies. `packages/drivers` is only the generated lazy loader; shared bridge
+> mechanics are explicit `@sandbox-benchmarks/driver` subpaths. Daytona and Modal variants share
+> one vendor package. The port, declarative configuration, and behavioral contracts below remain.
+
 ## Context
 
 ADR-0006 makes *registering* a provider declarative. This ADR is about the other half: what a

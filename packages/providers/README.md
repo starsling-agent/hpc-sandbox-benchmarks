@@ -4,7 +4,7 @@ Provider adapters may own a post-teardown cost-evidence hook. Billing API calls 
 the SDK-free results package, and observed evidence must identify the benchmark sandbox itself;
 organization/account/workspace/shared-app totals are context only. The run.cloud hook does not call
 or delta its organization-wide usage API and returns `not_sandbox_scoped`. Modal cost evidence lives
-on the Modal DriverModule (`packages/drivers/src/_modal.ts`), not on a leftover adapter.
+on the Modal DriverModule (`packages/modal/src/shared.ts`), not on a leftover adapter.
 
 **Role:** provider wiring — binds each schema provider to a computesdk runtime.
 

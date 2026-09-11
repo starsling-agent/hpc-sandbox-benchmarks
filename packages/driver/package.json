@@ -11,7 +11,10 @@
     "./conformance": "./src/conformance.ts",
     "./env": "./src/env.ts",
     "./schemas": "./src/schemas.ts",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./computesdk": "./src/computesdk.ts",
+    "./native": "./src/native.ts",
+    "./errors": "./src/errors.ts"
   },
   "scripts": {
     "test": "bun test",

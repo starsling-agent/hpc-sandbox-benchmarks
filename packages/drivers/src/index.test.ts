@@ -27,7 +27,7 @@ describe("generated driver loader", () => {
 
 	test("retains the literal module and native-handle type through a correlated load", async () => {
 		const module_ = await loadDriverModule("e2b");
-		type _module = Expect<Equal<typeof module_, typeof import("./e2b.ts").default>>;
+		type _module = Expect<Equal<typeof module_, typeof import("@sandbox-benchmarks/e2b").default>>;
 		expect(module_.id).toBe("e2b");
 	});
 

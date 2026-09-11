@@ -48,11 +48,13 @@
     "@runloop/api-client": "catalog:computesdk",
     "modal": "catalog:computesdk",
     "novita-sandbox": "catalog:computesdk",
-    "dotenv": "catalog:"
+    "dotenv": "catalog:",
+    "@sandbox-benchmarks/modal": "workspace:*"
   },
   "devDependencies": {
     "@repo/tsconfig": "workspace:*",
     "typescript": "catalog:",
-    "@types/bun": "catalog:"
+    "@types/bun": "catalog:",
+    "@sandbox-benchmarks/e2b": "workspace:*"
   }
 }

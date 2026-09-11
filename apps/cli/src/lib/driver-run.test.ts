@@ -90,6 +90,7 @@ describe("bench-suite driver vs legacy selection (Phase A unit 1)", () => {
 		const driverIds = Object.keys(DRIVERS);
 		const adapterIds: string[] = providers.map((provider) => provider.name);
 		expect(driverIds.sort()).toEqual([
+			"blaxel",
 			"daytona-container",
 			"daytona-vm",
 			"e2b",
@@ -122,7 +123,7 @@ describe("bench-suite driver vs legacy selection (Phase A unit 1)", () => {
 	test("waived ids stay on the legacy path unless --driver-path forces the driver lane", () => {
 		expect(usesDriverSuite("runloop")).toBe(false);
 		expect(usesDriverSuite("runcloud")).toBe(false);
-		expect(usesDriverSuite("blaxel", false)).toBe(false);
+		expect(usesDriverSuite("namespace", false)).toBe(false);
 		expect(usesDriverSuite("runloop", true)).toBe(true);
 		expect(isDriverProviderId("runcloud")).toBe(false);
 	});

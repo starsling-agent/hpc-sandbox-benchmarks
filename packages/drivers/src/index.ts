@@ -7,6 +7,7 @@ export interface DriverModuleMap {
 	e2b: typeof import("@sandbox-benchmarks/e2b").default;
 	"daytona-vm": typeof import("@sandbox-benchmarks/daytona/vm").default;
 	"daytona-container": typeof import("@sandbox-benchmarks/daytona/container").default;
+	blaxel: typeof import("@sandbox-benchmarks/blaxel").default;
 	"modal-gvisor": typeof import("@sandbox-benchmarks/modal/gvisor").default;
 	"modal-vm": typeof import("@sandbox-benchmarks/modal/vm").default;
 	novita: typeof import("@sandbox-benchmarks/novita").default;
@@ -32,6 +33,7 @@ export const DRIVERS: {
 	"daytona-vm": () => import("@sandbox-benchmarks/daytona/vm").then((module) => module.default),
 	"daytona-container": () =>
 		import("@sandbox-benchmarks/daytona/container").then((module) => module.default),
+	blaxel: () => import("@sandbox-benchmarks/blaxel").then((module) => module.default),
 	"modal-gvisor": () => import("@sandbox-benchmarks/modal/gvisor").then((module) => module.default),
 	"modal-vm": () => import("@sandbox-benchmarks/modal/vm").then((module) => module.default),
 	novita: () => import("@sandbox-benchmarks/novita").then((module) => module.default),

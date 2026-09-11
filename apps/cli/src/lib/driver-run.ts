@@ -372,7 +372,8 @@ export function usesSessionOperations(id: DriverProviderId): boolean {
 		id === "novita" ||
 		id === "daytona-vm" ||
 		id === "daytona-container" ||
-		id === "vercel"
+		id === "vercel" ||
+		id === "blaxel"
 	);
 }
 

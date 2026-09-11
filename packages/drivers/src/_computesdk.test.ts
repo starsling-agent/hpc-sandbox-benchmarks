@@ -1387,6 +1387,77 @@ describe("computeSdkDriver", () => {
 		expect(calls).toEqual(["observe:i2f3k4abc", "snapshot:i2f3k4abc", "delete:snap-1"]);
 	});
 
+	test("projects inventory and destroy-by-id through the canonical id boundary", async () => {
+		const { compute } = fakeCompute(baseSandbox);
+		const destroyed: string[] = [];
+		const driver = bridge(compute, {
+			inventory: { list: async () => ({ owned: ["i2f3k4abc", "iother"], foreignCount: 2 }) },
+			destroyById: async (_compute, ref) => {
+				destroyed.push(ref.id);
+			},
+		});
+		expect(await driver.inventory?.list()).toEqual({
+			owned: [
+				{ provider: "e2b", id: "i2f3k4abc" },
+				{ provider: "e2b", id: "iother" },
+			],
+			foreignCount: 2,
+		});
+		await driver.destroyById?.({ provider: "e2b", id: "i2f3k4abc" });
+		expect(destroyed).toEqual(["i2f3k4abc"]);
+		await expect(
+			driver.destroyById?.({ provider: "daytona-vm", id: "i2f3k4abc" }),
+		).rejects.toMatchObject({ code: "invalid-sandbox-ref", provider: "e2b" });
+		await expect(driver.destroyById?.({ provider: "e2b", id: "wrong-id" })).rejects.toMatchObject({
+			code: "invalid-sandbox-ref",
+			provider: "e2b",
+		});
+		// A non-canonical owned id crosses the same boundary a bad ref does.
+		await expect(
+			bridge(compute, {
+				inventory: { list: async () => ({ owned: ["not-canonical"], foreignCount: 0 }) },
+			}).inventory?.list(),
+		).rejects.toMatchObject({ code: "invalid-sandbox-ref", provider: "e2b" });
+		// An inventory that could authorize deleting the wrong thing is a contract violation.
+		for (const snapshot of [
+			{ owned: ["i2f3k4abc", "i2f3k4abc"], foreignCount: 0 },
+			{ owned: [], foreignCount: -1 },
+			{ owned: [], foreignCount: 1.5 },
+			{ owned: "i2f3k4abc", foreignCount: 0 },
+			null,
+		]) {
+			const broken = bridge(compute, {
+				inventory: { list: async () => snapshot as never },
+			});
+			await expect(broken.inventory?.list()).rejects.toMatchObject({
+				code: "vendor-contract-violation",
+				provider: "e2b",
+			});
+		}
+		const secret = "inventory-callback-secret";
+		const failing = bridge(compute, {
+			inventory: {
+				list: async () => {
+					throw new Error(secret);
+				},
+			},
+			destroyById: async () => {
+				throw new Error(secret);
+			},
+		});
+		const listError = await failing.inventory?.list().catch((caught: unknown) => caught);
+		expect(listError).toMatchObject({ code: "probe-failed", provider: "e2b" });
+		expect(String((listError as Error).cause)).not.toContain(secret);
+		const destroyError = await failing
+			.destroyById?.({ provider: "e2b", id: "i2f3k4abc" })
+			.catch((caught: unknown) => caught);
+		expect(destroyError).toMatchObject({ code: "destroy-failed", provider: "e2b" });
+		expect(String((destroyError as Error).cause)).not.toContain(secret);
+		const bare = bridge(compute, { hasWorkingFilesystem: false });
+		expect(bare.inventory).toBeUndefined();
+		expect(bare.destroyById).toBeUndefined();
+	});
+
 	test("normalizes successful probe and snapshot envelopes before they escape", async () => {
 		const secret = "capability-envelope-secret";
 		const { compute } = fakeCompute(baseSandbox);

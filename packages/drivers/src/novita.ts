@@ -26,6 +26,35 @@ const recoveryRows = type({
 	sandboxId: NOVITA_SANDBOX_ID,
 	metadata: { "[string]": "string" },
 }).array();
+/** Every benchmark create writes `${ATTEMPT_KEY}: benchmark-<uuid>`; the account sweep keys on it. */
+const MARKER_PREFIX = "benchmark-";
+/** A paused sandbox is still an allocation the account owns, so the sweep lists both live states. */
+const INVENTORY_STATES = ["running", "paused"] as const;
+const inventoryRows = type({
+	sandboxId: "string >= 1",
+	"metadata?": { "[string]": "string" },
+}).array();
+
+/** Drain one Novita paginator; a repeated or missing continuation token fails closed. */
+async function drainNovitaList(
+	lane: "recovery" | "inventory",
+	listOptions: Parameters<typeof Sandbox.list>[0],
+	options: { readonly signal?: AbortSignal },
+	consume: (rows: unknown) => void,
+): Promise<void> {
+	const paginator = Sandbox.list(listOptions);
+	const tokens = new Set<string>();
+	for (let page = 0; ; page++) {
+		options.signal?.throwIfAborted();
+		if (page >= 100) throw new Error(`Novita ${lane} exceeded its page limit`);
+		consume(await paginator.nextItems());
+		if (!paginator.hasNext) return;
+		const token = paginator.nextToken;
+		if (!token || tokens.has(token))
+			throw new Error(`Novita ${lane} repeated or omitted a continuation token`);
+		tokens.add(token);
+	}
+}
 const commandFailure = type({
 	name: "'CommandExitError'",
 	exitCode: "number.integer",
@@ -137,26 +166,19 @@ export function novitaSpec({ env, resolvedArtifact }: DriverContext<"novita">) {
 			isRetryableCreate: (error) =>
 				matchesAnyCause(error, (cause) => cause instanceof RateLimitError),
 			cleanup: async (_compute, locator, options) => {
-				const paginator = Sandbox.list({
-					...connection,
-					query: { metadata: { [ATTEMPT_KEY]: locator.value } },
-				});
 				const ids = new Set<string>();
-				const tokens = new Set<string>();
-				for (let page = 0; ; page++) {
-					options.signal?.throwIfAborted();
-					if (page >= 100) throw new Error("Novita recovery exceeded its page limit");
-					for (const row of recoveryRows.assert(await paginator.nextItems())) {
-						if (row.metadata[ATTEMPT_KEY] !== locator.value)
-							throw new Error("Novita recovery returned an unrelated sandbox");
-						ids.add(row.sandboxId);
-					}
-					if (!paginator.hasNext) break;
-					const token = paginator.nextToken;
-					if (!token || tokens.has(token))
-						throw new Error("Novita recovery repeated or omitted a continuation token");
-					tokens.add(token);
-				}
+				await drainNovitaList(
+					"recovery",
+					{ ...connection, query: { metadata: { [ATTEMPT_KEY]: locator.value } } },
+					options,
+					(rows) => {
+						for (const row of recoveryRows.assert(rows)) {
+							if (row.metadata[ATTEMPT_KEY] !== locator.value)
+								throw new Error("Novita recovery returned an unrelated sandbox");
+							ids.add(row.sandboxId);
+						}
+					},
+				);
 				let destroyed = false;
 				for (const id of ids) {
 					options.signal?.throwIfAborted();
@@ -196,6 +218,33 @@ export function novitaSpec({ env, resolvedArtifact }: DriverContext<"novita">) {
 			describe: (_compute, ref) => Sandbox.getInfo(ref.id, connection),
 			// Preserve the existing measurement: one list page, rather than timing full enumeration.
 			list: () => Sandbox.list(connection).nextItems(),
+		},
+		inventory: {
+			list: async (_compute, options) => {
+				const owned: string[] = [];
+				let foreignCount = 0;
+				await drainNovitaList(
+					"inventory",
+					{ ...connection, query: { state: [...INVENTORY_STATES] } },
+					options,
+					(rows) => {
+						for (const row of inventoryRows.assert(rows)) {
+							if (row.metadata?.[ATTEMPT_KEY]?.startsWith(MARKER_PREFIX)) owned.push(row.sandboxId);
+							else foreignCount += 1;
+						}
+					},
+				);
+				return { owned, foreignCount };
+			},
+		},
+		destroyById: async (_compute, ref, options) => {
+			options.signal?.throwIfAborted();
+			try {
+				await Sandbox.kill(ref.id, connection);
+			} catch (error) {
+				if (error instanceof SandboxNotFoundError) return;
+				throw error;
+			}
 		},
 	});
 }

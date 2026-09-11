@@ -7,6 +7,7 @@ import {
 	InvalidArgumentError,
 	RateLimitError,
 	Sandbox,
+	SandboxNotFoundError,
 	TimeoutError,
 } from "e2b";
 import type { ComputeSdkSandboxOf } from "./_computesdk.ts";
@@ -14,6 +15,7 @@ import e2bDriver, {
 	E2B_ATTEMPT_METADATA_KEY,
 	E2B_CONTROL_PLANE_TIMEOUT_MS,
 	E2B_EXECUTION,
+	E2B_INVENTORY_STATES,
 	E2B_PROVENANCE,
 	E2B_READINESS,
 	E2B_RECOVERY_MAX_ATTEMPTS,
@@ -675,6 +677,75 @@ describe("E2B proof driver", () => {
 		} finally {
 			create.mockRestore();
 			list.mockRestore();
+		}
+	});
+});
+
+describe("E2B account inventory and recovery", () => {
+	test("drains every live page, owns by the attempt marker, and counts the rest as foreign", async () => {
+		const list = spyOn(Sandbox, "list").mockImplementation(() =>
+			fakeSandboxPaginator([
+				[
+					{ sandboxId: "iowned1", metadata: { [E2B_ATTEMPT_METADATA_KEY]: "benchmark-a" } },
+					{ sandboxId: "iforeign1", metadata: {} },
+					{ sandboxId: "iforeign2", metadata: { [E2B_ATTEMPT_METADATA_KEY]: "someone-else" } },
+				],
+				[{ sandboxId: "iowned2", metadata: { [E2B_ATTEMPT_METADATA_KEY]: "benchmark-b" } }],
+			]),
+		);
+		try {
+			const driver = e2bDriver.driver(context);
+			expect(await driver.inventory?.list()).toEqual({
+				owned: [sandboxRef("e2b", "iowned1"), sandboxRef("e2b", "iowned2")],
+				foreignCount: 2,
+			});
+			expect(list).toHaveBeenCalledTimes(1);
+			expect(list.mock.calls[0]?.[0]).toMatchObject({
+				apiKey: context.env.E2B_API_KEY,
+				requestTimeoutMs: E2B_CONTROL_PLANE_TIMEOUT_MS,
+				query: { state: [...E2B_INVENTORY_STATES] },
+			});
+		} finally {
+			list.mockRestore();
+		}
+	});
+
+	test("refuses a partial or malformed listing instead of reporting an empty account", async () => {
+		const truncated = fakeSandboxPaginator([[]]);
+		Object.defineProperty(truncated, "hasNext", { get: () => true });
+		Object.defineProperty(truncated, "nextToken", { get: () => undefined });
+		const malformed = fakeSandboxPaginator([[{ metadata: {} }]]);
+		for (const paginator of [truncated, malformed]) {
+			const list = spyOn(Sandbox, "list").mockImplementation(() => paginator);
+			try {
+				await expect(e2bDriver.driver(context).inventory?.list()).rejects.toMatchObject({
+					code: "probe-failed",
+					provider: "e2b",
+				});
+			} finally {
+				list.mockRestore();
+			}
+		}
+	});
+
+	test("destroys by canonical id and converges only on E2B's own absence", async () => {
+		const kill = spyOn(Sandbox, "kill").mockResolvedValue(false);
+		try {
+			const driver = e2bDriver.driver(context);
+			await driver.destroyById?.(sandboxRef("e2b", "ileftover"));
+			expect(kill).toHaveBeenCalledWith(
+				"ileftover",
+				expect.objectContaining({ apiKey: context.env.E2B_API_KEY }),
+			);
+			kill.mockRejectedValueOnce(new SandboxNotFoundError("gone"));
+			await driver.destroyById?.(sandboxRef("e2b", "ileftover"));
+			kill.mockRejectedValueOnce(new Error("control plane unavailable"));
+			await expect(driver.destroyById?.(sandboxRef("e2b", "ileftover"))).rejects.toMatchObject({
+				code: "destroy-failed",
+				provider: "e2b",
+			});
+		} finally {
+			kill.mockRestore();
 		}
 	});
 });

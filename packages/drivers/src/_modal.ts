@@ -14,7 +14,7 @@ import type {
 } from "@sandbox-benchmarks/driver";
 import { shellQuote } from "@sandbox-benchmarks/driver";
 import { type } from "arktype";
-import { ModalClient, Sandbox } from "modal";
+import { ModalClient, NotFoundError, Sandbox } from "modal";
 import type { ClientMiddleware } from "nice-grpc";
 import { ClientError, Status } from "nice-grpc";
 import type {
@@ -50,11 +50,26 @@ interface ModalControlSandbox {
 	detach(): void;
 }
 
+interface ModalControlApp {
+	readonly appId: string;
+}
+
 interface ModalControlPlane {
+	readonly apps: {
+		/** The named App, or undefined when this workspace has never created it. */
+		fromName(name: string): Promise<ModalControlApp | undefined>;
+		list(): Promise<Awaited<ReturnType<ModalClient["cpClient"]["appList"]>>["apps"]>;
+	};
 	readonly sandboxes: {
 		fromId(id: string): Promise<ModalControlSandbox>;
 		fromName(appName: string, name: string): Promise<ModalControlSandbox>;
 		experimentalFromName(appName: string, name: string): Promise<ModalControlSandbox>;
+		/** Every v1 sandbox in the environment, or only those under `appId`. */
+		list(params: { readonly appId?: string }): AsyncIterable<{ readonly sandboxId: string }>;
+		/** Every v2 sandbox under one App; the SDK cannot enumerate v2 environment-wide. */
+		experimentalList(params: {
+			readonly appId: string;
+		}): AsyncIterable<{ readonly sandboxId: string }>;
 	};
 }
 
@@ -79,6 +94,8 @@ export const MODAL_COST_SDK_PROVENANCE =
 	MODAL_NATIVE_PROVENANCE satisfies ProviderCostEvidenceCapability["sdk"];
 export const MODAL_SANDBOX_LIFETIME_MS = 3 * 60 * 60_000;
 export const MODAL_CONTROL_TIMEOUT_MS = 5_000;
+/** Enumerating an account is a multi-page loop, not one bounded RPC; it gets its own budget. */
+export const MODAL_INVENTORY_TIMEOUT_MS = 60_000;
 export const MODAL_RECOVERY_CONFIRMATION_MS = 2_000;
 export const MODAL_RECOVERY_MAX_ATTEMPTS = 4;
 export const MODAL_READINESS = Object.freeze({ startup: "create-returns-ready" as const });
@@ -143,8 +160,23 @@ export function isModalRetryableCreate(error: unknown): boolean {
  */
 export function modalControlPlane(client: ModalClient): ModalControlPlane {
 	return {
+		apps: {
+			list: async () =>
+				(await client.cpClient.appList({ environmentName: client.environmentName() })).apps,
+			fromName: async (name) => {
+				try {
+					return await client.apps.fromName(name, { createIfMissing: false });
+				} catch (caught) {
+					// Only the SDK's typed absence means "no such App"; an inventory must not create one.
+					if (caught instanceof NotFoundError) return undefined;
+					throw caught;
+				}
+			},
+		},
 		sandboxes: {
 			fromId: (id) => client.sandboxes.fromId(id),
+			list: (params) => client.sandboxes.list(params),
+			experimentalList: (params) => client.sandboxes.experimentalList(params),
 			fromName: async (appName, name) => {
 				const response = await client.cpClient.sandboxGetFromName({
 					appName,
@@ -528,6 +560,68 @@ export function modalProbes(
 	};
 }
 
+/** Enumerate both generations across every App; the benchmark App owns both variants. */
+export function modalInventory(
+	variant: ModalVariant,
+	runner: ModalControlRunner,
+	appName = MODAL_APP_NAME,
+): NonNullable<ComputeSdkDriverSpec<ModalCompute>["inventory"]> {
+	return {
+		list: (_compute, options) =>
+			runner.run(options, async (control) => {
+				const collect = async (rows: AsyncIterable<{ readonly sandboxId: string }>) => {
+					const ids = new Set<string>();
+					for await (const row of rows) ids.add(MODAL_CONTROL_SANDBOX_ID.assert(row.sandboxId));
+					return ids;
+				};
+				const app = await control.apps.fromName(appName);
+				const appV1 =
+					app === undefined
+						? new Set<string>()
+						: await collect(control.sandboxes.list({ appId: app.appId }));
+				const owned =
+					variant === "gvisor"
+						? app === undefined
+							? new Set<string>()
+							: await collect(control.sandboxes.experimentalList({ appId: app.appId }))
+						: appV1;
+				let foreignCount = 0;
+				for (const id of await collect(control.sandboxes.list({}))) {
+					if (!appV1.has(id)) foreignCount += 1;
+				}
+				for (const other of await control.apps.list()) {
+					if (other.appId === app?.appId) continue;
+					foreignCount += (
+						await collect(control.sandboxes.experimentalList({ appId: other.appId }))
+					).size;
+				}
+				return { owned: [...owned], foreignCount };
+			}),
+	};
+}
+
+/** Canonical-id teardown for account recovery; only a sandbox-RPC not-found is convergence. */
+export function modalDestroyById(
+	runner: ModalControlRunner,
+): NonNullable<ComputeSdkDriverSpec<ModalCompute>["destroyById"]> {
+	return async (_compute, ref, options) => {
+		let attached: ModalControlSandbox | undefined;
+		try {
+			await runner.run(
+				options,
+				async (control) => {
+					attached = await control.sandboxes.fromId(ref.id);
+					await attached.terminate({ wait: true });
+				},
+				() => attached?.detach(),
+			);
+		} catch (caught) {
+			if (isModalNotFound(caught)) return;
+			throw caught;
+		}
+	};
+}
+
 /** Preserve the native process result and join output streams before releasing the command. */
 export async function execModalCommand(
 	runner: ModalControlRunner,
@@ -651,15 +745,16 @@ function modalSpec<P extends ModalProviderId>(
 	{ env, resolvedArtifact }: DriverContext<P>,
 ) {
 	const variant = modalVariant(provider);
-	const runner = createModalControlRunner((middleware) =>
+	const control = (middleware: ClientMiddleware) =>
 		modalControlPlane(
 			new ModalClient({
 				tokenId: env.MODAL_TOKEN_ID,
 				tokenSecret: env.MODAL_TOKEN_SECRET,
 				grpcMiddleware: [middleware],
 			}),
-		),
-	);
+		);
+	const runner = createModalControlRunner(control);
+	const inventoryRunner = createModalControlRunner(control, MODAL_INVENTORY_TIMEOUT_MS);
 	return computeSdkSpec(
 		nativeModalCompute(variant, {
 			tokenId: env.MODAL_TOKEN_ID,
@@ -681,6 +776,8 @@ function modalSpec<P extends ModalProviderId>(
 			// Both variants use the kit's direct-exec filesystem fallback.
 			hasWorkingFilesystem: false,
 			probes: modalProbes(runner),
+			inventory: modalInventory(variant, inventoryRunner),
+			destroyById: modalDestroyById(runner),
 		},
 	);
 }

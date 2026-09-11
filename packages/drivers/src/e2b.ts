@@ -45,6 +45,10 @@ export const E2B_CONTROL_PLANE_TIMEOUT_MS = 5_000;
 export const E2B_RECOVERY_CONFIRMATION_MS = 2_000;
 export const E2B_RECOVERY_MAX_ATTEMPTS = 4;
 export const E2B_ATTEMPT_METADATA_KEY = "sandbox-benchmarks-attempt";
+/** Every benchmark create writes `${E2B_ATTEMPT_METADATA_KEY}: benchmark-<uuid>`; inventory keys on it. */
+export const E2B_BENCHMARK_MARKER_PREFIX = "benchmark-";
+/** Live states an account sweep must see: a paused sandbox is still an allocation the account owns. */
+export const E2B_INVENTORY_STATES = ["running", "paused"] as const;
 export const E2B_READINESS = Object.freeze({ startup: "create-returns-ready" as const });
 export const E2B_EXECUTION = Object.freeze({
 	syncCapMs: 60_000,
@@ -221,6 +225,162 @@ function recoverySandboxIds(value: unknown, marker: string): readonly string[] {
 	return sandboxIds;
 }
 
+/**
+ * Drain one E2B paginator through the same defensive reads on every lane, so a malformed page or a
+ * repeated continuation token fails closed instead of manufacturing absence — for recovery that
+ * would leak an accepted create, for inventory it would authorize skipping a leftover.
+ */
+async function drainE2bPaginator(
+	lane: "recovery" | "inventory",
+	paginator: unknown,
+	controlOptions: Readonly<Record<string, unknown>>,
+	consume: (page: unknown) => void,
+): Promise<void> {
+	if ((typeof paginator !== "object" && typeof paginator !== "function") || paginator === null) {
+		throw new Error(`E2B ${lane} list returned no paginator`);
+	}
+	let nextItems: unknown;
+	try {
+		nextItems = Reflect.get(paginator, "nextItems");
+	} catch {
+		throw new Error(`E2B ${lane} paginator method is unreadable`);
+	}
+	if (typeof nextItems !== "function") {
+		throw new Error(`E2B ${lane} paginator method is not callable`);
+	}
+	const seenTokens = new Set<string>();
+	for (let page = 0; page < E2B_RECOVERY_MAX_PAGES; page += 1) {
+		// BasePaginator starts with a mandatory first page. Fetching it unconditionally makes a
+		// malformed initial hasNext=false fail closed instead of manufacturing absence.
+		consume(await Reflect.apply(nextItems, paginator, [controlOptions]));
+		let hasNext: unknown;
+		try {
+			hasNext = Reflect.get(paginator, "hasNext");
+		} catch {
+			throw new Error(`E2B ${lane} paginator state is unreadable`);
+		}
+		if (typeof hasNext !== "boolean") {
+			throw new Error(`E2B ${lane} paginator state is not boolean`);
+		}
+		let nextToken: unknown;
+		try {
+			nextToken = Reflect.get(paginator, "nextToken");
+		} catch {
+			throw new Error(`E2B ${lane} paginator token is unreadable`);
+		}
+		if (!hasNext) {
+			if (nextToken !== undefined) {
+				throw new Error(`E2B ${lane} paginator retained a terminal continuation token`);
+			}
+			return;
+		}
+		if (typeof nextToken !== "string" || nextToken.length === 0) {
+			throw new Error(`E2B ${lane} paginator has no continuation token`);
+		}
+		if (seenTokens.has(nextToken)) {
+			throw new Error(`E2B ${lane} paginator repeated a continuation token`);
+		}
+		seenTokens.add(nextToken);
+	}
+	throw new Error(`E2B ${lane} paginator exceeded its page limit`);
+}
+
+/** Classify one inventory page: a row carrying the benchmark marker is owned, any other is foreign. */
+function inventoryRows(
+	value: unknown,
+): readonly { readonly sandboxId: string; readonly owned: boolean }[] {
+	let length: unknown;
+	try {
+		if (!Array.isArray(value)) throw new Error("non-array result");
+		length = Reflect.get(value, "length");
+	} catch {
+		throw new Error("E2B inventory list returned a non-array result");
+	}
+	if (typeof length !== "number" || !Number.isSafeInteger(length) || length < 0) {
+		throw new Error("E2B inventory list returned an invalid array length");
+	}
+	const rows: { readonly sandboxId: string; readonly owned: boolean }[] = [];
+	for (let index = 0; index < length; index += 1) {
+		let sandboxId: unknown;
+		let marker: unknown;
+		try {
+			const row: unknown = Reflect.get(value, index);
+			if ((typeof row !== "object" && typeof row !== "function") || row === null) {
+				throw new Error("non-object row");
+			}
+			sandboxId = Reflect.get(row, "sandboxId");
+			const metadata: unknown = Reflect.get(row, "metadata");
+			marker =
+				(typeof metadata === "object" || typeof metadata === "function") && metadata !== null
+					? Reflect.get(metadata, E2B_ATTEMPT_METADATA_KEY)
+					: undefined;
+		} catch {
+			throw new Error(`E2B inventory list row ${index} is unreadable`);
+		}
+		if (typeof sandboxId !== "string" || sandboxId.length === 0) {
+			throw new Error(`E2B inventory list row ${index} has no sandbox id`);
+		}
+		rows.push({
+			sandboxId,
+			owned: typeof marker === "string" && marker.startsWith(E2B_BENCHMARK_MARKER_PREFIX),
+		});
+	}
+	return rows;
+}
+
+/** Whole-account inventory: every live sandbox, owned iff it carries the benchmark attempt marker. */
+export function e2bInventory(
+	apiKey: string,
+): NonNullable<ComputeSdkDriverSpec<E2bCompute>["inventory"]> {
+	return {
+		list: async (_compute, options) => {
+			const controlOptions = {
+				apiKey,
+				requestTimeoutMs: E2B_CONTROL_PLANE_TIMEOUT_MS,
+				...(options.signal === undefined ? {} : { signal: options.signal }),
+			};
+			const owned: string[] = [];
+			let foreignCount = 0;
+			await drainE2bPaginator(
+				"inventory",
+				Sandbox.list({ ...controlOptions, query: { state: [...E2B_INVENTORY_STATES] } }),
+				controlOptions,
+				(page) => {
+					for (const row of inventoryRows(page)) {
+						if (row.owned) owned.push(row.sandboxId);
+						else foreignCount += 1;
+					}
+				},
+			);
+			return { owned, foreignCount };
+		},
+	};
+}
+
+/** Canonical-id teardown for account recovery: a sandbox E2B no longer knows is convergence. */
+export function e2bDestroyById(
+	apiKey: string,
+): NonNullable<ComputeSdkDriverSpec<E2bCompute>["destroyById"]> {
+	return async (_compute, ref, options) => {
+		try {
+			// `kill` resolves false for an unknown sandbox, which is convergence, not a failure.
+			await Sandbox.kill(ref.id, {
+				apiKey,
+				requestTimeoutMs: E2B_CONTROL_PLANE_TIMEOUT_MS,
+				...(options.signal === undefined ? {} : { signal: options.signal }),
+			});
+		} catch (caught) {
+			let notFound = false;
+			try {
+				notFound = caught instanceof SandboxNotFoundError;
+			} catch {
+				// A hostile rejection is not convergence; it surfaces below unchanged.
+			}
+			if (!notFound) throw caught;
+		}
+	};
+}
+
 export function e2bLifecycle(apiKey: string): ComputeSdkLifecycle<E2bCompute> {
 	return {
 		destroy: async (sandbox, ref, options) => {
@@ -278,66 +438,18 @@ export function e2bCreateRecovery(apiKey: string): ComputeSdkCreateRecovery<E2bC
 				requestTimeoutMs: E2B_CONTROL_PLANE_TIMEOUT_MS,
 				...(options.signal === undefined ? {} : { signal: options.signal }),
 			};
-			const paginator: unknown = Sandbox.list({
-				...controlOptions,
-				query: { metadata: { [E2B_ATTEMPT_METADATA_KEY]: marker } },
-			});
-			if (
-				(typeof paginator !== "object" && typeof paginator !== "function") ||
-				paginator === null
-			) {
-				throw new Error("E2B recovery list returned no paginator");
-			}
-			let nextItems: unknown;
-			try {
-				nextItems = Reflect.get(paginator, "nextItems");
-			} catch {
-				throw new Error("E2B recovery paginator method is unreadable");
-			}
-			if (typeof nextItems !== "function") {
-				throw new Error("E2B recovery paginator method is not callable");
-			}
 			const sandboxIds = new Set<string>();
-			const seenTokens = new Set<string>();
-			let paginationComplete = false;
-			for (let page = 0; page < E2B_RECOVERY_MAX_PAGES; page += 1) {
-				// BasePaginator starts with a mandatory first page. Fetching it unconditionally makes a
-				// malformed initial hasNext=false fail closed instead of manufacturing absence.
-				const response: unknown = await Reflect.apply(nextItems, paginator, [controlOptions]);
-				for (const sandboxId of recoverySandboxIds(response, marker)) {
-					sandboxIds.add(sandboxId);
-				}
-				let hasNext: unknown;
-				try {
-					hasNext = Reflect.get(paginator, "hasNext");
-				} catch {
-					throw new Error("E2B recovery paginator state is unreadable");
-				}
-				if (typeof hasNext !== "boolean") {
-					throw new Error("E2B recovery paginator state is not boolean");
-				}
-				let nextToken: unknown;
-				try {
-					nextToken = Reflect.get(paginator, "nextToken");
-				} catch {
-					throw new Error("E2B recovery paginator token is unreadable");
-				}
-				if (!hasNext) {
-					if (nextToken !== undefined) {
-						throw new Error("E2B recovery paginator retained a terminal continuation token");
-					}
-					paginationComplete = true;
-					break;
-				}
-				if (typeof nextToken !== "string" || nextToken.length === 0) {
-					throw new Error("E2B recovery paginator has no continuation token");
-				}
-				if (seenTokens.has(nextToken)) {
-					throw new Error("E2B recovery paginator repeated a continuation token");
-				}
-				seenTokens.add(nextToken);
-			}
-			if (!paginationComplete) throw new Error("E2B recovery paginator exceeded its page limit");
+			await drainE2bPaginator(
+				"recovery",
+				Sandbox.list({
+					...controlOptions,
+					query: { metadata: { [E2B_ATTEMPT_METADATA_KEY]: marker } },
+				}),
+				controlOptions,
+				(page) => {
+					for (const sandboxId of recoverySandboxIds(page, marker)) sandboxIds.add(sandboxId);
+				},
+			);
 			if (sandboxIds.size === 0) return { status: "absent" };
 			let destroyed = false;
 			for (const sandboxId of sandboxIds) {
@@ -436,6 +548,8 @@ export function e2bSpec({ env, resolvedArtifact }: DriverContext<"e2b">) {
 			verifyE2bDiskCapacity(native, request, options),
 		hasWorkingFilesystem: true,
 		probes: e2bProbes(apiKey),
+		inventory: e2bInventory(apiKey),
+		destroyById: e2bDestroyById(apiKey),
 	});
 }
 

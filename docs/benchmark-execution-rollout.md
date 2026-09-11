@@ -80,7 +80,10 @@ The file is an append-only record sequence; immutable Git commits retain every p
 one blob avoids a REST request per historical record on every new batch.
 
 An operator must provision these branches after quiescing existing account writers and confirming a
-clean vendor baseline. Protect them against deletion and force pushes, retain their history, and
+clean vendor baseline. `bun apps/cli/src/bin/account-inventory.ts [provider...]` reads every migrated
+provider's account exactly as admission will — the benchmark's own leftovers (removed by the next
+batch's reconciliation) and foreign resources (which block allocation outright) — without allocating
+or deleting anything; it exits non-zero when any account would block admission. Protect them against deletion and force pushes, retain their history, and
 permit the privileged workflow token to append commits. Do not reset a journal to recover an account.
 For an unknown create, obtain the vendor's request outcome and resource identity before recording
 recovery; an empty inventory is insufficient. No branch is automatically created or reset by a worker.

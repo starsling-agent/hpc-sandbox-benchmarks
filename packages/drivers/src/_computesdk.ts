@@ -25,6 +25,7 @@ import type {
 	DriverOperationOptions,
 	DriverPolicy,
 	ExecOptions,
+	InventorySnapshot,
 	MethodTable,
 	ProviderId,
 	ResolvedArtifact,
@@ -122,6 +123,39 @@ export interface ComputeSdkLifecycle<TCompute extends ComputeSdkLike> {
 		recoveryLocator?: ComputeSdkRecoveryLocator,
 	): Promise<void>;
 }
+
+/**
+ * One complete account observation, in vendor ids: every sandbox the benchmark owns on this
+ * account plus a count of everything else. Ownership is the provider's own marker (a create-time
+ * name, label, or metadata key), never a guess from timing or resource shape.
+ */
+const computeSdkInventorySchema = type({
+	owned: "string[]",
+	foreignCount: "number.integer >= 0",
+}).narrow((snapshot) => Number.isSafeInteger(snapshot.foreignCount));
+
+export type ComputeSdkInventorySnapshot = typeof computeSdkInventorySchema.infer;
+
+export interface ComputeSdkInventory<TCompute extends ComputeSdkLike> {
+	/**
+	 * Drain the whole account. A partial or unavailable listing must reject: an empty result is a
+	 * positive claim that the account holds nothing, and account reconciliation deletes on the
+	 * strength of it. Owned ids cross the canonical sandbox-id boundary, so an id this variant
+	 * could never have created is a contract violation rather than a foreign resource.
+	 */
+	list(compute: TCompute, options: DriverOperationOptions): Promise<ComputeSdkInventorySnapshot>;
+}
+
+/**
+ * Canonical-id teardown with no retained handle, for recovering leftovers found through inventory.
+ * Converges silently only on the vendor's typed not-found; every other failure must surface so a
+ * leaked, billable sandbox is never reported as removed.
+ */
+export type ComputeSdkDestroyById<TCompute extends ComputeSdkLike> = (
+	compute: TCompute,
+	ref: SandboxRef,
+	options: DriverOperationOptions,
+) => Promise<void>;
 
 export type ComputeSdkCreateRecoveryObservation =
 	| { readonly status: "destroyed" }
@@ -308,6 +342,14 @@ export interface ComputeSdkDriverSpec<TCompute extends ComputeSdkLike> {
 		): Promise<{ readonly snapshotId: string }>;
 		delete(compute: TCompute, snapshotId: string): Promise<void>;
 	};
+	/**
+	 * Whole-account inventory, supplied only where the vendor can enumerate every sandbox. Together
+	 * with {@link destroyById} and `probes` it is what account admission requires (the CLI's
+	 * reconciliation refuses a driver missing any of the three).
+	 */
+	readonly inventory?: ComputeSdkInventory<TCompute>;
+	/** See {@link ComputeSdkDestroyById}. */
+	readonly destroyById?: ComputeSdkDestroyById<TCompute>;
 }
 
 /**
@@ -822,6 +864,45 @@ function normalizeComputeSdkSnapshot(
 	});
 }
 
+/**
+ * Validate one inventory envelope before it can authorize a deletion: owned ids must be an array
+ * of canonical, distinct sandbox ids for THIS provider, and the foreign count a non-negative safe
+ * integer. Anything else is a contract violation; reconciliation must never act on a guess.
+ */
+function normalizeComputeSdkInventory(
+	provider: ProviderId,
+	value: unknown,
+	schema: ComputeSdkSandboxIdParser,
+	sensitiveValues: readonly string[],
+): InventorySnapshot {
+	let snapshot: ComputeSdkInventorySnapshot;
+	try {
+		snapshot = computeSdkInventorySchema.assert(value);
+	} catch {
+		throw vendorContractFailure(
+			provider,
+			"inventory list result",
+			"inventory requires owned ids and a non-negative safe integer foreignCount",
+			sensitiveValues,
+		);
+	}
+	const seen = new Set<string>();
+	const owned = snapshot.owned.map((raw) => {
+		const id = parseSandboxId(provider, schema, raw, sensitiveValues, "canonical");
+		if (seen.has(id)) {
+			throw vendorContractFailure(
+				provider,
+				"inventory list result",
+				"owned list repeated a sandbox id",
+				sensitiveValues,
+			);
+		}
+		seen.add(id);
+		return sandboxRef(provider, id);
+	});
+	return { owned, foreignCount: snapshot.foreignCount };
+}
+
 /** Compile a computesdk provider instance to a method table. */
 function computeSdkMethodTable<TCompute extends ComputeSdkLike>(
 	provider: ProviderId,
@@ -848,6 +929,9 @@ function computeSdkMethodTable<TCompute extends ComputeSdkLike>(
 		rawSnapshots === undefined
 			? undefined
 			: { create: rawSnapshots.create, delete: rawSnapshots.delete };
+	const rawInventory = options.inventory;
+	const inventory = rawInventory === undefined ? undefined : { list: rawInventory.list };
+	const destroyById = options.destroyById;
 	const rawCommands = options.commands;
 	const commands =
 		rawCommands === undefined ? undefined : { exec: rawCommands.exec, launch: rawCommands.launch };
@@ -1320,6 +1404,54 @@ function computeSdkMethodTable<TCompute extends ComputeSdkLike>(
 					},
 				}
 			: {}),
+		...(inventory === undefined
+			? {}
+			: {
+					inventory: {
+						list: async (compute: TCompute, operationOptions: DriverOperationOptions = {}) =>
+							normalizeComputeSdkInventory(
+								provider,
+								await invokeComputeSdkProviderCallbackAsync(
+									provider,
+									"inventory list",
+									() => inventory.list(compute, operationOptions),
+									{ code: "probe-failed" },
+								),
+								sandboxIds.canonical,
+								sensitiveValuesDefault,
+							),
+					},
+				}),
+		...(destroyById === undefined
+			? {}
+			: {
+					destroyById: async (
+						compute: TCompute,
+						ref: SandboxRef,
+						operationOptions: DriverOperationOptions = {},
+					) => {
+						const canonical = validateRef(
+							provider,
+							sandboxIds.canonical,
+							ref,
+							sensitiveForRef(ref),
+						);
+						if (operationOptions.signal?.aborted) {
+							throw wrapperAborted(
+								provider,
+								operationOptions.signal.reason,
+								"destroy by id",
+								"destroy-failed",
+							);
+						}
+						await invokeComputeSdkProviderCallbackAsync(
+							provider,
+							"destroy by id",
+							() => destroyById(compute, canonical, operationOptions),
+							{ code: "destroy-failed", ref: canonical },
+						);
+					},
+				}),
 		...(probes === undefined
 			? {}
 			: {

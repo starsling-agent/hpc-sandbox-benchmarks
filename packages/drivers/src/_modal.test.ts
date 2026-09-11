@@ -23,7 +23,9 @@ import {
 	modalControlPlane,
 	modalCreateOptions,
 	modalCreateRecovery,
+	modalDestroyById,
 	modalDetachedCommand,
+	modalInventory,
 	modalLifecycle,
 	modalProbes,
 	modalSandboxId,
@@ -1275,5 +1277,109 @@ describe("Modal command projection", () => {
 				),
 			).rejects.toThrow(/malformed result/);
 		}
+	});
+});
+
+describe("Modal account inventory and recovery", () => {
+	const v1Owned = "sb-rxWrDWGgOCJXeCSavkiDL6";
+	const v1Foreign = "sb-AAAAAAAAAAAAAAAAAAAAAA";
+	const v2Foreign = "sb-01ARZ3NDEKTSV4RRFFQ69G5FAW";
+	const v2Owned = "sb-01ARZ3NDEKTSV4RRFFQ69G5FAV";
+	function control(appExists: boolean) {
+		return {
+			apps: {
+				list: async () => [...(appExists ? [{ appId: "ap-bench" }] : []), { appId: "ap-foreign" }],
+				fromName: async (name: string) =>
+					appExists && name === MODAL_APP_NAME ? { appId: "ap-bench" } : undefined,
+			},
+			sandboxes: {
+				list: async function* ({ appId }: { appId?: string }) {
+					if (appId === "ap-bench") {
+						yield { sandboxId: v1Owned };
+						return;
+					}
+					if (appId !== undefined) return;
+					yield { sandboxId: v1Owned };
+					yield { sandboxId: v1Foreign };
+				},
+				experimentalList: async function* ({ appId }: { appId: string }) {
+					if (appId === "ap-bench") yield { sandboxId: v2Owned };
+					if (appId === "ap-foreign") yield { sandboxId: v2Foreign };
+				},
+				fromId: async () => {
+					throw new Error("unused");
+				},
+				fromName: async () => {
+					throw new Error("unused");
+				},
+				experimentalFromName: async () => {
+					throw new Error("unused");
+				},
+			},
+		};
+	}
+
+	it("scopes ownership to the benchmark App per generation and counts both generations outside it as foreign", async () => {
+		const runner = directRunner(control(true));
+		expect(await modalInventory("vm", runner).list({} as never, {})).toEqual({
+			owned: [v1Owned],
+			foreignCount: 2,
+		});
+		expect(await modalInventory("gvisor", runner).list({} as never, {})).toEqual({
+			owned: [v2Owned],
+			foreignCount: 2,
+		});
+		// No App yet: nothing can be owned, and every v1 sandbox in the environment is foreign.
+		const fresh = directRunner(control(false));
+		expect(await modalInventory("vm", fresh).list({} as never, {})).toEqual({
+			owned: [],
+			foreignCount: 3,
+		});
+		expect(await modalInventory("gvisor", fresh).list({} as never, {})).toEqual({
+			owned: [],
+			foreignCount: 3,
+		});
+	});
+
+	it("rejects incomplete App enumeration instead of declaring the account clean", async () => {
+		const fake = control(true);
+		fake.apps.list = async () => {
+			throw new Error("App listing unavailable");
+		};
+		await expect(
+			modalInventory("gvisor", directRunner(fake)).list({} as never, {}),
+		).rejects.toThrow("App listing unavailable");
+	});
+
+	it("destroys by id with a waited terminate and converges only on sandbox not-found", async () => {
+		const terminated: string[] = [];
+		const detached: string[] = [];
+		let failure: unknown;
+		const runner = directRunner({
+			sandboxes: {
+				fromId: async (id: string) => ({
+					terminate: async ({ wait }: { wait: true }) => {
+						if (failure !== undefined) throw failure;
+						terminated.push(`${id}:${wait}`);
+						return 0;
+					},
+					detach: () => detached.push(id),
+				}),
+			},
+		});
+		await modalDestroyById(runner)({} as never, modalRef, {});
+		expect(terminated).toEqual([`${modalRef.id}:true`]);
+		failure = new ClientError(
+			"/modal.client.ModalClient/SandboxTerminate",
+			Status.NOT_FOUND,
+			"gone",
+		);
+		await modalDestroyById(runner)({} as never, modalRef, {});
+		failure = new ClientError("/modal.client.ModalClient/AppGetByName", Status.NOT_FOUND, "gone");
+		await expect(modalDestroyById(runner)({} as never, modalRef, {})).rejects.toThrow(/gone/);
+		failure = new Error("control plane unavailable");
+		await expect(modalDestroyById(runner)({} as never, modalRef, {})).rejects.toThrow(
+			/control plane unavailable/,
+		);
 	});
 });

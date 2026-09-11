@@ -13,6 +13,14 @@ import { DAYTONA_PROVENANCE } from "./_provenance.ts";
 type DaytonaId = "daytona-vm" | "daytona-container";
 export const DAYTONA_SANDBOX_ID = type("string.uuid");
 const createInput = type({ name: "string >= 1", snapshot: "string >= 1" });
+/**
+ * Both Daytona variants share one org and create with exactly this name shape, so each variant's
+ * inventory claims every benchmark sandbox it finds: batches on the shared account never overlap
+ * (one concurrency queue), so anything present at admission is a leftover to remove, and a sibling
+ * variant's later teardown of the same id converges on not-found.
+ */
+const DAYTONA_BENCHMARK_NAME =
+	/^benchmark-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const CONTROL_TIMEOUT_MS = 10000;
 type CommandSandbox = {
 	readonly process: Pick<Sandbox["process"], "createSession" | "executeSessionCommand">;
@@ -225,6 +233,39 @@ export function daytonaSpec<P extends DaytonaId>(
 				for await (const sandbox of client.list()) rows.push(sandbox);
 				return rows;
 			},
+		},
+		inventory: {
+			list: async (_compute, options) => {
+				const owned: string[] = [];
+				let foreignCount = 0;
+				for await (const sandbox of client.list()) {
+					options.signal?.throwIfAborted();
+					// A sandbox already on its way out is nobody's resource; everything else is either the
+					// benchmark's (by name shape) or a foreign allocation on what must be a dedicated org.
+					if (sandbox.state === "destroyed" || sandbox.state === "destroying") continue;
+					if (typeof sandbox.name === "string" && DAYTONA_BENCHMARK_NAME.test(sandbox.name))
+						owned.push(sandbox.id);
+					else foreignCount += 1;
+				}
+				return { owned, foreignCount };
+			},
+		},
+		destroyById: async (_compute, ref, options) => {
+			options.signal?.throwIfAborted();
+			let sandbox: Sandbox;
+			try {
+				sandbox = await client.get(ref.id);
+			} catch (error) {
+				if (error instanceof DaytonaNotFoundError) return;
+				throw error;
+			}
+			if (sandbox.id !== ref.id) throw new Error("Daytona returned an unrelated sandbox");
+			try {
+				await client.delete(sandbox, 30, true);
+			} catch (error) {
+				if (error instanceof DaytonaNotFoundError) return;
+				throw error;
+			}
 		},
 		snapshots: {
 			create: async (_compute, session) => {

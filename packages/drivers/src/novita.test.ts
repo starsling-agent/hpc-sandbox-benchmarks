@@ -90,3 +90,74 @@ describe("Novita native integration", () => {
 		}
 	});
 });
+
+describe("Novita account inventory and recovery", () => {
+	function fakePaginator(pages: readonly unknown[]) {
+		let index = 0;
+		return {
+			get hasNext() {
+				return index < pages.length;
+			},
+			get nextToken() {
+				return index < pages.length ? `page-${index + 1}` : undefined;
+			},
+			nextItems: async () => {
+				const page = pages[index];
+				index += 1;
+				return page;
+			},
+		} as unknown as ReturnType<typeof Sandbox.list>;
+	}
+
+	test("drains every live page, owns by the attempt marker, and counts the rest as foreign", async () => {
+		const list = spyOn(Sandbox, "list").mockReturnValueOnce(
+			fakePaginator([
+				[
+					{ sandboxId: "owned-1", metadata: { "sandbox-benchmarks-attempt": "benchmark-a" } },
+					{ sandboxId: "foreign-1", metadata: {} },
+					{ sandboxId: "foreign-2" },
+				],
+				[{ sandboxId: "owned-2", metadata: { "sandbox-benchmarks-attempt": "benchmark-b" } }],
+			]),
+		);
+		try {
+			expect(await novita.driver(context).inventory?.list()).toEqual({
+				owned: [
+					{ provider: "novita", id: "owned-1" },
+					{ provider: "novita", id: "owned-2" },
+				],
+				foreignCount: 2,
+			});
+			expect(list.mock.calls[0]?.[0]).toMatchObject({
+				apiKey: "nvta_test",
+				domain: NOVITA_DOMAIN,
+				query: { state: ["running", "paused"] },
+			});
+		} finally {
+			list.mockRestore();
+		}
+	});
+
+	test("destroys by canonical id and converges only on Novita's own absence", async () => {
+		const { SandboxNotFoundError } = createRequire(import.meta.url)(
+			"novita-sandbox",
+		) as typeof import("novita-sandbox");
+		const kill = spyOn(Sandbox, "kill").mockResolvedValueOnce(true);
+		try {
+			const driver = novita.driver(context);
+			await driver.destroyById?.({ provider: "novita", id: "leftover" });
+			expect(kill).toHaveBeenCalledWith(
+				"leftover",
+				expect.objectContaining({ apiKey: "nvta_test" }),
+			);
+			kill.mockRejectedValueOnce(new SandboxNotFoundError("gone"));
+			await driver.destroyById?.({ provider: "novita", id: "leftover" });
+			kill.mockRejectedValueOnce(new Error("control plane unavailable"));
+			await expect(
+				driver.destroyById?.({ provider: "novita", id: "leftover" }),
+			).rejects.toMatchObject({ code: "destroy-failed", provider: "novita" });
+		} finally {
+			kill.mockRestore();
+		}
+	});
+});

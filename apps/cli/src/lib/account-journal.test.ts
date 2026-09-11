@@ -78,3 +78,32 @@ test("unavailable observation does not append a release", async () => {
 	).rejects.toThrow("unavailable");
 	expect(events).toEqual([]);
 });
+
+for (const initiallyTerminal of [false, true]) {
+	test(`retained terminal allocations release journal ownership (initially terminal: ${initiallyTerminal})`, async () => {
+		const records: AccountRecord[] = [intent, { ...intent, kind: "allocated", ref }];
+		const { driver, journal, events } = fixture(records);
+		let terminal = initiallyTerminal;
+		const retained: SandboxDriver = {
+			...driver,
+			probes: { observe: async () => ({ state: terminal ? "terminal" : "running" }) },
+			destroyById: async () => {
+				terminal = true;
+				events.push("destroy");
+			},
+		};
+		await recoverAccount("tama", new Map([["tama", retained]]), journal, AbortSignal.timeout(50));
+		expect(events).toEqual(initiallyTerminal ? ["release"] : ["destroy", "release"]);
+		expect(records.at(-1)).toMatchObject({ kind: "released", outcome: "absent", ref });
+	});
+}
+
+test("a delete acknowledgement cannot release a still-running allocation", async () => {
+	const records: AccountRecord[] = [intent, { ...intent, kind: "allocated", ref }];
+	const { driver, journal } = fixture(records);
+	driver.destroyById = async () => {};
+	await expect(
+		recoverAccount("tama", new Map([["tama", driver]]), journal, AbortSignal.timeout(20)),
+	).rejects.toThrow();
+	expect(records).toHaveLength(2);
+});

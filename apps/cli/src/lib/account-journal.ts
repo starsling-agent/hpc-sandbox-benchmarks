@@ -74,7 +74,7 @@ export async function recoverAccount(
 	}
 }
 
-/** Only observed absence releases a known allocation. Transport failures preserve ownership. */
+/** Observed absence or a retained terminal record releases ownership; transport failures do not. */
 export async function confirmRemoval(
 	driver: SandboxDriver,
 	ref: SandboxRef,
@@ -100,12 +100,12 @@ export async function confirmRemoval(
 		}
 	};
 	signal.throwIfAborted();
-	if ((await bounded(driver.probes.observe(ref))).state === "absent") return;
+	if ((await bounded(driver.probes.observe(ref))).state !== "running") return;
 	signal.throwIfAborted();
 	await bounded(driver.destroyById(ref, { signal }));
 	for (;;) {
 		signal.throwIfAborted();
-		if ((await bounded(driver.probes.observe(ref))).state === "absent") return;
+		if ((await bounded(driver.probes.observe(ref))).state !== "running") return;
 		await bounded(new Promise((resolve) => setTimeout(resolve, 100)));
 	}
 }

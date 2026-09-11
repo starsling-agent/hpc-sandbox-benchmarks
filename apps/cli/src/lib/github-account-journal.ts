@@ -10,6 +10,7 @@ const tree = type({
 	tree: type({ path: "string", type: "string", sha: /^[a-f0-9]{40}$/ }).array(),
 });
 const blob = type({ encoding: "'base64'", content: "string <= 16000000" });
+const responseError = type({ message: "string <= 2000" });
 const journalSchema = type({
 	schemaVersion: "'1'",
 	account: "string",
@@ -45,6 +46,7 @@ export function githubAccountJournal(
 			throw new Error("journal account provenance mismatch");
 		return { head, baseTree, journal };
 	};
+	const acknowledged = new Map<string, Awaited<ReturnType<typeof snapshot>>>();
 	return {
 		async read(account) {
 			if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(account))
@@ -55,7 +57,10 @@ export function githubAccountJournal(
 		append(raw) {
 			const record = accountRecordSchema.assert(raw);
 			const pending = tail.then(async () => {
-				const state = await snapshot(record.account);
+				// Chain our own acknowledged writes without depending on ref read-after-write consistency.
+				// A competing writer still fails the non-forced ref update below.
+				const state = acknowledged.get(record.account) ?? (await snapshot(record.account));
+				const nextJournal = { ...state.journal, records: [...state.journal.records, record] };
 				const path = "journal.json";
 				if (
 					state.journal.records.some(
@@ -71,7 +76,7 @@ export function githubAccountJournal(
 								path,
 								mode: "100644",
 								type: "blob",
-								content: `${JSON.stringify({ ...state.journal, records: [...state.journal.records, record] })}\n`,
+								content: `${JSON.stringify(nextJournal)}\n`,
 							},
 						],
 					}),
@@ -83,15 +88,42 @@ export function githubAccountJournal(
 						parents: [state.head],
 					}),
 				);
-				// Never force: another writer advancing the branch makes this append fail closed.
-				const updated = reference.assert(
-					await request("PATCH", `/git/refs/heads/${branch}-${record.account}`, {
-						sha: nextCommit.sha,
-						force: false,
-					}),
-				);
+				let response: unknown;
+				for (let attempt = 0; ; attempt++) {
+					try {
+						response = await request("PATCH", `/git/refs/heads/${branch}-${record.account}`, {
+							sha: nextCommit.sha,
+							force: false,
+						});
+						break;
+					} catch (error) {
+						if (attempt >= 2) throw error;
+						let observed: string;
+						try {
+							observed = reference.assert(
+								await request("GET", `/git/ref/heads/${branch}-${record.account}`),
+							).object.sha;
+						} catch {
+							throw error;
+						}
+						// A lost response is settled by the exact commit, never by guessing or forcing.
+						if (observed === nextCommit.sha) {
+							response = { object: { sha: observed } };
+							break;
+						}
+						// Retry only the same conditional ref update. A competing writer fails closed.
+						if (observed !== state.head) throw error;
+						await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+					}
+				}
+				const updated = reference.assert(response);
 				if (updated.object.sha !== nextCommit.sha)
 					throw new Error("journal append was not acknowledged");
+				acknowledged.set(record.account, {
+					head: nextCommit.sha,
+					baseTree: nextTree.sha,
+					journal: nextJournal,
+				});
 			});
 			// The chain only orders appends; it must not carry their outcomes. A rejected tail would skip
 			// every later append's callback and fail every read with the first (possibly transient)
@@ -119,8 +151,14 @@ export function githubGitRequest(env: NodeJS.ProcessEnv = process.env): GitReque
 			...(body === undefined ? {} : { body: JSON.stringify(body) }),
 			signal: AbortSignal.timeout(20_000),
 		});
-		if (!response.ok)
-			throw new Error(`account journal ${method} HTTP ${response.status}; allocation blocked`);
+		if (!response.ok) {
+			const payload = responseError(await response.json().catch(() => null));
+			const detail = payload instanceof type.errors ? "" : `: ${payload.message}`;
+			const requestId = response.headers.get("x-github-request-id");
+			throw new Error(
+				`account journal ${method} HTTP ${response.status}${detail}${requestId ? ` [request ${requestId}]` : ""}; allocation blocked`,
+			);
+		}
 		return response.json();
 	};
 }

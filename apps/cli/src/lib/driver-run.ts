@@ -373,7 +373,8 @@ export function usesSessionOperations(id: DriverProviderId): boolean {
 		id === "daytona-vm" ||
 		id === "daytona-container" ||
 		id === "vercel" ||
-		id === "blaxel"
+		id === "blaxel" ||
+		id === "microsandbox-cloud"
 	);
 }
 

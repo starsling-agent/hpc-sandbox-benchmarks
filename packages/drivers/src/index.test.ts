@@ -17,6 +17,7 @@ describe("generated driver loader", () => {
 			"daytona-vm",
 			"daytona-container",
 			"blaxel",
+			"microsandbox-cloud",
 			"modal-gvisor",
 			"modal-vm",
 			"novita",

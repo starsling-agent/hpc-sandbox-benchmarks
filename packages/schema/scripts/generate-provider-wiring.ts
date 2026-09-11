@@ -515,6 +515,7 @@ export function renderDriversProvenance(root = REPO_ROOT): Map<string, string> {
 		["DAYTONA", "@daytona/sdk", catalogVersion(catalog, "@daytona/sdk")],
 		["VERCEL", "@vercel/sandbox", catalogVersion(catalog, "@vercel/sandbox")],
 		["BLAXEL", REGISTRY.blaxel.sdkPackage, catalogVersion(catalog, REGISTRY.blaxel.sdkPackage)],
+		["MICROSANDBOX", "microsandbox", catalogVersion(catalog, "microsandbox")],
 	] as const;
 	const packages = new Set(
 		driverFleetProjection(root).moduleIds.map((id) => driverModuleLocation(id).directory),

@@ -16,12 +16,6 @@ export {
 	sanitizeEvidenceDetail,
 	sanitizeProviderResponse,
 } from "./lib/cost-evidence.ts";
-export type {
-	MicrosandboxCloudConfig,
-	MicrosandboxConfig,
-	MicrosandboxHandle,
-} from "./lib/microsandbox.ts";
-export { microsandboxCloudCompute } from "./lib/microsandbox.ts";
 // Novita's E2B-compat surface: the pinned regional domain + connection the bake pipeline reuses,
 // and the compat factory (exported for tests and for anyone driving Novita outside the harness join).
 export { NOVITA_E2B_DOMAIN, novitaCompute, novitaConnection } from "./lib/novita.ts";

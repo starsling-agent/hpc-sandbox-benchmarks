@@ -7,7 +7,6 @@ import type { ProviderId } from "@sandbox-benchmarks/schema";
 import { PROVIDER_IDS, TARGET_SPEC } from "@sandbox-benchmarks/schema";
 import { config } from "../config.ts";
 import { runcloudCostEvidence } from "./cost-evidence.ts";
-import { microsandboxCloudCompute } from "./microsandbox.ts";
 import { RUNCLOUD_CREATE_CEILING_MS, runcloudCompute } from "./runcloud.ts";
 import { runloopCompute } from "./runloop.ts";
 import type { ProviderAdapter } from "./types.ts";
@@ -32,6 +31,7 @@ export const MIGRATED_DRIVER_IDS = [
 	"daytona-container",
 	"vercel",
 	"blaxel",
+	"microsandbox-cloud",
 ] as const satisfies readonly ProviderId[];
 
 /** A schema id served by a registered DriverModule. Derived from the list, so the two cannot drift. */
@@ -39,20 +39,9 @@ export type MigratedDriverId = (typeof MIGRATED_DRIVER_IDS)[number];
 /** Schema ids still served by this package's ComputeSDK adapters. */
 export type LegacyAdapterId = Exclude<ProviderId, MigratedDriverId>;
 
-/** The longest suite has a 155-minute budget. Give Microsandbox enough lifetime for setup and
- * teardown as well, while keeping leaked benchmark sandboxes self-expiring. */
-const MICROSANDBOX_MAX_DURATION_SECS = 3 * 60 * 60;
+/** The longest suite has a 155-minute budget; leave setup/collection margin while keeping leaked
+ * benchmark sandboxes self-expiring. */
 const RUNCLOUD_MAX_DURATION_SECS = 3 * 60 * 60;
-
-/**
- * Microsandbox's `create` does not return until the sandbox is RUNNING, so the toolchain image pull
- * happens inside it — unlike providers whose create is accepted in well under a second and whose pull
- * is absorbed by the readiness probe loop afterwards. The toolchain image is ~1.5 GiB compressed
- * across 7 layers and CI runners always start with a cold cache, which the harness's 5-minute default
- * per-attempt budget can easily lose to. A create timeout is not classified as a capacity error, so
- * that loss is not retried: the cell records `sandbox-create-failed` and produces zero results.
- */
-const MICROSANDBOX_CREATE_TIMEOUT_MS = 20 * 60 * 1000;
 
 /** The longest suite has a 155-minute budget; leave setup/collection margin while ensuring a leaked
  * Runloop Devbox expires. Runloop allows keep-alive durations up to 48 hours. */
@@ -60,16 +49,6 @@ const RUNLOOP_KEEP_ALIVE_SECS = 3 * 60 * 60;
 /** Bound Runloop's create-and-await-running poll. The hardened adapter tears down an accepted
  * allocation if this deadline expires, so a cold start cannot hang the runner or leak a Devbox. */
 const RUNLOOP_CREATE_TIMEOUT_MS = 20 * 60 * 1000;
-
-function microsandboxCloudCredentials(): { kind: "cloud"; url?: string; apiKey: string } {
-	const { apiUrl, apiKey } = config.microsandboxCloud;
-	if (!apiKey) {
-		throw new Error("microsandbox-cloud requires MSB_API_KEY");
-	}
-	// Omitting the URL intentionally delegates to the SDK's api.microsandbox.dev default. Keeping the
-	// property absent, instead of passing undefined, also makes the backend selection shape explicit.
-	return apiUrl ? { kind: "cloud", url: apiUrl, apiKey } : { kind: "cloud", apiKey };
-}
 
 /**
  * Harness adapters for providers not yet on DriverModule. The `Record<LegacyAdapterId, …>` type
@@ -80,24 +59,6 @@ function microsandboxCloudCredentials(): { kind: "cloud"; url?: string; apiKey: 
  * jointly complete.
  */
 export const adapters: Record<LegacyAdapterId, ProviderAdapter> = {
-	"microsandbox-cloud": {
-		artifact: { kind: "image", ref: config.toolchainImage },
-		// The API key remains in the CloudBackend HTTP/WebSocket client. It is never forwarded through
-		// createOptions, metadata, or the benchmark's in-guest environment.
-		createCompute: () =>
-			microsandboxCloudCompute({
-				backend: microsandboxCloudCredentials(),
-				ephemeral: true,
-				image: config.toolchainImage,
-				cpus: TARGET_SPEC.vcpus,
-				memoryMib: TARGET_SPEC.memoryGb * 1024,
-				rootDiskMib: TARGET_SPEC.diskGb * 1024,
-				namePrefix: "bench-cloud-",
-				timeoutMs: MICROSANDBOX_MAX_DURATION_SECS * 1000,
-			}),
-		createOptions: { templateId: config.toolchainImage },
-		createTimeoutMs: MICROSANDBOX_CREATE_TIMEOUT_MS,
-	},
 	runloop: {
 		artifact: { kind: "baked", ref: config.runloopBlueprint },
 		// Boot the immutable version-scoped Blueprint by name. Runloop resolves that name to its latest

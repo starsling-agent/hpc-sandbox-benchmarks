@@ -12,7 +12,7 @@ import {
 import type { ExperimentCell, Run } from "@sandbox-benchmarks/schema";
 import { aggregate, parseRun } from "@sandbox-benchmarks/schema";
 import { rawTreeDigest, writeImmutableJson } from "./experiment-artifacts.ts";
-import { planExperiment } from "./experiment-plan.ts";
+import { planExperiment, ROUND_BATCH_LIMIT } from "./experiment-plan.ts";
 
 const sha = "a".repeat(40);
 const digest = `sha256:${"b".repeat(64)}`;
@@ -414,7 +414,8 @@ test("real aggregate and promote commands require intact original evidence", () 
 
 test("large experiments retain every batch in explicit collection rounds", () => {
 	const result = plan(257);
-	expect(result.rounds.map((round) => round.batches.length)).toEqual([256, 1]);
+	expect(ROUND_BATCH_LIMIT).toBe(64);
+	expect(result.rounds.map((round) => round.batches.length)).toEqual([64, 64, 64, 64, 1]);
 	expect(result.rounds.flatMap((round) => round.batches)).toEqual(
 		result.batches.map((batch) => batch.id),
 	);

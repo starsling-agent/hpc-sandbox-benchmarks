@@ -9,6 +9,15 @@ export interface AccountCapacity {
 	gpus?: number;
 }
 
+/**
+ * Batches per collection round, and therefore the approval unit of a run: a round's batch jobs are
+ * created together so one `privileged` approval releases them all, and they then queue on the
+ * account's concurrency group. GitHub's `queue: max` holds at most 100 pending jobs per group and
+ * cancels the overflow (a cancelled batch is a failed cell), so a released round must stay well under
+ * that even when the sibling isolation variant and the smoke/toolchain/GPU lanes share the group.
+ */
+export const ROUND_BATCH_LIMIT = 64;
+
 /** Pure admission planning. No credential reads, remote calls, or implicit wall-clock input. */
 export function planExperiment(
 	request: {
@@ -71,11 +80,11 @@ export function planExperiment(
 	const rounds: ExperimentPlan["rounds"] = [];
 	for (const quotaDomain of new Set(cells.map((cell) => cell.quotaDomain))) {
 		const domainBatches = batches.filter((batch) => batch.quotaDomain === quotaDomain);
-		for (let offset = 0; offset < domainBatches.length; offset += 256)
+		for (let offset = 0; offset < domainBatches.length; offset += ROUND_BATCH_LIMIT)
 			rounds.push({
 				id: `round-${rounds.length}`,
 				quotaDomain,
-				batches: domainBatches.slice(offset, offset + 256).map((batch) => batch.id),
+				batches: domainBatches.slice(offset, offset + ROUND_BATCH_LIMIT).map((batch) => batch.id),
 			});
 	}
 	const accounts = [...new Set(cells.map((cell) => cell.quotaDomain))].map((quotaDomain) => ({

@@ -258,7 +258,7 @@ test("production workflows preserve planned account batching and strict promotio
 	expect(runCheck()).toEqual([]);
 });
 
-test("the integrated workflow gate rejects parallel batches, detached plan axes and legacy promotion", async () => {
+test("the integrated workflow gate rejects parallel rounds, serialised batches, detached plan axes and legacy promotion", async () => {
 	const { checkExperimentNesting } = await import("./lib/workflow-nesting.ts");
 	const docs = Object.fromEntries(
 		[
@@ -272,7 +272,13 @@ test("the integrated workflow gate rejects parallel batches, detached plan axes 
 	);
 	const source = JSON.stringify(docs);
 	for (const [before, after] of [
+		// Rounds serialised (bench-account.yml is the only remaining max-parallel: 1).
 		['"max-parallel":1', '"max-parallel":2'],
+		// A round's batches created together: reintroducing max-parallel there is one approval per batch.
+		[
+			'"fail-fast":false,"matrix":{"include":',
+			'"fail-fast":false,"max-parallel":1,"matrix":{"include":',
+		],
 		["fromJSON(needs.plan.outputs.accounts)", "fromJSON(needs.plan.outputs.suites)"],
 		["data/dataset experiment/manifest/plan.json experiment/attempts", "data/dataset"],
 		["workflow-experiment.ts execute", "bench-suite.ts"],

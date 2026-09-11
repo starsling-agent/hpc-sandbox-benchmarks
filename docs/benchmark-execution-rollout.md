@@ -7,7 +7,10 @@ This is an implementation status record, not a claim that the live fleet meets t
 - Schema 1 experiment plans and attempt receipts; schema 7 Run linkage with historical Run readers.
 - Pure `planExperiment`: unchanged logical replicate identities, default capacity one, CPU/RAM/GPU
   limits, phase budgets plus one 15-minute host margin, 180-minute batch ceiling, collection rounds
-  of at most 256 batches, and uniform reviewed exclusions. Retries default to zero.
+  of at most 64 batches, and uniform reviewed exclusions. Retries default to zero. A round is the
+  approval unit: its batch jobs are created together (the account concurrency queue, not
+  `max-parallel`, serialises them), so one `privileged` approval releases a whole round, and 64 keeps
+  a released round under the 100 pending jobs a `queue: max` group holds before cancelling overflow.
 - Pure coverage evaluation and deterministic whole-attempt aggregation. Missing work, bad provenance,
   conflicting attempts, unapproved retries, missing metrics and unknown cleanup block completeness.
 - File-boundary verification of normalized and raw digests; atomic, no-overwrite JSON publication.

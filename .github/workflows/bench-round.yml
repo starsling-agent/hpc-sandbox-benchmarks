@@ -42,7 +42,12 @@ jobs:
       id-token: write
     strategy:
       fail-fast: false
-      max-parallel: 1
+      # Deliberately NO max-parallel here. Exclusion per account is the bench job's concurrency group
+      # (`benchmark-account-<domain>`, `queue: max`), so every batch of this round may be created at
+      # once: they all reach the `privileged` approval gate together and ONE approval releases the
+      # whole round, instead of one approval per batch (GitHub approves only the jobs already
+      # pending). The planner caps a round at ROUND_BATCH_LIMIT batches so the released jobs stay
+      # under the 100 that a `queue: max` group can hold before it cancels the overflow.
       matrix:
         include: ${{ fromJSON(needs.plan.outputs.axis) }}
     uses: ./.github/workflows/bench-suite.yml

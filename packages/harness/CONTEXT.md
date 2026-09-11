@@ -4,6 +4,11 @@ This context describes performing benchmark work and recording the evidence used
 
 ## Language
 
+**Inventory admission scope**:
+The resources whose presence prevents admission. Account scope rejects unowned resources; benchmark
+scope requires only benchmark-owned resources to be reconciled. Neither scope permits deleting
+unowned resources or establishes performance isolation.
+
 **Benchmark step**:
 A command workload executed as part of benchmark preparation, measurement, or collection, with
 its own completion outcome. A step is not necessarily a measured sample.

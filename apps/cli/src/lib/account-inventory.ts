@@ -1,5 +1,6 @@
 import type { InventorySnapshot, ProviderId, SandboxDriver } from "@sandbox-benchmarks/driver";
 import { quotaDomain } from "@sandbox-benchmarks/schema";
+import { accountInventoryScope } from "./account-policy.ts";
 
 export type AccountInventoryRow = {
 	readonly id: ProviderId;
@@ -12,7 +13,8 @@ export type AccountInventoryRow = {
 
 /**
  * Observe every requested provider's account exactly as admission will: reconciliation refuses a
- * driver without inventory, destroy-by-id and probes, and any foreign resource blocks allocation.
+ * driver without inventory, destroy-by-id and probes. Foreign resources block account-scoped admission;
+ * benchmark-scoped admission retains foreign counts without authorizing deletion.
  * Nothing here allocates or deletes, and a failed open or listing is reported, never skipped.
  */
 export async function inventoryAccounts<P extends ProviderId>(
@@ -42,9 +44,13 @@ export async function inventoryAccounts<P extends ProviderId>(
 	return rows;
 }
 
-/** Admission would block on any row here: an unsupported driver, a failed listing, or a foreign resource. */
+/** Benchmark-scoped exceptions permit foreign resources, never unavailable inventory. */
 export function inventoryBlocksAdmission(rows: readonly AccountInventoryRow[]): boolean {
-	return rows.some((row) => row.status !== "listed" || row.snapshot.foreignCount > 0);
+	return rows.some(
+		(row) =>
+			row.status !== "listed" ||
+			(row.snapshot.foreignCount > 0 && accountInventoryScope(row.id) === "account"),
+	);
 }
 
 export function formatAccountInventory(rows: readonly AccountInventoryRow[]): string {
@@ -56,7 +62,7 @@ export function formatAccountInventory(rows: readonly AccountInventoryRow[]): st
 				row.snapshot.owned.length === 0
 					? "none"
 					: row.snapshot.owned.map((ref) => ref.id).join(", ");
-			return `${head} owned=${row.snapshot.owned.length} [${owned}] foreign=${row.snapshot.foreignCount}`;
+			return `${head} owned=${row.snapshot.owned.length} [${owned}] foreign=${row.snapshot.foreignCount} scope=${accountInventoryScope(row.id)}`;
 		})
 		.join("\n");
 }

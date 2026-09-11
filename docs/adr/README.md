@@ -20,3 +20,4 @@ here changes, supersede the ADR (leave it in place, note what replaced it) rathe
 | [0008](./0008-driver-conformance-gate.md) | Driver conformance: the behavioral drift gate |
 | [0009](./0009-harness-operations-and-gpu-allocation.md) | Separate harness operations and typed provider-specific GPU allocation |
 | [0010](./0010-experiment-completeness.md) | Frozen experiments, immutable attempts and strict completeness |
+| [0011](./0011-inventory-admission-scope.md) | Inventory admission scope and ownership-safe recovery |

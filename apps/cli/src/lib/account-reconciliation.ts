@@ -4,6 +4,7 @@ import type {
 	SandboxDriver,
 	SandboxRef,
 } from "@sandbox-benchmarks/driver";
+import { accountInventoryScope } from "./account-policy.ts";
 
 export interface AccountDriver {
 	id: ProviderId;
@@ -70,8 +71,10 @@ export async function reconcileAccount(
 			!Array.isArray(snapshot.owned)
 		)
 			throw new Error(`${id} returned invalid account inventory`);
-		if (snapshot.foreignCount > 0)
-			throw new Error(`${id} dedicated account contains unowned resources; allocation blocked`);
+		if (snapshot.foreignCount > 0 && accountInventoryScope(id) === "account")
+			throw new Error(
+				`${id} account-scoped inventory contains unowned resources; allocation blocked`,
+			);
 		const ids = new Set<string>();
 		for (const ref of snapshot.owned) {
 			if (ref.provider !== id || typeof ref.id !== "string" || ref.id === "" || ids.has(ref.id))

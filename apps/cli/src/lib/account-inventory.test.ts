@@ -20,6 +20,29 @@ const capable = (owned: readonly string[], foreignCount: number): SandboxDriver 
 	},
 });
 
+test("benchmark-scoped inventory reports foreign counts without blocking admission", async () => {
+	const rows = await inventoryAccounts(
+		["daytona-vm", "daytona-container", "novita"],
+		async () => ({ driver: capable([], 42) }),
+		String,
+	);
+	expect(inventoryBlocksAdmission(rows)).toBe(false);
+	expect(formatAccountInventory(rows)).toContain("foreign=42 scope=benchmark");
+	expect(rows.map((row) => row.account)).toEqual(["daytona", "daytona", "novita"]);
+});
+
+test("benchmark-scoped listing failure still blocks admission", async () => {
+	const rows = await inventoryAccounts(
+		["daytona-container", "novita"],
+		async () => {
+			throw new Error("inventory unavailable");
+		},
+		String,
+	);
+	expect(inventoryBlocksAdmission(rows)).toBe(true);
+	expect(rows.every((row) => row.status === "failed")).toBe(true);
+});
+
 test("reports every account the way admission sees it and never skips a failure", async () => {
 	const rows = await inventoryAccounts(
 		["tama", "e2b", "novita", "modal-vm"],

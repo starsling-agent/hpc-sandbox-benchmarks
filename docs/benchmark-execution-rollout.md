@@ -33,8 +33,10 @@ This is an implementation status record, not a claim that the live fleet meets t
   validates all variant inventories before deletion, requires the control plane to observe each
   deleted sandbox as no longer running (absent, or terminal where the vendor retains terminated
   records — Modal and run.cloud never report absence), and checks every inventory again before
-  admission. Unavailable inventory, foreign resources, cancellation,
-  timeout, or new allocations block admission. It is called once by each account-owned batch before allocation.
+  admission. Unavailable inventory, cancellation, timeout, or new benchmark allocations block
+  admission. Foreign resources block account-scoped admission;
+  [ADR-0011](./adr/0011-inventory-admission-scope.md) defines benchmark-scoped admission without
+  authorizing deletion of unowned resources. It is called once by each account-owned batch before allocation.
 - Strict `promote` requires the original plan and attempt directories and independently reconstructs
   the candidate before writing the dataset. Legacy Runs remain available for validation and reading.
 - Publication verifies identity-bound execution and cleanup receipts, including a control-plane
@@ -86,7 +88,7 @@ one blob avoids a REST request per historical record on every new batch.
 An operator must provision these branches after quiescing existing account writers and confirming a
 clean vendor baseline. `bun apps/cli/src/bin/account-inventory.ts [provider...]` reads every migrated
 provider's account exactly as admission will — the benchmark's own leftovers (removed by the next
-batch's reconciliation) and foreign resources (which block allocation outright) — without allocating
+batch's reconciliation) and foreign resources (which block account-scoped admission) — without allocating
 or deleting anything; it exits non-zero when any account would block admission. Protect them against deletion and force pushes, retain their history, and
 permit the privileged workflow token to append commits. Do not reset a journal to recover an account.
 For an unknown create, obtain the vendor's request outcome and resource identity before recording

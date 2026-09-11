@@ -4,6 +4,9 @@ status: accepted
 
 # Frozen experiments and evidence-based publication
 
+The inventory admission condition is refined by
+[ADR-0011](./0011-inventory-admission-scope.md). All other requirements remain.
+
 ## Decision
 
 An experiment plan owns the expected provider, suite, replicate, metric, revision, artifact, resource,

@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // Print each provider account as the reconciliation gate sees it: the benchmark's own leftovers
-// (which the next batch's admission would delete) and foreign resources (which block allocation
-// outright). Read-only — the operator's "clean vendor baseline" check before provisioning an
+// (which the next batch's admission would delete) and foreign resources (which block account-scoped
+// admission). Read-only — the operator's "clean vendor baseline" check before provisioning an
 // account journal or dispatching a matrix. Credentials come from the environment (Bun loads .env).
 import { describeDriverFailure } from "@sandbox-benchmarks/driver";
 import { diagnosticSecretsFromEnv } from "@sandbox-benchmarks/driver/env";

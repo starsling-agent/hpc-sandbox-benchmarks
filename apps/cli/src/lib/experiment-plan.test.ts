@@ -113,7 +113,7 @@ function successful(): AttemptWithRun {
 			environmentRevision: cell().environmentRevision,
 			artifactIdentity: cell().artifactIdentity,
 			passes: cell().passes,
-			workflowRun: "123",
+			workflowRun: "experiment-1",
 			workflowAttempt: 1,
 			job: "memory",
 			sequence: 0,
@@ -489,4 +489,10 @@ test("unverified GPU capacity and mixed workload revisions fail admission", () =
 			cells: [cell(), { ...cell(1), workloadRevision: "changed" }],
 		}),
 	).toThrow("inconsistent comparison cohort");
+});
+
+test("an attempt from another workflow cannot satisfy experiment coverage", () => {
+	const attempt = successful();
+	attempt.evidence.workflowRun = "another-workflow";
+	expect(evaluateExperiment(plan(), [attempt]).complete).toBe(false);
 });

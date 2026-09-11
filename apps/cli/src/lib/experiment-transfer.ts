@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { lstatSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { ExperimentPlan } from "@sandbox-benchmarks/schema";
 import type { AccountJournal } from "./account-journal.ts";
@@ -15,11 +15,12 @@ export async function downloadExperimentPlan(
 	root: string,
 ): Promise<ExperimentPlan> {
 	if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(id)) throw new Error("invalid experiment identity");
-	const artifacts = (await store.list(`experiment-plan-${id}`)).filter(
+	const artifacts = (await store.list({ name: `experiment-plan-${id}` })).filter(
 		(entry) => entry.name === `experiment-plan-${id}`,
 	);
 	if (artifacts.length !== 1 || !artifacts[0])
 		throw new Error("one immutable experiment plan is required");
+	prepareDownloadDirectory(root);
 	await store.download(artifacts[0], root);
 	const plan = readExperimentPlan(join(root, "plan.json"));
 	if (plan.id !== id || String(artifacts[0].workflow_run.id) !== id)
@@ -34,9 +35,9 @@ export async function downloadExperimentAttempts(
 	plan: ExperimentPlan,
 	root: string,
 ): Promise<void> {
-	mkdirSync(root, { recursive: true });
+	prepareDownloadDirectory(root);
 	const terminals = new Map<string, ReturnType<typeof readExperimentAttempt>>();
-	for (const artifact of await store.list(`experiment-attempt-${plan.id}-`)) {
+	for (const artifact of await store.list({ prefix: `experiment-attempt-${plan.id}-` })) {
 		const directory = join(root, String(artifact.id));
 		await store.download(artifact, directory);
 		const attempt = readExperimentAttempt(directory);
@@ -89,4 +90,11 @@ export async function downloadExperimentAttempts(
 			writeImmutableJson(join(directory, "intent.json"), record);
 		}
 	}
+}
+
+/** A download must never inherit evidence from an earlier collection or partial extraction. */
+function prepareDownloadDirectory(root: string): void {
+	mkdirSync(root, { recursive: true });
+	if (lstatSync(root).isSymbolicLink() || readdirSync(root).length !== 0)
+		throw new Error("artifact download requires an empty regular directory");
 }

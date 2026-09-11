@@ -62,3 +62,35 @@ test("a plan artifact from another workflow cannot supply experiment provenance"
 		),
 	).rejects.toThrow("workflow provenance");
 });
+
+test("collection refuses stale local attempts even when the remote inventory is empty", async () => {
+	const directory = join(root, "stale-collection");
+	mkdirSync(join(directory, "old-attempt"), { recursive: true });
+	writeImmutableJson(join(directory, "old-attempt", "attempt.json"), { stale: true });
+	await expect(
+		downloadExperimentAttempts(
+			store,
+			{ read: async () => [], append: async () => {} },
+			plan,
+			directory,
+		),
+	).rejects.toThrow("empty");
+});
+
+test("plan extraction cannot reuse a stale local plan when an archive omits it", async () => {
+	const directory = join(root, "stale-plan");
+	mkdirSync(directory);
+	writeImmutableJson(join(directory, "plan.json"), plan);
+	await expect(
+		downloadExperimentPlan(
+			{
+				...store,
+				list: async () => [
+					{ id: 1, name: "experiment-plan-123", expired: false, workflow_run: { id: 123 } },
+				],
+			},
+			"123",
+			directory,
+		),
+	).rejects.toThrow("empty");
+});

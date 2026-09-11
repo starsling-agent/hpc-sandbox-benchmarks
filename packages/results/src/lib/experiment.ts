@@ -217,6 +217,7 @@ export function evaluateExperiment(
 		ids.add(evidence.id);
 		if (
 			!knownCells.has(evidence.cellId) ||
+			evidence.workflowRun !== plan.id ||
 			evidence.planDigest !== plan.digest ||
 			evidence.sha !== plan.sha
 		) {

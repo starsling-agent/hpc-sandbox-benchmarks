@@ -316,7 +316,9 @@ export function evaluateExperiment(
 				(entry) => entry.providerId === cell.provider || providerReportedNothing(entry),
 			) &&
 			artifact !== undefined &&
-			artifactVerified(artifact) &&
+			// Stock boots have no artifact to verify, matching driver conformance. Named
+			// artifacts still require observed attribution, never the request alone.
+			(artifact.provenance.requested.kind === "none" || artifactVerified(artifact)) &&
 			evidenceDigest(effectiveArtifact(artifact.provenance)) === cell.artifactIdentity &&
 			selected?.run?.replicateIndex === cell.replicate &&
 			provider?.suitesCovered.includes(cell.suite) &&

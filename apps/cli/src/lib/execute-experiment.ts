@@ -159,9 +159,15 @@ export async function executeExperimentBatch(
 						});
 						allocated = session.sandboxRef;
 						try {
-							await withinSignal(startupSignal, () =>
-								options.journal.append({ ...intent, kind: "allocated", ref: session.sandboxRef }),
-							);
+							const allocation: AccountRecord = {
+								...intent,
+								kind: "allocated",
+								ref: session.sandboxRef,
+							};
+							// Preserve vendor identity for operator recovery even if the durable append fails.
+							// This artifact is evidence only; it never substitutes for journal admission.
+							writeImmutableJson(join(raw, "allocation.json"), allocation);
+							await withinSignal(startupSignal, () => options.journal.append(allocation));
 							allocationRecorded = true;
 						} catch (error) {
 							// The harness has not received this session yet. Retain the original journal failure.

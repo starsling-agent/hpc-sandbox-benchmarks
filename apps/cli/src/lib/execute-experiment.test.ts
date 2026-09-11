@@ -297,3 +297,45 @@ test("different suites enter measurement together and retain independent attempt
 		clearTimeout(timeout);
 	}
 });
+
+test("a rejected allocation journal append retains recovery identity without admitting measurement", async () => {
+	const f = await fixture("allocation-journal-failure");
+	const attempts = await executeExperimentBatch({
+		...f.options,
+		journal: {
+			...f.options.journal,
+			append: async (record) => {
+				if (record.kind === "allocated") throw new Error("journal allocation rejected");
+				await f.options.journal.append(record);
+			},
+		},
+	});
+	expect(attempts).toHaveLength(2);
+	expect(
+		attempts.every(
+			(attempt) =>
+				!attempt.measurementStarted &&
+				attempt.cleanup === "unresolved" &&
+				attempt.outcome === "failed",
+		),
+	).toBe(true);
+	expect(f.records.every((record) => record.kind === "intent")).toBe(true);
+	expect(f.present.size).toBe(0);
+	for (const attempt of attempts) {
+		const allocation = JSON.parse(
+			readFileSync(join(f.options.root, attempt.id, "raw", "allocation.json"), "utf8"),
+		);
+		expect(allocation).toMatchObject({
+			kind: "allocated",
+			attempt: attempt.id,
+			cellId: attempt.cellId,
+			planDigest: plan.digest,
+			account: "tama",
+			ref: { provider: "tama" },
+		});
+		expect(allocation.ref.id).toMatch(/^sandbox-[12]$/);
+		expect(readExperimentAttempt(join(f.options.root, attempt.id)).evidence.rawDigest).toBe(
+			attempt.rawDigest,
+		);
+	}
+});

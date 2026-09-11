@@ -15,7 +15,7 @@ const artifactPage = type({
 const workflowRunId = type(/^[1-9][0-9]*$/);
 export type StoredArtifact = (typeof artifactPage.infer.artifacts)[number];
 export interface ExperimentStore {
-	list(prefix: string): Promise<readonly StoredArtifact[]>;
+	list(query: { name: string } | { prefix: string }): Promise<readonly StoredArtifact[]>;
 	upload(name: string, directory: string): Promise<void>;
 	download(artifact: StoredArtifact, directory: string): Promise<void>;
 }
@@ -58,10 +58,10 @@ export function githubExperimentStore(
 	if (!repositoryOwner || !repositoryName) throw new Error("invalid repository identity");
 	const client = new DefaultArtifactClient();
 	return {
-		async list(prefix) {
+		async list(query) {
 			const entries = await scanArtifactPages(async (page) => {
 				const response = await fetch(
-					`https://api.github.com/repos/${repository}/actions/runs/${run}/artifacts?per_page=100&page=${page}`,
+					`https://api.github.com/repos/${repository}/actions/runs/${run}/artifacts?per_page=100&page=${page}${"name" in query ? `&name=${encodeURIComponent(query.name)}` : ""}`,
 					{
 						headers: {
 							Authorization: `Bearer ${token}`,
@@ -74,7 +74,9 @@ export function githubExperimentStore(
 				if (!response.ok) throw new Error(`artifact inventory HTTP ${response.status}`);
 				return response.json();
 			});
-			const selected = entries.filter((entry) => entry.name.startsWith(prefix));
+			const selected = entries.filter((entry) =>
+				"name" in query ? entry.name === query.name : entry.name.startsWith(query.prefix),
+			);
 			if (selected.some((entry) => entry.expired))
 				throw new Error(
 					"required artifact history expired; vendor-confirmed recovery or retained archive is required",

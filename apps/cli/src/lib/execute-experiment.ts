@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { SandboxDriver, SandboxRef } from "@sandbox-benchmarks/driver";
-import { describeDriverFailure } from "@sandbox-benchmarks/driver";
+import { describeDriverFailure, isRetryableDriverCreate } from "@sandbox-benchmarks/driver";
 import { diagnosticSecretsFromEnv } from "@sandbox-benchmarks/driver/env";
 import { executeSuite } from "@sandbox-benchmarks/harness";
 import {
@@ -117,6 +117,7 @@ export async function executeExperimentBatch(
 				planDigest: plan.digest,
 			};
 			let createStarted = false;
+			let createRejectedCleanly = false;
 			let allocated: SandboxRef | undefined;
 			let allocationRecorded = false;
 			let failure = admissionFailure;
@@ -151,7 +152,11 @@ export async function executeExperimentBatch(
 						if (Date.now() >= startupDeadline)
 							throw new Error("startup deadline exceeded before create");
 						createStarted = true;
-						const session = await opened.driver.create(request, createOptions);
+						const session = await opened.driver.create(request, createOptions).catch((error) => {
+							// This marker guarantees that the failed create left no allocation behind.
+							createRejectedCleanly = isRetryableDriverCreate(error);
+							throw error;
+						});
 						allocated = session.sandboxRef;
 						try {
 							await withinSignal(startupSignal, () =>
@@ -215,7 +220,7 @@ export async function executeExperimentBatch(
 			const cleanup =
 				receipts.cleanup?.completed && receipts.cleanup.confirmedAbsent
 					? "confirmed"
-					: createStarted
+					: createStarted && !createRejectedCleanly
 						? "unresolved"
 						: "not-allocated";
 			try {
@@ -226,8 +231,12 @@ export async function executeExperimentBatch(
 						outcome: "absent",
 						ref: allocated,
 					});
-				// No intent exists for admission failures. A pre-create deadline can leave a safely closable intent.
-				else if (!createStarted && admissionFailure === undefined && drivers.has(cell.provider)) {
+				// Close only intents known to have no remaining allocation; ambiguous create failures stay open.
+				else if (
+					(!createStarted || createRejectedCleanly) &&
+					admissionFailure === undefined &&
+					drivers.has(cell.provider)
+				) {
 					const records = await options.journal.read(cell.quotaDomain);
 					if (records.some((entry) => entry.kind === "intent" && entry.attempt === id))
 						await options.journal.append({ ...intent, kind: "released", outcome: "not-allocated" });

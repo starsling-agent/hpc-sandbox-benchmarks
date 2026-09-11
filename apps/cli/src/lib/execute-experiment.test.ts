@@ -211,3 +211,33 @@ test("a failed terminal upload does not discard its local immutable evidence or 
 	const retry = await executeExperimentBatch({ ...f.options, workflowAttempt: 2 });
 	expect(retry.every((attempt) => !attempt.measurementStarted)).toBe(true);
 });
+
+test("a typed clean create refusal releases its intent while an ambiguous failure does not", async () => {
+	const { DriverError, markRetryableDriverCreate } = await import("@sandbox-benchmarks/driver");
+	for (const clean of [true, false]) {
+		const f = await fixture(`create-refusal-${clean}`);
+		const open = f.options.open;
+		const failure = new DriverError("create-failed", "boot interrupted", { provider: "tama" });
+		if (clean) markRetryableDriverCreate(failure);
+		f.options.open = async () => {
+			const opened = await open();
+			return {
+				...opened,
+				driver: {
+					...opened.driver,
+					create: async () => {
+						throw failure;
+					},
+				},
+			};
+		};
+		const attempts = await executeExperimentBatch(f.options);
+		expect(
+			attempts.every((attempt) => attempt.cleanup === (clean ? "not-allocated" : "unresolved")),
+		).toBe(true);
+		expect(f.records.filter((record) => record.kind === "released")).toHaveLength(clean ? 2 : 0);
+		expect(
+			attempts.every((attempt) => attempt.outcome === "failed" && !attempt.measurementStarted),
+		).toBe(true);
+	}
+});

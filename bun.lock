@@ -37,6 +37,7 @@
         "plan-experiment": "./src/bin/plan-experiment.ts",
         "evaluate-experiment": "./src/bin/evaluate-experiment.ts",
         "aggregate-experiment": "./src/bin/aggregate-experiment.ts",
+        "workflow-experiment": "./src/bin/workflow-experiment.ts",
       },
       "dependencies": {
         "@actions/artifact": "6.2.1",
@@ -48,6 +49,7 @@
         "@sandbox-benchmarks/drivers": "workspace:*",
         "@sandbox-benchmarks/figures": "workspace:*",
         "@sandbox-benchmarks/harness": "workspace:*",
+        "@sandbox-benchmarks/modal": "workspace:*",
         "@sandbox-benchmarks/providers": "workspace:*",
         "@sandbox-benchmarks/results": "workspace:*",
         "@sandbox-benchmarks/schema": "workspace:*",
@@ -55,6 +57,21 @@
         "dotenv": "catalog:",
         "modal": "catalog:computesdk",
         "novita-sandbox": "catalog:computesdk",
+      },
+      "devDependencies": {
+        "@repo/tsconfig": "workspace:*",
+        "@sandbox-benchmarks/e2b": "workspace:*",
+        "@types/bun": "catalog:",
+        "typescript": "catalog:",
+      },
+    },
+    "packages/daytona": {
+      "name": "@sandbox-benchmarks/daytona",
+      "version": "0.0.0",
+      "dependencies": {
+        "@daytona/sdk": "catalog:computesdk",
+        "@sandbox-benchmarks/driver": "workspace:*",
+        "arktype": "catalog:",
       },
       "devDependencies": {
         "@repo/tsconfig": "workspace:*",
@@ -79,29 +96,29 @@
       "name": "@sandbox-benchmarks/drivers",
       "version": "0.0.0",
       "dependencies": {
-        "@blaxel/core": "catalog:computesdk",
-        "@computesdk/blaxel": "catalog:computesdk",
-        "@computesdk/daytona": "catalog:computesdk",
-        "@computesdk/e2b": "catalog:computesdk",
-        "@computesdk/modal": "catalog:computesdk",
-        "@computesdk/namespace": "catalog:computesdk",
-        "@computesdk/provider": "catalog:computesdk",
-        "@computesdk/runloop": "catalog:computesdk",
-        "@daytona/api-client": "catalog:computesdk",
-        "@daytona/sdk": "catalog:computesdk",
-        "@run-cloud/sdk": "catalog:computesdk",
-        "@runloop/api-client": "catalog:computesdk",
+        "@sandbox-benchmarks/daytona": "workspace:*",
         "@sandbox-benchmarks/driver": "workspace:*",
-        "@vercel/sandbox": "catalog:computesdk",
-        "arktype": "catalog:",
-        "computesdk": "catalog:computesdk",
-        "e2b": "catalog:computesdk",
-        "microsandbox": "catalog:computesdk",
-        "modal": "catalog:computesdk",
-        "nice-grpc": "catalog:computesdk",
-        "novita-sandbox": "catalog:computesdk",
+        "@sandbox-benchmarks/e2b": "workspace:*",
+        "@sandbox-benchmarks/modal": "workspace:*",
+        "@sandbox-benchmarks/novita": "workspace:*",
+        "@sandbox-benchmarks/tama": "workspace:*",
       },
       "devDependencies": {
+        "@repo/tsconfig": "workspace:*",
+        "@types/bun": "catalog:",
+        "typescript": "catalog:",
+      },
+    },
+    "packages/e2b": {
+      "name": "@sandbox-benchmarks/e2b",
+      "version": "0.0.0",
+      "dependencies": {
+        "@sandbox-benchmarks/driver": "workspace:*",
+        "arktype": "catalog:",
+        "e2b": "catalog:computesdk",
+      },
+      "devDependencies": {
+        "@computesdk/e2b": "catalog:computesdk",
         "@repo/tsconfig": "workspace:*",
         "@types/bun": "catalog:",
         "typescript": "catalog:",
@@ -130,6 +147,35 @@
         "@sandbox-benchmarks/driver": "workspace:*",
         "@sandbox-benchmarks/providers": "workspace:*",
         "@sandbox-benchmarks/schema": "workspace:*",
+      },
+      "devDependencies": {
+        "@repo/tsconfig": "workspace:*",
+        "@types/bun": "catalog:",
+        "typescript": "catalog:",
+      },
+    },
+    "packages/modal": {
+      "name": "@sandbox-benchmarks/modal",
+      "version": "0.0.0",
+      "dependencies": {
+        "@sandbox-benchmarks/driver": "workspace:*",
+        "arktype": "catalog:",
+        "modal": "catalog:computesdk",
+        "nice-grpc": "catalog:computesdk",
+      },
+      "devDependencies": {
+        "@repo/tsconfig": "workspace:*",
+        "@types/bun": "catalog:",
+        "typescript": "catalog:",
+      },
+    },
+    "packages/novita": {
+      "name": "@sandbox-benchmarks/novita",
+      "version": "0.0.0",
+      "dependencies": {
+        "@sandbox-benchmarks/driver": "workspace:*",
+        "arktype": "catalog:",
+        "novita-sandbox": "catalog:computesdk",
       },
       "devDependencies": {
         "@repo/tsconfig": "workspace:*",
@@ -189,6 +235,19 @@
         "@nodable/compact-builder": "catalog:xml",
         "@nodable/flexible-xml-parser": "catalog:xml",
         "@octokit/rest": "22.0.1",
+        "@repo/tsconfig": "workspace:*",
+        "@types/bun": "catalog:",
+        "typescript": "catalog:",
+      },
+    },
+    "packages/tama": {
+      "name": "@sandbox-benchmarks/tama",
+      "version": "0.0.0",
+      "dependencies": {
+        "@sandbox-benchmarks/driver": "workspace:*",
+        "arktype": "catalog:",
+      },
+      "devDependencies": {
         "@repo/tsconfig": "workspace:*",
         "@types/bun": "catalog:",
         "typescript": "catalog:",
@@ -391,8 +450,6 @@
     "@computesdk/daytona": ["@computesdk/daytona@1.7.31", "", { "dependencies": { "@computesdk/provider": "2.1.3", "@daytonaio/sdk": "^0.192.0", "computesdk": "4.1.3" } }, "sha512-gDmeylzqGcqpaaR1D15saRB7rsRhplvzXKKP+7WZi/BOzPAWT75dW67dOR18V5M9iZdL90u/wdJrmXfDYB+GRw=="],
 
     "@computesdk/e2b": ["@computesdk/e2b@1.7.51", "", { "dependencies": { "@computesdk/provider": "2.1.3", "computesdk": "4.1.3", "e2b": "^2.26.0" } }, "sha512-fFDLFtPp8acJdJbdAFn8Uvbps+pvCGTf1mq84jFbNroDNim/rWa3T1C0c7iBTWufBz2An5tWqRBxIZzb+5JUPw=="],
-
-    "@computesdk/modal": ["@computesdk/modal@1.9.3", "", { "dependencies": { "@computesdk/provider": "2.1.3", "computesdk": "4.1.3", "modal": "0.7.6" } }, "sha512-kD69VIcUe56UpqolNZqIp16B2cLCSyYBeHMXuEcZYcV912IG/ZaiLRut2OS8QGIDxUdpBvl4LrdDiYqEayZweg=="],
 
     "@computesdk/namespace": ["@computesdk/namespace@1.6.12", "", { "dependencies": { "@computesdk/provider": "2.1.3", "computesdk": "4.1.3" } }, "sha512-CkPkDxrD3coI0bpePMLku1mrVH/vFKBYQ8oZ/XB1JxuVdo5VDXGKraIGKtViDSn9hI/1ViTUCr2miePfjnAbVQ=="],
 
@@ -774,19 +831,29 @@
 
     "@sandbox-benchmarks/cli": ["@sandbox-benchmarks/cli@workspace:apps/cli"],
 
+    "@sandbox-benchmarks/daytona": ["@sandbox-benchmarks/daytona@workspace:packages/daytona"],
+
     "@sandbox-benchmarks/driver": ["@sandbox-benchmarks/driver@workspace:packages/driver"],
 
     "@sandbox-benchmarks/drivers": ["@sandbox-benchmarks/drivers@workspace:packages/drivers"],
 
+    "@sandbox-benchmarks/e2b": ["@sandbox-benchmarks/e2b@workspace:packages/e2b"],
+
     "@sandbox-benchmarks/figures": ["@sandbox-benchmarks/figures@workspace:packages/figures"],
 
     "@sandbox-benchmarks/harness": ["@sandbox-benchmarks/harness@workspace:packages/harness"],
+
+    "@sandbox-benchmarks/modal": ["@sandbox-benchmarks/modal@workspace:packages/modal"],
+
+    "@sandbox-benchmarks/novita": ["@sandbox-benchmarks/novita@workspace:packages/novita"],
 
     "@sandbox-benchmarks/providers": ["@sandbox-benchmarks/providers@workspace:packages/providers"],
 
     "@sandbox-benchmarks/results": ["@sandbox-benchmarks/results@workspace:packages/results"],
 
     "@sandbox-benchmarks/schema": ["@sandbox-benchmarks/schema@workspace:packages/schema"],
+
+    "@sandbox-benchmarks/tama": ["@sandbox-benchmarks/tama@workspace:packages/tama"],
 
     "@sandbox-benchmarks/templates": ["@sandbox-benchmarks/templates@workspace:packages/templates"],
 
@@ -1744,8 +1811,6 @@
 
     "@bufbuild/protoplugin/typescript": ["typescript@5.4.5", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-vcI4UpRgg81oIRUFwR0WSIHKt11nJ7SAVlYNIu+QpqeyXP+gpQJy/Z4+F0aGxSE4MqwjyXvW/TzgkLAx2AGHwQ=="],
 
-    "@computesdk/modal/modal": ["modal@0.7.6", "", { "dependencies": { "cbor-x": "^1.6.0", "long": "^5.3.1", "nice-grpc": "^2.1.12", "protobufjs": "^7.5.0", "smol-toml": "^1.3.3", "uuid": "^11.1.0" } }, "sha512-AOFRO/eGl4fcNKxHkNLx55+tL318IeAiTDJCMh/Q1ZXhoaZFnpmlirVV2J5BhO32XLA7AiH6KYGA7gRBGA09lQ=="],
-
     "@daytona/analytics-api-client/axios": ["axios@1.20.0", "", { "dependencies": { "follow-redirects": "^1.16.0", "form-data": "^4.0.6", "https-proxy-agent": "^5.0.1", "proxy-from-env": "^2.1.0" } }, "sha512-r8aOh8j9cGKpgQAqpzrUHnSIc6a59Y3Xf/cv8sy1DrHCkZHzQGEuoq1tARk6qSyDdtQGSDgpb9kFlruzPvrgwg=="],
 
     "@daytona/sdk/axios": ["axios@1.20.0", "", { "dependencies": { "follow-redirects": "^1.16.0", "form-data": "^4.0.6", "https-proxy-agent": "^5.0.1", "proxy-from-env": "^2.1.0" } }, "sha512-r8aOh8j9cGKpgQAqpzrUHnSIc6a59Y3Xf/cv8sy1DrHCkZHzQGEuoq1tARk6qSyDdtQGSDgpb9kFlruzPvrgwg=="],
@@ -1959,8 +2024,6 @@
     "yauzl/buffer-crc32": ["buffer-crc32@0.2.13", "", {}, "sha512-VO9Ht/+p3SN7SKWqcrgEzjGbRSJYTx+Q1pTQC0wrWqHx0vpJraQ6GtHx8tvcg1rlK1byhU5gccxgOgj7B0TDkQ=="],
 
     "@actions/artifact/@actions/core/@actions/exec": ["@actions/exec@3.0.0", "", { "dependencies": { "@actions/io": "^3.0.2" } }, "sha512-6xH/puSoNBXb72VPlZVm7vQ+svQpFyA96qdDBvhB8eNZOE8LtPf9L4oAsfzK/crCL8YZ+19fKYVnM63Sl+Xzlw=="],
-
-    "@computesdk/modal/modal/smol-toml": ["smol-toml@1.6.1", "", {}, "sha512-dWUG8F5sIIARXih1DTaQAX4SsiTXhInKf1buxdY9DIg4ZYPZK5nGM1VRIYmEbDbsHt7USo99xSLFu5Q1IqTmsg=="],
 
     "@hey-api/shared/open/define-lazy-prop": ["define-lazy-prop@3.0.0", "", {}, "sha512-N+MeXYoqr3pOgn8xfyRPREN7gHakLYjhsHhWGT3fWAiL4IkAt0iDw14QiiEm2bE30c5XX5q0FtAA3CK5f9/BUg=="],
 

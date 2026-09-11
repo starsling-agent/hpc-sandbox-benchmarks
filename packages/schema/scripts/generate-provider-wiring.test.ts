@@ -12,6 +12,7 @@ import {
 } from "../src/provider-meta.ts";
 import {
 	driverFleetProjection,
+	driverModuleLocation,
 	escapeMarkdownCell,
 	generatedProviderRegions,
 	parseDriverMigrationWaivers,
@@ -228,7 +229,7 @@ describe("provider wiring projections", () => {
 		expect(new Set(renderProviderWiringFiles().keys())).toEqual(
 			new Set([
 				...regions.map(({ file }) => file),
-				"packages/drivers/src/_provenance.ts",
+				...renderDriversProvenance().keys(),
 				"packages/drivers/src/index.ts",
 				"packages/drivers/package.json",
 			]),
@@ -259,14 +260,20 @@ describe("provider wiring projections", () => {
 		const scanned = new Bun.Transpiler({ loader: "ts" }).scan(source);
 		expect(scanned.imports.filter(({ kind }) => kind === "import-statement")).toEqual([]);
 		expect(scanned.imports).toEqual(
-			fleet.moduleIds.map((id) => ({ kind: "dynamic-import", path: `./${id}.ts` })),
+			fleet.moduleIds.map((id) => ({
+				kind: "dynamic-import",
+				path: driverModuleLocation(id).specifier,
+			})),
 		);
 		for (const id of fleet.moduleIds) {
-			expect(source).toContain(`typeof import("./${id}.ts").default`);
-			expect(source).toContain(`import("./${id}.ts").then((module) => module.default)`);
+			expect(source).toContain(`typeof import("${driverModuleLocation(id).specifier}").default`);
+			expect(source).toContain(
+				`import("${driverModuleLocation(id).specifier}").then((module) => module.default)`,
+			);
 		}
 		for (const id of PROVIDER_IDS) {
-			if (fleet.waivers[id] !== undefined) expect(source).not.toContain(`./${id}.ts`);
+			if (fleet.waivers[id] !== undefined)
+				expect(source).not.toContain(driverModuleLocation(id).specifier);
 		}
 	});
 
@@ -285,38 +292,24 @@ describe("provider wiring projections", () => {
 	});
 
 	test("projects exact driver provenance from its installation pins", () => {
-		const source = renderDriversProvenance();
+		const source = [...renderDriversProvenance().values()].join("\n");
 		expect(source).toContain("export const E2B_PROVENANCE");
 		expect(source).toContain("export const MODAL_PROVENANCE");
 		expect(source).toContain("export const TAMA_PROVENANCE");
 	});
 
-	test("projects the provider SDK catalog into the fleet manifest", () => {
-		const root = record(
-			JSON.parse(readFileSync(resolve(REPO_ROOT, "package.json"), "utf8")),
-			"root",
-		);
-		const workspaces = record(root.workspaces, "workspaces");
-		const catalogs = record(workspaces.catalogs, "catalogs");
-		const providerCatalog = record(catalogs.computesdk, "computesdk catalog");
+	test("keeps the fleet manifest free of vendor dependencies and provider subpaths", () => {
 		const drivers = record(JSON.parse(renderDriversPackage()), "drivers");
 		const dependencies = record(drivers.dependencies, "drivers dependencies");
-		const exports = record(drivers.exports, "drivers exports");
-		for (const name of Object.keys(providerCatalog)) {
-			expect(dependencies[name], name).toBe("catalog:computesdk");
-		}
-		expect(dependencies["@sandbox-benchmarks/driver"]).toBe("workspace:*");
-		expect(dependencies.arktype).toBe("catalog:");
-		expect(exports).toEqual({
-			".": "./src/index.ts",
-			"./daytona-vm": "./src/daytona-vm.ts",
-			"./daytona-container": "./src/daytona-container.ts",
-			"./e2b": "./src/e2b.ts",
-			"./modal-gvisor": "./src/modal-gvisor.ts",
-			"./modal-vm": "./src/modal-vm.ts",
-			"./novita": "./src/novita.ts",
-			"./tama": "./src/tama.ts",
-			"./package.json": "./package.json",
-		});
+		expect(dependencies).toEqual(
+			Object.fromEntries([
+				["@sandbox-benchmarks/driver", "workspace:*"],
+				...driverFleetProjection().moduleIds.map((id) => [
+					driverModuleLocation(id).packageName,
+					"workspace:*",
+				]),
+			]),
+		);
+		expect(drivers.exports).toEqual({ ".": "./src/index.ts", "./package.json": "./package.json" });
 	});
 });

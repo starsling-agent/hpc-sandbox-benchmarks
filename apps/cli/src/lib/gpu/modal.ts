@@ -2,10 +2,10 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { SandboxSession } from "@sandbox-benchmarks/driver";
 import { readTextFile, writeTextFile } from "@sandbox-benchmarks/driver";
-import type { ModalAllocationConfiguration } from "@sandbox-benchmarks/drivers/modal-gvisor";
-import { createModalAllocation } from "@sandbox-benchmarks/drivers/modal-gvisor";
 import type { SandboxWork } from "@sandbox-benchmarks/harness";
 import { withSandboxWork } from "@sandbox-benchmarks/harness";
+import type { ModalAllocationConfiguration } from "@sandbox-benchmarks/modal/allocation";
+import { createModalAllocation } from "@sandbox-benchmarks/modal/allocation";
 import type { Sandbox, SandboxCreateParams } from "modal";
 import type { GpuArgs } from "./args.ts";
 import {

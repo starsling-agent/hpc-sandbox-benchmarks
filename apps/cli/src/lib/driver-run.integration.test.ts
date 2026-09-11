@@ -7,7 +7,7 @@ import {
 	driverReadinessBudgetMs,
 	verifyDriverReadiness,
 } from "@sandbox-benchmarks/driver/conformance";
-import e2bModule from "@sandbox-benchmarks/drivers/e2b";
+import e2bModule from "@sandbox-benchmarks/e2b";
 import { runSuiteOnSandbox } from "@sandbox-benchmarks/harness";
 import { writeNormalizedRun } from "@sandbox-benchmarks/results";
 import type { ProviderId, Suite } from "@sandbox-benchmarks/schema";

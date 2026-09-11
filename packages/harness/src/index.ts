@@ -338,7 +338,9 @@ async function destroySandbox(
 	const attemptedAt = new Date().toISOString();
 	if (!sandbox) return { completed: false, attemptedAt };
 	try {
-		await withTimeout(Promise.resolve(sandbox.destroy()), 15_000, "Destroy timeout");
+		// Destroy includes provider-side convergence, not just an HTTP acknowledgement.
+		// One minute plus 15s observation and 30s cost capture fits the managed 2m finish reserve.
+		await withTimeout(Promise.resolve(sandbox.destroy()), 60_000, "Destroy timeout");
 		return { completed: true, attemptedAt, completedAt: new Date().toISOString() };
 	} catch (err) {
 		console.warn(`[cleanup] destroy failed: ${describeDriverFailure(err)}`);

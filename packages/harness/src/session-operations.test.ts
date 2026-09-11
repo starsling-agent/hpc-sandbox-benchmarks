@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -145,4 +145,52 @@ describe("declarative session operations", () => {
 		expect(destroyed).toBe(true);
 		expect(worked).toBe(false);
 	});
+});
+
+test("suite teardown permits control-plane deletion beyond the old 15-second ceiling", async () => {
+	const root = mkdtempSync(join(tmpdir(), "suite-teardown-"));
+	roots.push(root);
+	const { allocation, calls } = fixture(async (command) => {
+		if (command.includes("/toolchain-manifest.json"))
+			return result(
+				JSON.stringify({ image_name: TOOLCHAIN_IMAGE_NAME, image_version: TOOLCHAIN_VERSION }),
+			);
+		if (command.includes("df -Pk")) return result("1");
+		return result();
+	});
+	const create = allocation.driver.create;
+	allocation.driver.create = async (request, options) => {
+		const session = await create(request, options);
+		return {
+			...session,
+			destroy: async () => {
+				await Bun.sleep(25);
+				calls.push("destroy");
+			},
+		};
+	};
+	// Compress only the old/new teardown ceilings; the simulated control-plane deletion takes 25ms.
+	const original = globalThis.setTimeout;
+	const accelerated = Object.assign((...args: Parameters<typeof setTimeout>) => {
+		const [callback, ms, ...rest] = args;
+		return original(callback, ms === 15_000 ? 15 : ms === 60_000 ? 60 : ms, ...rest);
+	}, original);
+	const timer = spyOn(globalThis, "setTimeout").mockImplementation(accelerated);
+	try {
+		await executeSuite({
+			allocation,
+			runId: "teardown-test",
+			suiteName: "system",
+			resultsDir: root,
+		});
+		const file = readdirSync(root).find((name) => name.startsWith("cleanup-"));
+		if (!file) throw new Error("missing cleanup receipt");
+		expect(JSON.parse(readFileSync(join(root, file), "utf8"))).toMatchObject({
+			completed: true,
+			confirmedAbsent: true,
+		});
+	} finally {
+		timer.mockRestore();
+		await Bun.sleep(30);
+	}
 });

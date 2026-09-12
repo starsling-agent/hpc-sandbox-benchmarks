@@ -8,6 +8,7 @@ require $argv[1] . '/pts-core/phoronix-test-suite.php';
 define('PTS_TEST_PROFILE_PATH', dirname(__DIR__, 3) . '/packages/schema/src/pts-profiles/');
 $cases = [
     ['1024KiB/s', '17', 1.048576, 17],
+    ['976.5625KiB/s', '1', 1, 1],
     ['9758MiB/s', '9756', 10232.004608, 9756],
     ['12.9GiB/s', '13.2k', 13851.2695296, 13200],
 ];

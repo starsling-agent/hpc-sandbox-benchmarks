@@ -7,12 +7,13 @@ The benchmark stages these definitions after installation, preserving the instal
 
 This is a prospective measurement revision, bound to the source revision in each new experiment.
 It does not rewrite historical values or supply missing historical samples. Compare runs only within
-matching workload revisions. The separate direct/buffered eligibility contract and PTS's cross-scale
-numeric deduplication remain independent concerns.
+matching workload revisions. The separate direct/buffered eligibility contract remains an independent concern. The
+[PTS identity repair](../patches/README.md) handles equal-valued metrics without changing their values.
 
 Exercise the actual pinned PTS parser without running a benchmark:
 
 ```sh
+php lib/pts/patches/result-parser.php /path/to/phoronix-test-suite-10.8.4/pts-core/objects/pts_test_result_parser.php
 php lib/pts/fio/parser-selftest.php /path/to/phoronix-test-suite-10.8.4
 ```
 

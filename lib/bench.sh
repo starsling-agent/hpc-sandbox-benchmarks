@@ -853,6 +853,14 @@ run_pts_benchmark() {
 		_stage_fio_pts_parser || return 1
 	fi
 
+	# The supported toolchain installs PTS under the launcher's ../share directory. Repair only the
+	# checksum-pinned parser; an unknown installation fails before measurement rather than losing data.
+	local pts_parser
+	pts_parser="$(dirname "$(command -v phoronix-test-suite)")/../share/phoronix-test-suite/pts-core/objects/pts_test_result_parser.php"
+	# SUDO deliberately contains either no words or the configured sudo command and flags.
+	# shellcheck disable=SC2086
+	${SUDO:-} php "${REPO_ROOT}/lib/pts/patches/result-parser.php" "$pts_parser" || return 1
+
 	# Stamp the instant before the run: the composite search below must only accept output THIS
 	# batch-run wrote. Suites now run several PTS leaves in one sandbox (fio ×4 + hardlink; pybench +
 	# sqlite + pgbench ×2), so a bare "newest composite" would, when a later batch-run produces

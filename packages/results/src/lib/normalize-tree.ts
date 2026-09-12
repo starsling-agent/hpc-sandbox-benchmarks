@@ -33,6 +33,7 @@ import {
 	canonicalJsonEqual,
 	deriveEconomics,
 	describeOffDimensionEmission,
+	FIO_SCENARIO_METRICS,
 	getProvider,
 	MAX_PROVIDER_ARTIFACT_EVIDENCE_FILE_BYTES,
 	MAX_PROVIDER_COST_EVIDENCE_FILE_BYTES,
@@ -436,7 +437,10 @@ export function normalizeProviderDir(rawRoot: string, providerId: string): Provi
 		// the gap reason is byte-stable.
 		const produced = new Set(ext.contributions.map((c) => c.metricId));
 		const declared = new Set<string>(
-			(SUITES as Partial<Record<string, { metrics: readonly string[] }>>)[suite]?.metrics ?? [],
+			suite === "disk"
+				? [...SUITES.disk.metrics, ...FIO_SCENARIO_METRICS]
+				: ((SUITES as Partial<Record<string, { metrics: readonly string[] }>>)[suite]?.metrics ??
+						[]),
 		);
 		const missingById = new Map<string, AttemptedEmptyResult>();
 		for (const e of ext.attemptedEmpty) {

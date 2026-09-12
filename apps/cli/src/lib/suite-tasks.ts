@@ -54,7 +54,7 @@ export interface SuiteTaskPlan {
 	metrics: SuiteMetricInfo[];
 }
 
-const MISE_RUN_RE = /^\s*mise\s+run\s+(\S+)/;
+const MISE_RUN_RE = /^\s*(?:[A-Za-z_][A-Za-z0-9_]*=[A-Za-z0-9_.-]+\s+)*mise\s+run\s+(\S+)/;
 const RUN_TASK_RE = /^\s*run_task\s+(\S+)/gm;
 const PTS_BENCHMARK_RE = /^\s*run_(?:pts_benchmark|pinned_pts)\s+"([^"]+)"\s+"([^"]+)"/gm;
 const FIO_PTS_RE = /^\s*run_fio_pts\s+"[^"]+"\s+"[^"]+"\s+"([^"]+)"/gm;

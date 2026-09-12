@@ -20,3 +20,10 @@ php lib/pts/fio/parser-selftest.php /path/to/phoronix-test-suite-10.8.4
 The self-test requires PHP with XML support and the PTS 10.8.4 source tree. It checks exact conversions
 for all three bandwidth units and preserves numeric and abbreviated IOPS values. The ordinary Bun
 suite also verifies that staging replaces stale definitions without deleting the installed executable.
+
+The publication disk suite explicitly sets `BENCH_FIO_DIRECT=No` and requires only buffered fio
+metrics plus hardlink. This gives every provider the same I/O mode; buffered results include page
+cache effects and are labelled accordingly. Direct-mode catalog entries remain readable for historical or explicit standalone measurements.
+Standalone leaves without an explicit mode retain their filesystem probe. Invalid explicit modes
+fail before measurement. Changing the suite command and eligible metrics changes its frozen workload
+identity; no old experiment denominator is modified.

@@ -121,7 +121,9 @@ describe("suite registry", () => {
 		] as const;
 		for (const { suite, prefix } of subsets) {
 			const declared: string[] = SUITES[suite].metrics.filter((id) => id.startsWith(prefix)).sort();
-			const curated = overrideKeys.filter((id) => id.startsWith(prefix)).sort();
+			const curated = overrideKeys
+				.filter((id) => id.startsWith(prefix) && (suite !== "disk" || id.includes("_direct_no_")))
+				.sort();
 			expect(declared.length).toBeGreaterThan(0);
 			expect(declared).toEqual(curated);
 		}
@@ -145,4 +147,14 @@ describe("padded suite tokens", () => {
 		expect(list.includes(paddedSuiteToken("cpu-node"))).toBe(true);
 		expect(list.includes(paddedSuiteToken("pgbench"))).toBe(true);
 	});
+});
+
+it("disk freezes a uniform buffered workload with exactly its eligible metrics", () => {
+	expect(SUITES.disk.commands).toEqual(["BENCH_FIO_DIRECT=No mise run benchmark:disk:all"]);
+	expect(SUITES.disk.metrics).toHaveLength(9);
+	expect(
+		SUITES.disk.metrics
+			.filter((id) => id.startsWith("fio_"))
+			.every((id) => id.includes("_direct_no_")),
+	).toBe(true);
 });

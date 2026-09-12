@@ -33,3 +33,19 @@ test("fio parser staging replaces stale definitions without deleting the install
 		rmSync(temporary, { recursive: true, force: true });
 	}
 });
+
+test("an explicit fio mode overrides the probe and invalid modes fail before measurement", () => {
+	for (const mode of ["No", "Yes", "invalid"]) {
+		const result = Bun.spawnSync(
+			[
+				"bash",
+				"-euc",
+				'source "$REPO_ROOT/lib/bench.sh"; have() { echo unexpected-probe >&2; return 1; }; fio_direct_choice',
+			],
+			{ env: { ...process.env, REPO_ROOT: findRepoRoot(), BENCH_FIO_DIRECT: mode } },
+		);
+		expect(result.exitCode).toBe(mode === "invalid" ? 1 : 0);
+		if (mode !== "invalid") expect(result.stdout.toString().trim()).toBe(mode);
+		expect(result.stderr.toString()).not.toContain("unexpected-probe");
+	}
+});

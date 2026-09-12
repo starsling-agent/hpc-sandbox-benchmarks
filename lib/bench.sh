@@ -958,6 +958,11 @@ run_pts_benchmark() {
 # scenario. The chosen mode is part of the fio option matrix, so it travels in the metric identity
 # (each scenario has an O_DIRECT and a buffered catalog variant) instead of being silently mixed.
 fio_direct_choice() {
+	case "${BENCH_FIO_DIRECT:-}" in
+		Yes | No) printf '%s\n' "$BENCH_FIO_DIRECT"; return 0 ;;
+		"") ;;
+		*) echo "ERROR: BENCH_FIO_DIRECT must be Yes or No" >&2; return 1 ;;
+	esac
 	local dir probe cache choice
 	# Without PTS the answer is irrelevant (the leaf's availability guard skips before running fio) —
 	# return without probing OR caching, so a dep-less dry run can't persist a verdict probed against
@@ -1064,8 +1069,8 @@ run_pinned_pts() {
 run_fio_pts() {
 	local type_name="$1" bs_name="$2" prefix="$3"
 	local direct
-	direct="$(fio_direct_choice)"
-	echo "fio scenario: Type=${type_name} Block Size=${bs_name} Direct=${direct} (O_DIRECT probe)"
+	direct="$(fio_direct_choice)" || return 1
+	echo "fio scenario: Type=${type_name} Block Size=${bs_name} Direct=${direct}"
 
 	run_pinned_pts "pts/fio-2.1.0" "$prefix" \
 		"fio.type=${type_name};fio.engine=Linux AIO;fio.direct=${direct};fio.size=${bs_name};fio.cpu-threads=0;fio.auto-disk-mount-points=Default Test Directory"

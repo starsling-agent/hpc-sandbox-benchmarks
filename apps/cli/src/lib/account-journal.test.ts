@@ -138,7 +138,7 @@ test("unresolvedJournalAttempts reports open ownership without inventing release
 			allocated: false,
 		},
 	]);
-	expect(records.some((record) => record.kind === "released" && record.attempt === "attempt-1")).toBe(
-		false,
-	);
+	expect(
+		records.some((record) => record.kind === "released" && record.attempt === "attempt-1"),
+	).toBe(false);
 });

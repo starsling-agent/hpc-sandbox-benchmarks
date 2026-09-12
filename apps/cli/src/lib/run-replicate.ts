@@ -9,8 +9,8 @@ import {
 } from "@sandbox-benchmarks/harness";
 import { writeNormalizedRun } from "@sandbox-benchmarks/results";
 import type { Run } from "@sandbox-benchmarks/schema";
-import { isConcurrentSandboxAdmissionError } from "./admission-capacity.ts";
 import { logInfo, logProviderStatuses, logWarning, withGroup } from "./actions-log.ts";
+import { isConcurrentSandboxAdmissionError } from "./admission-capacity.ts";
 import { runDriverSuite, usesDriverSuite } from "./driver-run.ts";
 
 const describeDriverFailure = (error: unknown): string =>

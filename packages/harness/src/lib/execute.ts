@@ -397,6 +397,7 @@ export function buildPreamble(policy: PtsPassPolicy = DEFAULT_PTS_PASS_POLICY): 
 		...PREAMBLE_HEAD,
 		...ptsTrialVars(policy),
 		'if [ "$(id -u)" = 0 ]; then SUDO=""; elif command -v sudo >/dev/null 2>&1; then SUDO="sudo -E"; else SUDO=""; fi',
+		"export SUDO",
 	].join("; ");
 }
 

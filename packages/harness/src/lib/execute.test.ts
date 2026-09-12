@@ -69,6 +69,21 @@ describe("selectTransport", () => {
 });
 
 describe("sandbox preamble", () => {
+	for (const uid of [0, 1000]) {
+		it(`passes the selected privilege command to child tasks for uid ${uid}`, () => {
+			const result = Bun.spawnSync([
+				"bash",
+				"-c",
+				[
+					`unset SUDO; id() { printf '%s\\n' '${uid}'; }; sudo() { :; }`,
+					buildPreamble(),
+					`bash -c 'printf "%s" "\${SUDO-unset}"'`,
+				].join("; "),
+			]);
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout.toString()).toBe(uid === 0 ? "" : "sudo -E");
+		});
+	}
 	it("does not auto-install repository developer tools when running benchmark tasks", () => {
 		expect(PREAMBLE).toContain("MISE_TASK_RUN_AUTO_INSTALL=0");
 	});

@@ -242,7 +242,7 @@ describe("Namespace token authentication", () => {
 		expect(workflowText.match(/id: namespace/g)).toHaveLength(3);
 		expect(
 			workflowText.match(/NSC_TOKEN_FILE: \$\{\{ steps\.namespace\.outputs\.token-file \}\}/g),
-		).toHaveLength(3);
+		).toHaveLength(4);
 		expect(workflowText).not.toContain("id: nsc-token");
 		expect(workflowText).not.toContain("id: nsc-setup");
 		expect(workflowText).not.toMatch(/run: \|\s*\n\s*nsc token create/);

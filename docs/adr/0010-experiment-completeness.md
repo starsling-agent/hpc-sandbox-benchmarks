@@ -63,6 +63,37 @@ See [GitHub's reference API](https://docs.github.com/en/rest/git/refs) for fast-
 [tree API](https://docs.github.com/en/rest/git/trees) for complete tree enumeration. Truncated histories
 and competing ref updates fail admission rather than discarding ownership facts.
 
+## Operator recovery of a retained allocation identity
+
+From `1b83cdee0272b3cb7131aa3915c6b69db3921b58` onward the executor persists the identity-bound
+`allocated` record to the attempt's raw tree *before* appending it to the journal, so a rejected
+append no longer loses the vendor identity. That retained record — not an inventory sweep — makes
+the intent resolvable, and recovery is therefore identity-based: it is the ordinary release protocol
+replayed by an operator, not a clearance.
+
+Recovery validates the attempt's raw and Run digests, requires a failed attempt with no measurement,
+no execution or cleanup receipt and unresolved cleanup, and requires the retained allocation to name
+the same attempt, cell and plan digest. The journal must still hold exactly that attempt's intent and
+no release. The original workflow must have completed, and repository workflow quiescence is checked
+before and after removal.
+
+It then appends the lost `allocated` record, observes removal of that exact sandbox through the
+control plane (destroying it when it is still running), and appends the ordinary `released/absent`
+receipt. Replaying the allocation first is what makes an interrupted recovery safe: `intent` plus
+`allocated` is the ordinary interrupted-allocation state, which admission already recovers on its
+own, and a bare `released/absent` without its allocation would contradict the journal's consistency
+rule and block admission again. No new evidence kind is recorded, because ownership is released by
+observation of a known resource rather than by audited account clearance.
+
+This does not recover identifiers missing from attempts written before that revision — use the
+completed-create clearance below for that reviewed historical failure — nor an attempt whose evidence
+was never uploaded. It is an explicit operator command, never an automatic admission fallback, and it
+does not modify the original attempt evidence or make it eligible for publication.
+
+Run `recover-allocated-intent --exclusive-account <original-attempt-directory>` with provider
+credentials, `GITHUB_REPOSITORY` and a journal-write `GH_TOKEN`. Obtain the immutable original attempt
+artifact first and stop local account writers.
+
 ## Operator recovery of a completed create with a lost journal append
 
 A returned create is distinct from an interrupted vendor request. At revision

@@ -25,7 +25,8 @@
     "evaluate-experiment": "./src/bin/evaluate-experiment.ts",
     "aggregate-experiment": "./src/bin/aggregate-experiment.ts",
     "workflow-experiment": "./src/bin/workflow-experiment.ts",
-    "recover-completed-create": "./src/bin/recover-completed-create.ts"
+    "recover-completed-create": "./src/bin/recover-completed-create.ts",
+    "recover-allocated-intent": "./src/bin/recover-allocated-intent.ts"
   },
   "scripts": {
     "test": "bun test",

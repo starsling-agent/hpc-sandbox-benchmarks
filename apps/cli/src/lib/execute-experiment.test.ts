@@ -7,6 +7,8 @@ import { loadDriverModule } from "@sandbox-benchmarks/drivers";
 import { evaluateExperiment } from "@sandbox-benchmarks/results";
 import { TOOLCHAIN_VERSION } from "@sandbox-benchmarks/schema/toolchain";
 import type { AccountRecord } from "./account-journal.ts";
+import { recoverAccount } from "./account-journal.ts";
+import { recoverAllocatedIntent } from "./allocated-intent-recovery.ts";
 import type { OpenedDriver } from "./driver-run.ts";
 import { resolveDriverArtifact } from "./driver-run.ts";
 import { batchIsComplete, executeExperimentBatch } from "./execute-experiment.ts";
@@ -338,4 +340,53 @@ test("a rejected allocation journal append retains recovery identity without adm
 			attempt.rawDigest,
 		);
 	}
+});
+
+test("operator recovery reclaims the leaked sandbox and readmits the account", async () => {
+	const f = await fixture("allocation-journal-recovery", true);
+	const attempts = await executeExperimentBatch({
+		...f.options,
+		journal: {
+			...f.options.journal,
+			append: async (record) => {
+				if (record.kind === "allocated") throw new Error("journal allocation rejected");
+				await f.options.journal.append(record);
+			},
+		},
+	});
+	// The account is wedged: unresolved intents, and the sandboxes really did leak.
+	expect(f.records.every((record) => record.kind === "intent")).toBe(true);
+	expect(f.present.size).toBe(2);
+	await expect(
+		recoverAccount(
+			"tama",
+			new Map([["tama", (await f.options.open()).driver]]),
+			f.options.journal,
+			AbortSignal.timeout(1000),
+		),
+	).rejects.toThrow("no durable sandbox identity");
+
+	for (const attempt of attempts) {
+		expect(
+			await recoverAllocatedIntent({
+				directory: join(f.options.root, attempt.id),
+				openDriver: async () => (await f.options.open()).driver,
+				journal: f.options.journal,
+				assertQuiescent: async () => {},
+				signal: AbortSignal.timeout(10_000),
+			}),
+		).toMatchObject({ provider: "tama" });
+	}
+	// Every leaked sandbox is gone, the journal is consistent, and admission passes again.
+	expect(f.present.size).toBe(0);
+	expect(f.records.filter((record) => record.kind === "allocated")).toHaveLength(2);
+	expect(f.records.filter((record) => record.kind === "released")).toHaveLength(2);
+	await recoverAccount(
+		"tama",
+		new Map([["tama", (await f.options.open()).driver]]),
+		f.options.journal,
+		AbortSignal.timeout(1000),
+	);
+	// The original attempts stay failed; recovery never makes them publishable.
+	expect(attempts.every((attempt) => attempt.outcome === "failed")).toBe(true);
 });

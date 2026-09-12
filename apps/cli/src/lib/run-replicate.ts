@@ -10,6 +10,7 @@ import {
 import { writeNormalizedRun } from "@sandbox-benchmarks/results";
 import type { Run } from "@sandbox-benchmarks/schema";
 import { logInfo, logProviderStatuses, logWarning, withGroup } from "./actions-log.ts";
+import { isConcurrentSandboxAdmissionError } from "./admission-capacity.ts";
 import { runDriverSuite, usesDriverSuite } from "./driver-run.ts";
 
 const describeDriverFailure = (error: unknown): string =>
@@ -116,12 +117,21 @@ export async function runReplicate(ctx: ReplicateContext): Promise<ReplicateOutc
 				return;
 			}
 			suiteError = err;
-			logWarning(
-				`Suite "${suite}" threw on ${provider} — will normalize any failed marker into a gap: ${describeDriverFailure(
-					err,
-				)}`,
-				{ title: cell },
-			);
+			if (isConcurrentSandboxAdmissionError(err)) {
+				logWarning(
+					`Suite "${suite}" hit a vendor concurrent sandbox limit on ${provider} — admission capacity must be reconciled; not a measurement gap: ${describeDriverFailure(
+						err,
+					)}`,
+					{ title: cell },
+				);
+			} else {
+				logWarning(
+					`Suite "${suite}" threw on ${provider} — will normalize any failed marker into a gap: ${describeDriverFailure(
+						err,
+					)}`,
+					{ title: cell },
+				);
+			}
 		}
 	});
 	if (usageError !== undefined) return { ...base, failed: true, detail: usageError };

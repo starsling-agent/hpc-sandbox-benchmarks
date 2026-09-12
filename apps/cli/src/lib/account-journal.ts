@@ -128,6 +128,46 @@ export async function confirmRemoval(
 	}
 }
 
+export type UnresolvedJournalAttempt = {
+	readonly account: string;
+	readonly attempt: string;
+	readonly cellId: string;
+	readonly planDigest: string;
+	readonly allocated: boolean;
+	readonly ref?: SandboxRef;
+};
+
+/**
+ * Report ownership still open in a journal snapshot. Read-only: never appends releases or invents
+ * recovery receipts. Operators use this before another full matrix; recovery remains explicit.
+ */
+export function unresolvedJournalAttempts(
+	records: readonly AccountRecord[],
+): UnresolvedJournalAttempt[] {
+	const byAttempt = new Map<string, AccountRecord[]>();
+	for (const record of records) {
+		const rows = byAttempt.get(record.attempt) ?? [];
+		rows.push(record);
+		byAttempt.set(record.attempt, rows);
+	}
+	const unresolved: UnresolvedJournalAttempt[] = [];
+	for (const rows of byAttempt.values()) {
+		const intent = rows.find((record) => record.kind === "intent");
+		if (!intent) continue;
+		if (rows.some((record) => record.kind === "released")) continue;
+		const allocated = rows.find((record) => record.kind === "allocated");
+		unresolved.push({
+			account: intent.account,
+			attempt: intent.attempt,
+			cellId: intent.cellId,
+			planDigest: intent.planDigest,
+			allocated: allocated !== undefined,
+			...(allocated ? { ref: allocated.ref } : {}),
+		});
+	}
+	return unresolved;
+}
+
 /** Bound observation and persistence; a late operation never authorizes subsequent allocation. */
 export async function withinSignal<T>(
 	signal: AbortSignal,

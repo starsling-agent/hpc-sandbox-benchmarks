@@ -80,9 +80,24 @@ jobs:
           BENCH_EXPERIMENT_ID: ${{ inputs.run_id }}
         run: bun apps/cli/src/bin/workflow-experiment.ts collect
 
-      - name: Aggregate + promote
+      - name: Aggregate
+        id: aggregate
         run: |
           bun apps/cli/src/bin/aggregate-experiment.ts experiment/manifest/plan.json experiment/attempts data/candidate
+
+      # Always retain coverage.json when aggregation writes it, including incomplete experiments.
+      # Promotion below still requires a complete Run; this artifact is diagnostic only.
+      - name: Upload coverage report
+        if: always() && hashFiles('data/candidate/coverage.json') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: experiment-coverage-${{ inputs.run_id }}-attempt-${{ github.run_attempt }}
+          path: data/candidate/coverage.json
+          if-no-files-found: error
+
+      - name: Promote
+        if: success()
+        run: |
           bun apps/cli/src/bin/promote.ts "data/candidate/runs/$RUN_ID.json" data/dataset experiment/manifest/plan.json experiment/attempts
 
       # Canonicalize the promoted dataset to Biome's format before the gate + commit. The promote
@@ -101,6 +116,7 @@ jobs:
       # hand-written source keeps the strict project-wide cap. Note biome.json cannot hold comments —
       # Biome silently discards a commented config and falls back to its defaults — hence this note here.
       - name: Autofix the promoted dataset formatting (Biome)
+        if: success()
         run: bunx biome check data/dataset --write
 
       # Confirm the committed content passes the exact gate ci.yml runs (`biome check .`), scoped to the
@@ -109,6 +125,7 @@ jobs:
       # A pre-existing, unrelated lint failure elsewhere on main can't strand a clean dataset commit;
       # the PR's own `biome check .` still gates the merge.
       - name: Confirm the promoted dataset passes Biome (the PR lint gate)
+        if: success()
         run: bunx biome check data/dataset --error-on-warnings
 
       # main is protected by a "changes must be made through a pull request" ruleset (the public-repo
@@ -119,6 +136,7 @@ jobs:
       # requirement, with data/dataset/ intentionally unowned (see docs/ci-secrets.md operator setup);
       # the in-job Biome pre-flight above already guarantees the content is clean.
       - name: Commit the dataset via pull request
+        if: success()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

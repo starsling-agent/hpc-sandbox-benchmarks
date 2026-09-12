@@ -26,7 +26,8 @@
     "aggregate-experiment": "./src/bin/aggregate-experiment.ts",
     "workflow-experiment": "./src/bin/workflow-experiment.ts",
     "recover-completed-create": "./src/bin/recover-completed-create.ts",
-    "recover-allocated-intent": "./src/bin/recover-allocated-intent.ts"
+    "recover-allocated-intent": "./src/bin/recover-allocated-intent.ts",
+    "audit-account-journals": "./src/bin/audit-account-journals.ts"
   },
   "scripts": {
     "test": "bun test",

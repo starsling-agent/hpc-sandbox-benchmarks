@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { SandboxDriver } from "@sandbox-benchmarks/driver";
 import type { AccountRecord } from "./account-journal.ts";
-import { recoverAccount } from "./account-journal.ts";
+import { recoverAccount, unresolvedJournalAttempts } from "./account-journal.ts";
 
 const intent = {
 	version: "1",
@@ -106,4 +106,39 @@ test("a delete acknowledgement cannot release a still-running allocation", async
 		recoverAccount("tama", new Map([["tama", driver]]), journal, AbortSignal.timeout(20)),
 	).rejects.toThrow();
 	expect(records).toHaveLength(2);
+});
+
+test("unresolvedJournalAttempts reports open ownership without inventing releases", () => {
+	const records: AccountRecord[] = [
+		intent,
+		{ ...intent, kind: "allocated", ref },
+		{ ...intent, attempt: "attempt-2", cellId: "tama-system-r1" },
+		{
+			...intent,
+			attempt: "attempt-3",
+			cellId: "tama-system-r2",
+			kind: "released",
+			outcome: "not-allocated",
+		},
+	];
+	expect(unresolvedJournalAttempts(records)).toEqual([
+		{
+			account: "tama",
+			attempt: "attempt-1",
+			cellId: "tama-system-r0",
+			planDigest: intent.planDigest,
+			allocated: true,
+			ref,
+		},
+		{
+			account: "tama",
+			attempt: "attempt-2",
+			cellId: "tama-system-r1",
+			planDigest: intent.planDigest,
+			allocated: false,
+		},
+	]);
+	expect(
+		records.some((record) => record.kind === "released" && record.attempt === "attempt-1"),
+	).toBe(false);
 });

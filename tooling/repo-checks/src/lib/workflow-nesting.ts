@@ -162,18 +162,27 @@ export function checkExperimentNesting(docs: Record<string, unknown>): string[] 
 			publish.needs.includes("plan"),
 		"publication must wait for plan and all account batches",
 	);
-	const promotion = stepByName(
-		job("commit-dataset.yml", "commit"),
-		"Aggregate + promote",
-		"commit-dataset.yml",
+	const commitJob = job("commit-dataset.yml", "commit");
+	const aggregate = stepByName(commitJob, "Aggregate", "commit-dataset.yml");
+	const coverage = stepByName(commitJob, "Upload coverage report", "commit-dataset.yml");
+	const promotion = stepByName(commitJob, "Promote", "commit-dataset.yml");
+	expect(
+		typeof aggregate?.run === "string" &&
+			aggregate.run.includes(
+				"aggregate-experiment.ts experiment/manifest/plan.json experiment/attempts",
+			),
+		"publication must aggregate against the frozen plan and whole attempts",
 	);
 	expect(
-		typeof promotion?.run === "string" &&
-			promotion.run.includes(
-				"aggregate-experiment.ts experiment/manifest/plan.json experiment/attempts",
-			) &&
+		coverage?.if === "always() && hashFiles('data/candidate/coverage.json') != ''" &&
+			asRecord(coverage.with, "coverage").path === "data/candidate/coverage.json",
+		"incomplete aggregation must still upload coverage.json while refusing promotion",
+	);
+	expect(
+		promotion?.if === "success()" &&
+			typeof promotion.run === "string" &&
 			promotion.run.includes("data/dataset experiment/manifest/plan.json experiment/attempts"),
-		"publication must verify original plan and whole attempts",
+		"promotion must verify the original plan and whole attempts only after a complete aggregate",
 	);
 	return errors;
 }

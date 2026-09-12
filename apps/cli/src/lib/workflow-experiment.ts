@@ -80,11 +80,7 @@ export function workflowExperiment(env: NodeJS.ProcessEnv, createdOn: string): E
 }
 
 /** Every nesting level stays within the Actions matrix limit under one frozen plan. */
-export function workflowAxes(
-	plan: ExperimentPlan,
-	account?: string,
-	wave?: string,
-): unknown[] {
+export function workflowAxes(plan: ExperimentPlan, account?: string, wave?: string): unknown[] {
 	if (account === undefined) {
 		const domains = [...new Set(plan.rounds.map((entry) => entry.quotaDomain))];
 		if (domains.length > 256)

@@ -93,8 +93,7 @@ export function checkExperimentNesting(docs: Record<string, unknown>): string[] 
 			);
 			const strategy = asRecord(caller.strategy, file);
 			expect(
-				asRecord(strategy.matrix, file).account ===
-					"${{ fromJSON(needs.plan.outputs.accounts) }}",
+				asRecord(strategy.matrix, file).account === "${{ fromJSON(needs.plan.outputs.accounts) }}",
 				`${file}: ${waveJob} account axis must come from frozen plan`,
 			);
 			const wave = asRecord(caller.with, file).wave;

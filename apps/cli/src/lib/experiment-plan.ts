@@ -108,9 +108,7 @@ export function planExperiment(
 					id: `round-${rounds.length}`,
 					quotaDomain,
 					wave,
-					batches: domainBatches
-						.slice(offset, offset + ROUND_BATCH_LIMIT)
-						.map((batch) => batch.id),
+					batches: domainBatches.slice(offset, offset + ROUND_BATCH_LIMIT).map((batch) => batch.id),
 				});
 		}
 	}

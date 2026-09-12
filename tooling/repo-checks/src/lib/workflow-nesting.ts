@@ -1,5 +1,5 @@
 /* biome-ignore-all lint/suspicious/noTemplateCurlyInString: GitHub expression contract literals */
-// Check the production account → round → bounded batch dispatch graph.
+// Check the production two-wave dispatch graph: one frozen plan, one provider matrix per wave.
 import { asRecord, RUN_STEP, SUITE_WORKFLOW, stepByName } from "./workflow-yaml.ts";
 
 const CELL_DRIVER_BIN = "bench-suite.ts";
@@ -77,24 +77,49 @@ export function checkLaneDelegates(
 	return errors;
 }
 
-export function checkExperimentNesting(docs: Record<string, unknown>): string[] {
+/** The execution waves, in dispatch order. Passed in by runCheck from the schema's EXPERIMENT_WAVES. */
+export const DEFAULT_WAVES = ["synthetic", "realworld"] as const;
+
+/** The reusable cell's file name as both dispatch lanes spell it in `uses:`. */
+const SUITE_FILE = "bench-suite.yml";
+
+/**
+ * The dispatch graph both live lanes must have: `plan` -> one job per wave -> (matrix only) `publish`.
+ *
+ * Every clause here is a failure mode run 34672199543 actually paid for, so none of them is cosmetic:
+ *
+ *  - ONE plan job. The account and round readers this replaced re-froze nothing and re-read
+ *    everything, costing three sequential checkouts and workspace setups per account before a single
+ *    sandbox existed. A lane that grows another `workflow-experiment.ts plan`/`axes` step is that
+ *    layering coming back.
+ *  - Both wave axes come from that one job's outputs, so the dispatch can only select cells the plan
+ *    froze, and each batch is dispatched by exactly one wave.
+ *  - No `max-parallel` on either wave. A wave's provider jobs are created together, so ONE
+ *    `privileged` approval releases the whole wave (GitHub approves only the jobs already pending);
+ *    per-account quota exclusion belongs to the bench job's `benchmark-account-<domain>` queue, not to
+ *    a workflow-level throttle that would also serialise INDEPENDENT accounts.
+ *  - `fail-fast: false` on both. One provider's failure must never cancel the other eleven; a
+ *    cancelled batch is a lost cell.
+ *  - The real-world wave runs after the synthetic one and does not require it to have succeeded — the
+ *    long wave is ordered second because an account cap cannot hold both at once, but a provider whose
+ *    synthetic wave failed still owes the experiment its real-world evidence.
+ */
+export function checkExperimentNesting(
+	docs: Record<string, unknown>,
+	waves: readonly string[] = DEFAULT_WAVES,
+): string[] {
 	const errors: string[] = [];
-	const job = (file: string, name: string) =>
-		asRecord(asRecord(asRecord(docs[file], file).jobs, file)[name], `${file}:${name}`);
+	const jobs = (file: string) => asRecord(asRecord(docs[file], file).jobs, file);
+	const job = (file: string, name: string) => asRecord(jobs(file)[name], `${file}:${name}`);
+	const steps = (owner: Record<string, unknown>, file: string) =>
+		Array.isArray(owner.steps) ? owner.steps.map((step) => asRecord(step, file)) : [];
+	const needsOf = (owner: Record<string, unknown>): string[] =>
+		Array.isArray(owner.needs) ? owner.needs.map((entry) => String(entry)) : [];
 	const expect = (condition: boolean, detail: string) => {
 		if (!condition) errors.push(detail);
 	};
+	const [first, second] = waves;
 	for (const file of ["bench-matrix.yml", "bench-smoke.yml"]) {
-		const caller = job(file, "suite");
-		expect(
-			caller.uses === "./.github/workflows/bench-account.yml",
-			`${file}: must dispatch account workflow`,
-		);
-		const strategy = asRecord(caller.strategy, file);
-		expect(
-			asRecord(strategy.matrix, file).account === "${{ fromJSON(needs.plan.outputs.accounts) }}",
-			`${file}: account axis must come from frozen plan`,
-		);
 		const step = stepByName(job(file, "plan"), "Plan", file);
 		expect(
 			step?.run === "bun apps/cli/src/bin/workflow-experiment.ts plan",
@@ -116,37 +141,57 @@ export function checkExperimentNesting(docs: Record<string, unknown>): string[] 
 				(file === "bench-matrix.yml" ? "${{ inputs.replicas }}" : "${{ inputs.replicas || '1' }}"),
 			`${file}: preserve replicate defaults`,
 		);
-	}
-	for (const [file, callee, axis] of [
-		["bench-account.yml", "bench-round.yml", "round"],
-		["bench-round.yml", "bench-suite.yml", "include"],
-	]) {
-		if (!file || !callee || !axis) continue;
-		const caller = job(file, "execute");
-		const strategy = asRecord(caller.strategy, file);
-		// Rounds run one at a time so a later round's approval gate is raised only once the previous
-		// round has finished; a round's batches are created together — no max-parallel, the account
-		// concurrency queue serialises them — so ONE `privileged` approval releases the whole round
-		// (GitHub approves only the jobs already pending). Neither level may cancel its peers.
-		if (axis === "round") {
+		const outputs = asRecord(job(file, "plan").outputs, `${file}: plan declares no outputs`);
+		// Exactly one planner. A second `workflow-experiment.ts` step anywhere in the lane is the
+		// account/round re-read this consolidation removed.
+		const planners = Object.values(jobs(file)).flatMap((rawJob) =>
+			steps(asRecord(rawJob, file), file).filter(
+				(step) => typeof step.run === "string" && step.run.includes("workflow-experiment.ts"),
+			),
+		);
+		expect(
+			planners.length === 1,
+			`${file}: the frozen experiment must be read once, by the plan job (found ${planners.length})`,
+		);
+		for (const wave of waves) {
 			expect(
-				strategy["max-parallel"] === 1 && strategy["fail-fast"] === false,
-				`${file}: rounds must run one at a time without cancelling peers`,
+				outputs[wave] === `\${{ steps.plan.outputs.${wave} }}`,
+				`${file}: plan must publish the ${wave} wave axis`,
 			);
-		} else {
+			const caller = job(file, wave);
+			expect(
+				caller.uses === `./.github/workflows/${SUITE_FILE}`,
+				`${file}: ${wave} wave must dispatch the reusable benchmark cell`,
+			);
+			const strategy = asRecord(caller.strategy, file);
+			expect(
+				asRecord(strategy.matrix, file).include === `\${{ fromJSON(needs.plan.outputs.${wave}) }}`,
+				`${file}: ${wave} wave axis must come from the frozen plan`,
+			);
 			expect(
 				strategy["max-parallel"] === undefined && strategy["fail-fast"] === false,
-				`${file}: a round's batches must be created together (no max-parallel) without cancelling peers`,
+				`${file}: ${wave} wave jobs must be created together (no max-parallel) without cancelling peers`,
+			);
+			expect(
+				asRecord(caller.with, file).batch_id === "${{ matrix.batch }}",
+				`${file}: ${wave} wave must pass the frozen batch identity`,
 			);
 		}
-		expect(caller.uses === `./.github/workflows/${callee}`, `${file}: wrong execution delegate`);
+		// Wave order: the long real-world wave is dispatched behind the synthetic one, but on
+		// `!cancelled()` so a failed synthetic wave does not withhold the real-world evidence.
+		const later = job(file, String(second));
+		const needs = needsOf(later);
 		expect(
-			asRecord(strategy.matrix, file)[axis] === "${{ fromJSON(needs.plan.outputs.axis) }}",
-			`${file}: axis must come from frozen plan`,
+			needs.includes("plan") && needs.includes(String(first)),
+			`${file}: the ${second} wave must run after the ${first} wave`,
+		);
+		expect(
+			typeof later.if === "string" && later.if.includes("!cancelled()"),
+			`${file}: a failed ${first} wave must not withhold the ${second} wave`,
 		);
 	}
-	const worker = job("bench-suite.yml", "bench");
-	const step = stepByName(worker, RUN_STEP, "bench-suite.yml");
+	const worker = job(SUITE_FILE, "bench");
+	const step = stepByName(worker, RUN_STEP, SUITE_WORKFLOW);
 	expect(
 		step?.run === "bun apps/cli/src/bin/workflow-experiment.ts execute",
 		"worker must use managed batch executor",
@@ -155,18 +200,28 @@ export function checkExperimentNesting(docs: Record<string, unknown>): string[] 
 		asRecord(step?.env, "worker").BENCH_BATCH_ID === "${{ inputs.batch_id }}",
 		"worker must bind batch identity",
 	);
-	const publish = job("bench-matrix.yml", "publish");
+	// Anything a sibling job must not share is keyed on the batch, the only per-job identity. The
+	// Namespace mint was keyed on the suite, and two batches of one provider therefore asked the
+	// credential API for the same token name — refused `AlreadyExists`, taking 30 cells with it.
+	const mint = stepByName(worker, "Set up Namespace credentials", SUITE_WORKFLOW);
+	const tokenName = asRecord(mint?.with, `${SUITE_FILE}: credential mint has no inputs`)[
+		"token-name"
+	];
 	expect(
-		Array.isArray(publish.needs) &&
-			publish.needs.includes("suite") &&
-			publish.needs.includes("plan"),
-		"publication must wait for plan and all account batches",
+		typeof tokenName === "string" && tokenName.includes("${{ inputs.batch_id }}"),
+		"the Namespace token name must be unique per batch",
 	);
-	const promotion = stepByName(
-		job("commit-dataset.yml", "commit"),
-		"Aggregate + promote",
-		"commit-dataset.yml",
+	expect(
+		mint?.["continue-on-error"] === undefined,
+		"an unusable Namespace credential must fail its job, not every cell behind it",
 	);
+	const publishNeeds = needsOf(job("bench-matrix.yml", "publish"));
+	expect(
+		publishNeeds.includes("plan") && waves.every((wave) => publishNeeds.includes(wave)),
+		"publication must wait for plan and every wave",
+	);
+	const commit = job("commit-dataset.yml", "commit");
+	const promotion = stepByName(commit, "Aggregate + promote", "commit-dataset.yml");
 	expect(
 		typeof promotion?.run === "string" &&
 			promotion.run.includes(
@@ -174,6 +229,13 @@ export function checkExperimentNesting(docs: Record<string, unknown>): string[] 
 			) &&
 			promotion.run.includes("data/dataset experiment/manifest/plan.json experiment/attempts"),
 		"publication must verify original plan and whole attempts",
+	);
+	// The refusal to publish is correct; losing the evidence of WHY is not. Coverage is written before
+	// that refusal, so it must be retained even though the job is already failing.
+	const retain = stepByName(commit, "Retain the per-cell coverage report", "commit-dataset.yml");
+	expect(
+		typeof retain?.if === "string" && retain.if.includes("always()"),
+		"an incomplete experiment must still retain its per-cell coverage report",
 	);
 	return errors;
 }

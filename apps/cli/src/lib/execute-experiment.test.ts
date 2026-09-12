@@ -11,7 +11,7 @@ import { recoverAccount } from "./account-journal.ts";
 import { recoverAllocatedIntent } from "./allocated-intent-recovery.ts";
 import type { OpenedDriver } from "./driver-run.ts";
 import { resolveDriverArtifact } from "./driver-run.ts";
-import { batchIsComplete, executeExperimentBatch } from "./execute-experiment.ts";
+import { batchIsComplete, executeExperimentBatch, runPooled } from "./execute-experiment.ts";
 import { readExperimentAttempt } from "./experiment-artifacts.ts";
 import { workflowExperiment } from "./workflow-experiment.ts";
 
@@ -389,4 +389,72 @@ test("operator recovery reclaims the leaked sandbox and readmits the account", a
 	);
 	// The original attempts stay failed; recovery never makes them publishable.
 	expect(attempts.every((attempt) => attempt.outcome === "failed")).toBe(true);
+});
+
+test("the pool holds its limit, refills a freed slot, and is not stopped by a failed peer", async () => {
+	// Deterministic scheduling: every item's completion is released by hand, so the assertions are
+	// about the pool's admission decisions and not about timing.
+	const gates = Array.from({ length: 5 }, () => Promise.withResolvers<string>());
+	const started: number[] = [];
+	let live = 0;
+	let peak = 0;
+	const settled = runPooled([0, 1, 2, 3, 4], 2, async (item) => {
+		started.push(item);
+		live += 1;
+		peak = Math.max(peak, live);
+		try {
+			return await (gates[item] as (typeof gates)[number]).promise;
+		} finally {
+			live -= 1;
+		}
+	});
+	await Bun.sleep(0);
+	// A limit of two admits exactly two, however many items are waiting.
+	expect(started).toEqual([0, 1]);
+	// A slot frees the moment its item settles — including when it settles by THROWING, which is the
+	// case that matters: a provider refusing one allocation must not cost the wave a slot for the rest
+	// of the job.
+	gates[1]?.reject(new Error("provider refused"));
+	await Bun.sleep(0);
+	expect(started).toEqual([0, 1, 2]);
+	gates[0]?.resolve("a");
+	await Bun.sleep(0);
+	expect(started).toEqual([0, 1, 2, 3]);
+	for (const [index, gate] of gates.entries()) gate.resolve(`v${index}`);
+	const results = await settled;
+	expect(peak).toBe(2);
+	// Results stay in ITEM order, not completion order, so evidence never depends on which sandbox
+	// happened to finish first.
+	expect(
+		results.map((result) => (result.status === "fulfilled" ? result.value : "rejected")),
+	).toEqual(["a", "rejected", "v2", "v3", "v4"]);
+});
+
+test("a pooled batch measures more replicates than the account admits at once", async () => {
+	const f = await fixture("pooled-wave");
+	// Three replicates on a two-sandbox account: one frozen batch, peak two, and the third takes the
+	// first freed slot inside the SAME job rather than spilling into a second one.
+	const pooled = workflowExperiment(
+		{
+			GITHUB_RUN_ID: "pooled",
+			GITHUB_SHA: plan.sha,
+			BENCH_PROVIDERS: "tama",
+			BENCH_SUITES: "cpu-node",
+			BENCH_REPLICAS: "3",
+			BENCH_ACCOUNT_CAPACITY: '{"tama":{"sandboxes":2}}',
+		},
+		"2026-09-10",
+	);
+	expect(pooled.batches).toHaveLength(1);
+	expect(pooled.batches[0]?.maxConcurrency).toBe(2);
+	// Two generations of the cpu-node cell budget, which the job ceiling covers.
+	expect(pooled.batches[0]?.budgetMinutes).toBe(2 * (40 + 75 + 15 + 15));
+	const attempts = await executeExperimentBatch({ ...f.options, plan: pooled });
+	expect(attempts.map((attempt) => attempt.cellId)).toEqual(pooled.cells.map((cell) => cell.id));
+	expect(f.peak()).toBe(2);
+	expect(attempts.every((attempt) => attempt.cleanup === "confirmed")).toBe(true);
+	// Startup is charged from the moment a replicate takes a slot, so the backfilled one is not born
+	// past a batch-wide deadline.
+	expect(attempts.every((attempt) => attempt.measurementStarted)).toBe(true);
+	expect(f.present.size).toBe(0);
 });

@@ -18,8 +18,9 @@ and toolchain publish must not trigger on `push`.
 | `update-leaderboard.yml` | `leaderboard` | Public `LEADERBOARD.md` commit (`contents: write` + `pull-requests: write`) |
 
 `bench-matrix.yml` and `bench-smoke.yml` are **not** listed: neither reads a provider secret itself.
-`bench-smoke.yml` is a `plan` job plus a suite-matrix job that calls `bench-suite.yml`;
-`bench-matrix.yml` is the same, plus a `publish` job that calls `commit-dataset.yml`. Both callees are
+`bench-smoke.yml` is a `plan` job plus two wave jobs (`synthetic`, then `realworld`) that call
+`bench-suite.yml`; `bench-matrix.yml` is the same, plus a `publish` job that calls
+`commit-dataset.yml`. Both callees are
 in the table above and carry their own `privileged` gate, so a dispatch lane's jobs only plan and
 orchestrate. A smoke dispatch is gated exactly as a matrix cell is — same approval, same Environment
 secrets, same callee — it simply has no third phase to gate.
@@ -28,9 +29,10 @@ Two of these are reusable workflows whose `privileged` gate lives on their own j
 caller can't declare `environment:` (the workflow-hardening drift gate checks the callee and passes the
 local caller):
 
-- `bench-suite.yml` runs one suite across a provider matrix. It is the single benchmark-cell
-  implementation: `bench-matrix.yml`'s suite-matrix job calls it once per planned suite, and
-  `bench-smoke.yml`'s calls it once for the dispatched suite. Environment secrets on `privileged`
+- `bench-suite.yml` runs one frozen batch — a whole wave of one provider, pooled under that
+  provider's account sandbox cap. It is the single benchmark-cell
+  implementation: each of `bench-matrix.yml`'s two wave jobs calls it once per provider, and
+  `bench-smoke.yml`'s calls it once for the dispatched provider × suite. Environment secrets on `privileged`
   resolve from the reusable job's own `environment:` declaration (a `uses:` caller can't set
   `environment:`). Both callers pass `secrets: inherit` for repository-level secrets / token context.
 - `commit-dataset.yml` commits the machine-readable dataset: `bench-matrix.yml`'s `publish` job calls it
@@ -176,17 +178,20 @@ Ungated: `ci.yml`, `ci-lint.yml`, and the toolchain `pr-gate` (Docker smoke, no 
    provider's first release. The plan's visibility guard still checks the package and warns if it is
    ever not public.
 
-> **Approval gates per bench-matrix run: one per collection round, plus `publish`.** Every batch
+> **Approval gates per bench-matrix run: one per wave, plus `publish` — three in total.** Every batch
 > job (each calling `bench-suite.yml` with `environment: privileged`) and the `publish` job carry the
 > environment. GitHub approves only the jobs that are pending at that moment, so the workflows are
-> shaped to make jobs pend together: a round's batch jobs are created at once (no `max-parallel`;
-> the `benchmark-account-<domain>` concurrency queue serialises them), and every account's first
-> round starts as soon as `plan` finishes, so one approval of `privileged` releases the whole first
-> wave. An account with more batches than one round holds (64, see `ROUND_BATCH_LIMIT`) raises a
-> further gate when its next round starts; `publish` becomes pending only after the last account
-> finishes, raising the final gate before the dataset is committed. A reviewer who approves only the
-> first wave and walks away leaves the run parked at the next gate until an approval lands or the
-> protection rule times out.
+> shaped to make jobs pend together: a wave's provider jobs are all created the moment its axis is
+> available (no `max-parallel`; the `benchmark-account-<domain>` concurrency queue serialises only the
+> providers that share a vendor account), so ONE approval releases the whole synthetic wave. The
+> real-world wave is created when the synthetic one finishes and raises the second gate; `publish`
+> becomes pending after the last wave job finishes, raising the final gate before the dataset is
+> committed. A reviewer who approves only the first wave and walks away leaves the run parked at the
+> next gate until an approval lands or the protection rule times out.
+>
+> A dispatch pathological enough to exceed one job per provider per wave (a replicate count far above
+> the account's sandbox cap) is refused at plan time rather than fanning out into more gates — see the
+> matrix-limit error in `workflow-experiment.ts`.
 
 ## Operator setup (before flipping the repo public)
 

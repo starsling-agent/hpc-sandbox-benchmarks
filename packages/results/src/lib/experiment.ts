@@ -8,6 +8,7 @@ import type {
 } from "@sandbox-benchmarks/schema";
 import {
 	artifactVerified,
+	BENCH_JOB_CEILING_MINUTES,
 	canonicalJsonString,
 	cleanupReceiptSchema,
 	effectiveArtifact,
@@ -71,11 +72,15 @@ export function verifyExperimentPlan(value: unknown): ExperimentPlan {
 	const batchIds = new Set<string>();
 	for (const batch of plan.batches) {
 		const account = accounts.get(batch.quotaDomain);
+		// A batch is a POOL of at most `maxConcurrency` simultaneous allocations, not a single
+		// simultaneous wave: a wave holding more replicates than the account may run at once refills
+		// freed slots inside the same job. What must hold is that the pool never exceeds the account's
+		// admission and that the job's declared budget covers every generation it will have to run —
+		// serial waves are accounted for here rather than hidden.
 		if (
 			!account ||
 			batch.maxConcurrency > account.sandboxes ||
-			batch.cells.length > batch.maxConcurrency ||
-			batch.budgetMinutes > 180
+			batch.budgetMinutes > BENCH_JOB_CEILING_MINUTES
 		) {
 			throw new Error(`invalid account batch capacity: ${batch.id}`);
 		}
@@ -94,16 +99,19 @@ export function verifyExperimentPlan(value: unknown): ExperimentPlan {
 			assigned.add(id);
 		}
 		const members = batch.cells.map((id) => cells.get(id)).filter((cell) => cell !== undefined);
+		// Peak occupancy, not the batch total: only `maxConcurrency` members hold resources at once, so
+		// the account's vCPU/memory/GPU allowances are charged against the largest member that many
+		// times. For a single-generation batch this is the old whole-batch sum or stricter, never looser.
+		const peak = (claim: (cell: (typeof members)[number]) => number): number =>
+			batch.maxConcurrency * Math.max(0, ...members.map(claim));
+		const cellBudget = (cell: (typeof members)[number]): number =>
+			cell.startupMinutes + cell.workloadMinutes + cell.finishMinutes + 15;
+		const generations = Math.ceil(members.length / batch.maxConcurrency);
 		if (
-			members.reduce((sum, cell) => sum + (cell.gpu?.count ?? 0), 0) > (account.gpus ?? 0) ||
-			members.reduce((sum, cell) => sum + cell.target.vcpus, 0) > (account.vcpus ?? Infinity) ||
-			members.reduce((sum, cell) => sum + cell.target.memoryGb, 0) >
-				(account.memoryGb ?? Infinity) ||
-			members.some(
-				(cell) =>
-					cell.startupMinutes + cell.workloadMinutes + cell.finishMinutes + 15 >
-					batch.budgetMinutes,
-			)
+			peak((cell) => cell.gpu?.count ?? 0) > (account.gpus ?? 0) ||
+			peak((cell) => cell.target.vcpus) > (account.vcpus ?? Infinity) ||
+			peak((cell) => cell.target.memoryGb) > (account.memoryGb ?? Infinity) ||
+			generations * Math.max(0, ...members.map(cellBudget)) > batch.budgetMinutes
 		) {
 			throw new Error(`batch exceeds resource or time budget: ${batch.id}`);
 		}

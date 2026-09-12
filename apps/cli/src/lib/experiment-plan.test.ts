@@ -164,7 +164,12 @@ test("resource budgets constrain an explicit sandbox cap", () => {
 		{ id: "experiment-1", sha, createdOn: "2026-09-10", cells: [cell(0), cell(1), cell(2)] },
 		{ "e2b-benchmark": { sandboxes: 12, vcpus: 8, memoryGb: 16 } },
 	);
-	expect(result.batches.map((batch) => batch.cells.length)).toEqual([2, 1]);
+	// 8 vCPU / 16 GiB admits two of these 4-vCPU replicates at once, so the third waits for a freed
+	// slot INSIDE the batch rather than in a second job: one batch, peak two, two generations of budget.
+	expect(result.batches).toHaveLength(1);
+	expect(result.batches[0]?.cells).toEqual(["e2b-memory-r0", "e2b-memory-r1", "e2b-memory-r2"]);
+	expect(result.batches[0]?.maxConcurrency).toBe(2);
+	expect(result.batches[0]?.budgetMinutes).toBe(170);
 });
 test("rejects infeasible work, duplicate logical replicates, and mutated plans", () => {
 	expect(() =>
@@ -172,7 +177,7 @@ test("rejects infeasible work, duplicate logical replicates, and mutated plans",
 			id: "x",
 			sha,
 			createdOn: "2026-09-10",
-			cells: [{ ...cell(), workloadMinutes: 180 }],
+			cells: [{ ...cell(), workloadMinutes: 300 }],
 		}),
 	).toThrow("cannot fit");
 	expect(() =>
@@ -546,11 +551,39 @@ test("mixed suites share resource-bounded waves with the longest member budget",
 		{ id: "mixed", sha, createdOn: "2026-09-10", cells },
 		{ "e2b-benchmark": { sandboxes: 30, vcpus: 8, memoryGb: 16 } },
 	);
+	// One wave, one job: memory and system are both synthetic suites with the same allocation identity,
+	// so they pool behind a peak of two (the 8-vCPU account limit) and the budget charges the longest
+	// member once per generation.
 	expect(result.batches.map((batch) => batch.cells)).toEqual([
-		["e2b-memory-r0", "e2b-system-r0"],
-		["e2b-memory-r1"],
+		["e2b-memory-r0", "e2b-system-r0", "e2b-memory-r1"],
 	]);
-	expect(result.batches.map((batch) => batch.budgetMinutes)).toEqual([105, 85]);
+	expect(result.batches.map((batch) => batch.maxConcurrency)).toEqual([2]);
+	expect(result.batches.map((batch) => batch.budgetMinutes)).toEqual([210]);
+});
+
+test("a real-world suite never shares a batch with a synthetic one", () => {
+	const cells = [
+		cell(),
+		{
+			...cell(),
+			id: "e2b-realworld-mastra-r0",
+			suite: "realworld-mastra",
+			workloadRevision: "mastra-fixed-v1",
+			metrics: ["realworld_mastra_task_cold_install"],
+			passes: 1,
+		},
+	];
+	const result = planExperiment(
+		{ id: "waves", sha, createdOn: "2026-09-10", cells },
+		{ "e2b-benchmark": { sandboxes: 30 } },
+	);
+	// Same provider, same allocation identity, room under the cap for both — and still two batches,
+	// because the wave is part of the batch key. Run 34672199543 packed exactly this pair into one
+	// batch, which is what made both of a provider's jobs report suite `mixed`.
+	expect(result.batches.map((batch) => batch.cells)).toEqual([
+		["e2b-memory-r0"],
+		["e2b-realworld-mastra-r0"],
+	]);
 });
 
 test("different allocation requirements stay in separate waves", () => {

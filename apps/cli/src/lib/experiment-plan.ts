@@ -1,6 +1,10 @@
 import { evidenceDigest, verifyExperimentPlan } from "@sandbox-benchmarks/results";
 import type { ExperimentCell, ExperimentPlan } from "@sandbox-benchmarks/schema";
-import { experimentCellSchema } from "@sandbox-benchmarks/schema";
+import {
+	BENCH_JOB_CEILING_MINUTES,
+	experimentCellSchema,
+	suiteWave,
+} from "@sandbox-benchmarks/schema";
 
 export interface AccountCapacity {
 	sandboxes: number;
@@ -15,6 +19,9 @@ export interface AccountCapacity {
  * account's concurrency group. GitHub's `queue: max` holds at most 100 pending jobs per group and
  * cancels the overflow (a cancelled batch is a failed cell), so a released round must stay well under
  * that even when the sibling isolation variant and the smoke/toolchain/GPU lanes share the group.
+ *
+ * A wave normally plans to ONE batch per provider, so this bound only engages on the pathological
+ * dispatches (a very high `--replicas` against a one-sandbox account) that cannot pool.
  */
 export const ROUND_BATCH_LIMIT = 64;
 
@@ -31,6 +38,28 @@ function allocationIdentity(cell: ExperimentCell): string {
 	});
 }
 
+/** The job budget one cell reserves: its own lifetime plus the host margin charged per generation. */
+function cellBudgetMinutes(cell: ExperimentCell): number {
+	return cell.startupMinutes + cell.workloadMinutes + cell.finishMinutes + 15;
+}
+
+/**
+ * The batch key: cells share a job only when they share an account, a provider, a wave, and an
+ * allocation identity.
+ *
+ * The wave is part of the key so a job is never half synthetic and half real-world. Packing purely by
+ * cell count (what run 34672199543 did) filled a provider's first batch with every synthetic cell plus
+ * whatever real-world replicates still fit under the cap, which made both of that provider's batches
+ * report suite `mixed`: indistinguishable in the job list, in the artifact names, and — because the
+ * Namespace token mint is named after the suite — indistinguishable to the credential API, which
+ * refused the second mint as `AlreadyExists` and failed every cell behind it.
+ */
+function batchKey(cell: ExperimentCell): string {
+	return [cell.quotaDomain, cell.provider, suiteWave(cell.suite), allocationIdentity(cell)].join(
+		"\u0000",
+	);
+}
+
 /** Pure admission planning. No credential reads, remote calls, or implicit wall-clock input. */
 export function planExperiment(
 	request: {
@@ -43,7 +72,10 @@ export function planExperiment(
 	policy: Readonly<Record<string, AccountCapacity>> = {},
 ): ExperimentPlan {
 	const cells = request.cells.map((cell) => experimentCellSchema.assert(structuredClone(cell)));
-	const batches: ExperimentPlan["batches"] = [];
+	// Group first, batch second. Plan order is preserved inside a group (provider, then registry suite
+	// order, then replicate), so the frozen batch of a given dispatch is reproducible and the heaviest
+	// suite of a wave — the one that sets the pool's tail — starts in the first generation.
+	const groups = new Map<string, { cap: number; cells: ExperimentCell[] }>();
 	for (const cell of cells) {
 		if (cell.metrics.every((metric) => cell.exclusions.some((entry) => entry.metricId === metric)))
 			continue;
@@ -64,28 +96,35 @@ export function planExperiment(
 			cell.gpu ? Math.floor((capacity.gpus ?? 0) / cell.gpu.count) : Infinity,
 		);
 		if (cap < 1) throw new Error(`target exceeds account capacity: ${cell.id}`);
-		const budgetMinutes = cell.startupMinutes + cell.workloadMinutes + cell.finishMinutes + 15;
-		if (budgetMinutes > 180) throw new Error(`replicate cannot fit a 180-minute job: ${cell.id}`);
-		// A batch is one simultaneous wave of compatible allocations. Never hide serial waves in a job.
-		const previous = batches.at(-1);
-		const first = cells.find((entry) => entry.id === previous?.cells[0]);
-		if (
-			previous &&
-			first &&
-			previous.quotaDomain === cell.quotaDomain &&
-			previous.cells.length < cap &&
-			first.provider === cell.provider &&
-			allocationIdentity(first) === allocationIdentity(cell)
-		) {
-			previous.cells.push(cell.id);
-			previous.budgetMinutes = Math.max(previous.budgetMinutes, budgetMinutes);
-		} else {
+		if (cellBudgetMinutes(cell) > BENCH_JOB_CEILING_MINUTES)
+			throw new Error(`replicate cannot fit a ${BENCH_JOB_CEILING_MINUTES}-minute job: ${cell.id}`);
+		const key = batchKey(cell);
+		const group = groups.get(key) ?? { cap, cells: [] };
+		group.cap = Math.min(group.cap, cap);
+		group.cells.push(cell);
+		groups.set(key, group);
+	}
+	const batches: ExperimentPlan["batches"] = [];
+	for (const group of groups.values()) {
+		const budget = Math.max(...group.cells.map(cellBudgetMinutes));
+		// Generations the whole group needs, against the generations one job can afford. A provider's
+		// wave normally lands in ONE batch — the pool refills a slot the moment a replicate finishes, so
+		// the shorter suites of a wave stop leaving account capacity idle behind the longest one. Only a
+		// dispatch whose replicate count dwarfs its account cap cannot be held that way, and it falls
+		// back to single-generation batches rather than to a job that could not finish: serial waves are
+		// planned deliberately, here, or not at all.
+		const needed = Math.ceil(group.cells.length / group.cap);
+		const affordable = Math.floor(BENCH_JOB_CEILING_MINUTES / budget);
+		const size = needed <= affordable ? group.cells.length : group.cap;
+		for (let offset = 0; offset < group.cells.length; offset += size) {
+			const members = group.cells.slice(offset, offset + size);
+			const maxConcurrency = Math.min(group.cap, members.length);
 			batches.push({
 				id: `batch-${batches.length}`,
-				quotaDomain: cell.quotaDomain,
-				cells: [cell.id],
-				maxConcurrency: cap,
-				budgetMinutes,
+				quotaDomain: members[0]?.quotaDomain ?? "",
+				cells: members.map((cell) => cell.id),
+				maxConcurrency,
+				budgetMinutes: Math.ceil(members.length / maxConcurrency) * budget,
 			});
 		}
 	}

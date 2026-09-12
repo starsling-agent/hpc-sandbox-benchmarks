@@ -6,11 +6,15 @@ This is an implementation status record, not a claim that the live fleet meets t
 
 - Schema 1 experiment plans and attempt receipts; schema 7 Run linkage with historical Run readers.
 - Pure `planExperiment`: unchanged logical replicate identities, default capacity one, CPU/RAM/GPU
-  limits, phase budgets plus one 15-minute host margin, 180-minute batch ceiling, collection rounds
-  of at most 64 batches, and uniform reviewed exclusions. Retries default to zero. A round is the
-  approval unit: its batch jobs are created together (the account concurrency queue, not
-  `max-parallel`, serialises them), so one `privileged` approval releases a whole round, and 64 keeps
-  a released round under the 100 pending jobs a `queue: max` group holds before cancelling overflow.
+  limits, phase budgets plus one 15-minute host margin charged per pooled generation, the
+  `BENCH_JOB_CEILING_MINUTES` job ceiling, and uniform reviewed exclusions. Retries default to zero.
+  A batch is one provider's whole WAVE — synthetic or real-world, never both — pooled under that
+  account's sandbox cap, so a wave with more replicates than the cap refills freed slots inside its
+  own job instead of spilling into a second one. Only a dispatch whose replicate count dwarfs its
+  account cap splits further, and then into single-generation batches. A wave is the approval unit:
+  its provider jobs are created together (the account concurrency queue, not `max-parallel`,
+  serialises the providers that share a vendor account), so one `privileged` approval releases a
+  whole wave.
 - Pure coverage evaluation and deterministic whole-attempt aggregation. Missing work, bad provenance,
   conflicting attempts, unapproved retries, missing metrics and unknown cleanup block completeness.
 - File-boundary verification of normalized and raw digests; atomic, no-overwrite JSON publication.
@@ -57,20 +61,23 @@ This is an implementation status record, not a claim that the live fleet meets t
 
 ## Integrated execution
 
-Matrix and smoke now freeze one immutable plan and dispatch account → collection round → batch.
-Every allocating worker verifies the plan and source revision, reconciles its account once, and runs
-one bounded wave through the existing harness and normalizer. Different suites with compatible
-provider allocations share a wave up to the account's sandbox and resource caps. Each cell retains
-its suite, replica index, pass count, and phase deadlines; the batch reserves the longest member's
-budget. Collection rounds proceed sequentially, and the account concurrency group serializes batches;
-independent accounts can proceed together.
+Matrix and smoke freeze one immutable plan and dispatch it as two provider matrices: the synthetic
+wave, then the real-world wave. Every allocating worker verifies the plan and source revision,
+reconciles its account once, and runs its whole wave through the existing harness and normalizer.
+Different suites of the same wave with compatible provider allocations share a pool up to the
+account's sandbox and resource caps. Each cell retains its suite, replica index, pass count, and phase
+deadlines, and its startup allowance is charged from the moment it takes a slot; the batch reserves
+the longest member's budget once per generation. The account concurrency group serializes the
+providers that share a vendor account; independent accounts proceed together, in both waves.
 
 Bounded publication uses each suite's fixed pass default (two unless the suite declares another
 count). An explicit fixed-pass override changes every selected suite's workload identity; explicit
 convergence remains inadmissible. With a 30-sandbox cap, all nine suites use 54 sandboxes per provider
-in waves of 30 and 24, preserving three replicas per synthetic suite and twelve per real-world suite.
-These are peak wave sizes, not a promise of 30 continuously occupied slots: the next batch waits for
-all current members and cleanup to finish. Scheduling changes apply only to newly frozen plans.
+across two jobs — 18 synthetic cells at a peak of 18, then 36 real-world cells at a peak of 30 —
+preserving three replicas per synthetic suite and twelve per real-world suite. Within a job the peak is
+sustained rather than momentary: a finished replicate's slot is refilled at once, so the shorter suites
+of a wave no longer leave account capacity idle behind the longest one. Scheduling changes apply only
+to newly frozen plans.
 
 Each attempt uploads independently. The CLI performs those uploads (and the plan's) through
 `@actions/artifact`, which needs the run-scoped artifact runtime GitHub injects only into action

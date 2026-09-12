@@ -1,18 +1,23 @@
 name: Benchmark suite (reusable)
 
+# The ONE benchmark cell in this repository: every dispatch lane reaches a sandbox through here, so
+# the provider credential wiring, the runner routing, the job budget and the evidence upload exist
+# exactly once. It executes one frozen batch — a whole wave of one provider — as a pool bounded by
+# that provider's account sandbox cap.
+
 on:
   workflow_call:
     inputs:
       providers:
-        description: 'JSON array of provider ids to fan out over (the plan job selected provider list).'
+        description: 'JSON array holding the one provider id this batch belongs to (the frozen plan''s wave axis).'
         required: true
         type: string
       suite:
-        description: 'Suite to run — the bench-suite.ts arg and the artifact-name key. A registered SUITE_NAMES value.'
+        description: 'The batch label used in job names, evidence names and the credential mint: a registered SUITE_NAMES value when the wave is one suite, otherwise the wave (`synthetic` / `realworld`).'
         required: true
         type: string
       batch_id:
-        description: 'Immutable experiment batch identity.'
+        description: 'Immutable experiment batch identity. The only identity that is unique per job, so anything a job must not share with a sibling is keyed on it.'
         type: string
         required: true
 
@@ -34,7 +39,12 @@ jobs:
     # >>> generated: provider-runner — bun run generate-provider-wiring
     runs-on: ${{ 'ubuntu-24.04' }}
     # <<< end generated: provider-runner
-    timeout-minutes: 180
+    # BENCH_JOB_CEILING_MINUTES (packages/schema/src/suites.ts) — the same number the planner sizes a
+    # batch against, hand-copied here because `timeout-minutes` cannot read an expression context and
+    # re-checked against the frozen budget by the run step below. It covers the worst case a POOLED
+    # batch can hold: two generations of the 150-minute real-world cell, 30 minutes clear of the
+    # 360-minute maximum Actions allows a hosted job.
+    timeout-minutes: 330
     strategy:
       fail-fast: false
       matrix:
@@ -58,25 +68,30 @@ jobs:
       - name: Expose artifact runtime to scripts
         uses: ./.github/actions/artifact-runtime
 
+      # Named on the BATCH, which is the only identity unique to this job. Naming it on the suite made
+      # both of a provider's jobs mint `...-mixed-<run>-<attempt>` in run 34672199543; the second was
+      # refused `AlreadyExists`, and because the step tolerated its own failure the batch went on to
+      # fail all 30 cells with `NSC_TOKEN_FILE must be a string (was missing)`. An unusable credential
+      # is now a red step with the provider's own error in it, not thirty derived ones.
       - name: Set up Namespace credentials
         # >>> generated: preauth-namespace-token-bench — bun run generate-provider-wiring
         if: matrix.provider == 'namespace'
         # <<< end generated: preauth-namespace-token-bench
-        continue-on-error: true
         id: namespace
         uses: ./.github/actions/namespace-token
         with:
-          token-name: sandbox-benchmarks-${{ inputs.suite }}-${{ github.run_id }}-${{ github.run_attempt }}
+          token-name: sandbox-benchmarks-${{ inputs.batch_id }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Set up the tama CLI
         if: matrix.provider == 'tama'
         uses: ./.github/actions/setup-tama
 
+      # Also fails the job outright: an unauthenticated Vercel cell can only produce a batch of
+      # identical create failures, and the OIDC error itself is the useful evidence.
       - name: Authenticate with Vercel
         # >>> generated: preauth-vercel-auth-bench — bun run generate-provider-wiring
         if: matrix.provider == 'vercel'
         # <<< end generated: preauth-vercel-auth-bench
-        continue-on-error: true
         id: vercel-auth
         uses: ./.github/actions/vercel-auth
         with:
@@ -89,8 +104,7 @@ jobs:
           BENCH_REPO_REF: ${{ github.sha }}
           BENCH_REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BENCH_PROVIDER: ${{ matrix.provider }}
-          BENCH_SUITE: ${{ inputs.suite }}
-          BENCH_CELL_BUDGET_MINUTES: '180'
+          BENCH_CELL_BUDGET_MINUTES: '330'
           BENCH_BATCH_ID: ${{ inputs.batch_id }}
           GH_TOKEN: ${{ github.token }}
           # >>> generated: provider-inputs-bench — bun run generate-provider-wiring
@@ -124,10 +138,15 @@ jobs:
           # <<< end generated: provider-runner-lifetime
         run: bun apps/cli/src/bin/workflow-experiment.ts execute
 
+      # Each attempt is already uploaded individually by the CLI as it ends; this is the whole-batch
+      # bundle. `warn`, not `error`: a setup step that fails before the executor runs (a refused
+      # credential mint, a failed checkout) legitimately leaves no attempts behind, and a second red
+      # step there would bury the real one. Nothing about completeness rests on this upload —
+      # aggregation refuses to publish from the per-attempt evidence, not from this bundle.
       - name: Upload Run + raw results
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: diagnostic-${{ inputs.batch_id }}-${{ matrix.provider }}-attempt-${{ github.run_attempt }}-${{ github.run_id }}
           path: experiment/attempts/
-          if-no-files-found: error
+          if-no-files-found: warn

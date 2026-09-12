@@ -201,11 +201,11 @@ so 20–80-minute suites such as Mastra launch detached and remain observable th
    trees (`data/raw/<runId>/r<idx>/<provider>/<suite>/`), and normalizes each into its own shard Run
    document (`data/runs/<runId>-r<idx>.json`) stamped with that replicate index. `--replicate <idx>` is
    the single-sandbox spelling, writing the un-suffixed `data/runs/<runId>.json`.
-2. **Matrix** — the `bench-matrix` workflow plans three axes (`plan-providers` / `plan-suites` /
-   `plan-replicates`), then one suite-matrix job calls the reusable `bench-suite` workflow per suite
-   (GitHub-native nesting: `<suite> / <provider>`), fanning out over the selected providers; each
-   `(provider, suite)` cell drives that suite's whole replicate fleet itself and uploads all its shard
-   Runs as one artifact. **Replicates are not a runner axis.** A bench runner is idle for essentially
+2. **Matrix** — the `bench-matrix` workflow freezes one experiment (`workflow-experiment plan`) and
+   dispatches it as two provider matrices: the synthetic micro-benchmarks first, then the long
+   real-world repository workloads (`<wave> / <provider>`). Each job runs its provider's whole wave in
+   one process, holding at most that provider's account sandbox cap at a time and starting the next
+   replicate as soon as a slot frees, and uploads each attempt's evidence as it ends. **Replicates are not a runner axis.** A bench runner is idle for essentially
    its whole life — it creates a sandbox and polls it — so a runner per replicate billed R idle runners
    to do one runner's work (324 runners where 54 suffice, at the shipped defaults). Driving the fleet
    in-process leaves the sandbox count, provider load, and wall clock unchanged (the cell's wall clock

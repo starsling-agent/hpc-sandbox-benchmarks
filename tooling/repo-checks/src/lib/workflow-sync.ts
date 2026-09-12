@@ -5,10 +5,10 @@
 //
 // Two workflows dispatch live benchmarks — bench-matrix.yml (the full provider × suite matrix, ending
 // in a dataset commit) and bench-smoke.yml (the same pipeline narrowed to one dispatched provider ×
-// suite and stopped before that commit) — and they are now the SAME implementation: each is a `plan`
-// job over ./.github/actions/plan-bench-axes plus one suite-matrix job calling the reusable
-// bench-suite.yml. The run-step env and live-run timeout therefore exist exactly once, in that
-// reusable.
+// suite and stopped before that commit) — and they are the SAME implementation: one `plan` job that
+// freezes the experiment and emits both wave axes, then one provider matrix per wave calling the
+// reusable bench-suite.yml. The run-step env and live-run timeout therefore exist exactly once, in
+// that reusable.
 //
 // Invariants not owned by generated provider wiring:
 //   1. bench-smoke.yml's `suite` dispatch input options == SUITE_NAMES, with a valid default.
@@ -20,10 +20,10 @@
 //   3. The live-run job (the reusable's fan-out) outlasts the longest registered sandbox lifetime by a
 //      fixed margin, so a suite budget increase cannot leave an otherwise healthy job to be killed by
 //      Actions first; and the budget literal it advertises equals that timeout.
-//   4. Nesting wiring for BOTH lanes' suite-matrix callers (they are held to one shape, with the two
-//      deliberate per-lane differences — the matrix's publish dependency, the smoke's
-//      require_providers assertion — stated explicitly at each lane, in both directions) plus the
-//      reusable's provider job name and the replicate axis reaching the cell as BENCH_REPLICATES data.
+//   4. Nesting wiring for BOTH lanes' wave callers: one plan job emitting both wave axes, one
+//      provider matrix per wave taken from those outputs, the real-world wave ordered behind the
+//      synthetic one without depending on its success, and the reusable's per-batch identity (the
+//      batch id it executes, and the credential mint keyed on it). See workflow-nesting.ts.
 //   5. A smoke dispatch measures ONE sandbox unless asked otherwise — the dispatch default AND the
 //      blank-value fallback, since `default:` alone does not survive a cleared field and blank means
 //      "each suite's Suite.defaultReplicas" (R=12 on realworld). See workflow-nesting.ts.
@@ -31,7 +31,13 @@
 // YAML navigation lives in workflow-yaml.ts; nesting checks in workflow-nesting.ts. This file owns
 // timeout/delegation invariants plus runCheck orchestration, and re-exports the public surface the
 // gate's tests import.
-import { PROVIDERS, SUITE_NAMES, SUITES } from "@sandbox-benchmarks/schema";
+import {
+	BENCH_JOB_CEILING_MINUTES,
+	EXPERIMENT_WAVES,
+	PROVIDERS,
+	SUITE_NAMES,
+	SUITES,
+} from "@sandbox-benchmarks/schema";
 import { checkExperimentNesting, checkLaneDelegates } from "./workflow-nesting.ts";
 import type { DispatchInput } from "./workflow-yaml.ts";
 import {
@@ -152,6 +158,25 @@ export function checkWorkflowTimeouts(timeoutByWorkflow: Record<string, number>)
 		);
 }
 
+/**
+ * Invariant 5 (third half): the live-run job's `timeout-minutes` IS the planner's job ceiling.
+ *
+ * The planner sizes every batch against {@link BENCH_JOB_CEILING_MINUTES} — how many pooled
+ * generations of a wave one job may hold — and the worker re-checks the frozen budget against the
+ * literal below before it allocates anything. All three must be the same number: a workflow timeout
+ * under the ceiling makes the planner promise a job Actions will kill, and one over it wastes runner
+ * time the planner will never use.
+ */
+export function checkJobCeiling(timeoutMinutes: number, workflow: string): string[] {
+	if (timeoutMinutes === BENCH_JOB_CEILING_MINUTES) return [];
+	return [
+		`${workflow}: job timeout-minutes ${timeoutMinutes} is not the planner's ` +
+			`BENCH_JOB_CEILING_MINUTES (${BENCH_JOB_CEILING_MINUTES}) — the planner sizes pooled batches ` +
+			`against that ceiling, so a job that does not match it either cannot finish the batches it is ` +
+			`given or reserves time no batch can use`,
+	];
+}
+
 /** The run-step env key carrying the cell's job budget down to `bench-suite`. */
 export const CELL_BUDGET_ENV_KEY = "BENCH_CELL_BUDGET_MINUTES";
 
@@ -159,8 +184,8 @@ export const CELL_BUDGET_ENV_KEY = "BENCH_CELL_BUDGET_MINUTES";
  * Invariant 5 (second half): the budget the cell's run step advertises equals the job's real
  * `timeout-minutes`.
  *
- * `bench-suite` refuses a `--max-concurrency` cap whose serial waves cannot fit the cell's budget —
- * the check that keeps a capped fan-out from being cancelled mid-flight with all R shards lost. It
+ * The batch worker refuses a frozen batch whose pooled budget exceeds the job's own budget — the check
+ * that keeps a wave from being cancelled mid-flight with its last generation's evidence lost. It
  * learns that budget from this env key, because `timeout-minutes` is not readable from an expression
  * context, so the value is a hand-copied literal. Copied literals drift: raising the job timeout
  * without raising the env would keep rejecting caps that now fit, and lowering it without lowering the
@@ -210,18 +235,15 @@ export function runCheck(root: string = findRepoRoot()): string[] {
 		...checkLaneDelegates(smoke, SMOKE_WORKFLOW, credentialKeys),
 		...checkLaneDelegates(matrix, MATRIX_WORKFLOW, credentialKeys),
 		...checkWorkflowTimeouts({ [SUITE_WORKFLOW]: suiteTimeout }),
+		...checkJobCeiling(suiteTimeout, SUITE_WORKFLOW),
 		...checkCellBudgetEnv(suiteEnv, suiteTimeout, SUITE_WORKFLOW),
 		...checkExperimentNesting(
 			Object.fromEntries(
-				[
-					"bench-matrix.yml",
-					"bench-smoke.yml",
-					"bench-account.yml",
-					"bench-round.yml",
-					"bench-suite.yml",
-					"commit-dataset.yml",
-				].map((file) => [file, readWorkflow(`.github/workflows/${file}`, root)]),
+				["bench-matrix.yml", "bench-smoke.yml", "bench-suite.yml", "commit-dataset.yml"].map(
+					(file) => [file, readWorkflow(`.github/workflows/${file}`, root)],
+				),
 			),
+			EXPERIMENT_WAVES,
 		),
 	];
 }

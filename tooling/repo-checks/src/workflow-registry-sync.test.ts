@@ -16,10 +16,11 @@
 // `bun test`, same precedent as boundary.test.ts); the rest is unit coverage of the parsers and the
 // failure messages on synthetic drift, so a future regression names the offending file + key.
 import { describe, expect, test } from "bun:test";
-import { SUITE_NAMES } from "@sandbox-benchmarks/schema";
+import { BENCH_JOB_CEILING_MINUTES, SUITE_NAMES } from "@sandbox-benchmarks/schema";
 import {
 	CELL_BUDGET_ENV_KEY,
 	checkCellBudgetEnv,
+	checkJobCeiling,
 	checkLaneDelegates,
 	checkSuiteInput,
 	checkWorkflowTimeouts,
@@ -56,8 +57,8 @@ describe("parsers against the real workflow files", () => {
 		expect(Object.keys(suiteEnv).length).toBeGreaterThanOrEqual(8);
 	});
 
-	test("the live-run job reserves host margin beyond the longest suite", () => {
-		expect(jobTimeoutMinutes(suiteWf, SUITE_JOB, SUITE_WORKFLOW)).toBe(180);
+	test("the live-run job reserves the planner's whole pooled ceiling", () => {
+		expect(jobTimeoutMinutes(suiteWf, SUITE_JOB, SUITE_WORKFLOW)).toBe(BENCH_JOB_CEILING_MINUTES);
 	});
 
 	test("dispatchInput throws on a missing input instead of passing vacuously", () => {
@@ -77,6 +78,22 @@ describe("parsers against the real workflow files", () => {
 		expect(() => stepEnv(Bun.YAML.parse(yaml), "j", "bare", "synthetic.yml")).toThrow(
 			"has no env mapping",
 		);
+	});
+});
+
+describe("checkJobCeiling", () => {
+	test("the real live-run timeout is the planner's ceiling", () => {
+		expect(
+			checkJobCeiling(jobTimeoutMinutes(suiteWf, SUITE_JOB, SUITE_WORKFLOW), SUITE_WORKFLOW),
+		).toEqual([]);
+	});
+
+	// The drift that strands a wave: the planner keeps packing a provider's whole real-world wave into
+	// one pooled batch sized against the ceiling, while Actions kills the job at the lower number.
+	test("flags a live-run timeout below the ceiling the planner packs against", () => {
+		const errors = checkJobCeiling(BENCH_JOB_CEILING_MINUTES - 1, SUITE_WORKFLOW);
+		expect(errors).toHaveLength(1);
+		expect(errors[0]).toContain("BENCH_JOB_CEILING_MINUTES");
 	});
 });
 
@@ -258,34 +275,57 @@ test("production workflows preserve planned account batching and strict promotio
 	expect(runCheck()).toEqual([]);
 });
 
-test("the integrated workflow gate rejects parallel rounds, serialised batches, detached plan axes and legacy promotion", async () => {
+test("the integrated workflow gate rejects throttled waves, detached axes, a shared credential mint and legacy promotion", async () => {
 	const { checkExperimentNesting } = await import("./lib/workflow-nesting.ts");
 	const docs = Object.fromEntries(
-		[
-			"bench-matrix.yml",
-			"bench-smoke.yml",
-			"bench-account.yml",
-			"bench-round.yml",
-			"bench-suite.yml",
-			"commit-dataset.yml",
-		].map((file) => [file, readWorkflow(`.github/workflows/${file}`)]),
+		["bench-matrix.yml", "bench-smoke.yml", "bench-suite.yml", "commit-dataset.yml"].map((file) => [
+			file,
+			readWorkflow(`.github/workflows/${file}`),
+		]),
 	);
 	const source = JSON.stringify(docs);
 	for (const [before, after] of [
-		// Rounds serialised (bench-account.yml is the only remaining max-parallel: 1).
-		['"max-parallel":1', '"max-parallel":2'],
-		// A round's batches created together: reintroducing max-parallel there is one approval per batch.
+		// A wave's provider jobs are created together — one `privileged` approval releases the wave, and
+		// independent accounts never wait on each other. max-parallel is both of those, undone.
 		[
 			'"fail-fast":false,"matrix":{"include":',
 			'"fail-fast":false,"max-parallel":1,"matrix":{"include":',
 		],
-		["fromJSON(needs.plan.outputs.accounts)", "fromJSON(needs.plan.outputs.suites)"],
+		// The axis must be the frozen plan's, not something the dispatch composed for itself.
+		["fromJSON(needs.plan.outputs.synthetic)", "fromJSON(inputs.providers)"],
+		// The long wave must stay ordered behind the short one.
+		['"needs":["plan","synthetic"]', '"needs":["plan"]'],
+		// Per-job identity for the credential mint: the collision that failed 30 Namespace cells.
+		// biome-ignore lint/suspicious/noTemplateCurlyInString: GitHub expression contract literals
+		["sandbox-benchmarks-${{ inputs.batch_id }}", "sandbox-benchmarks-${{ inputs.suite }}"],
+		// Promotion must re-verify the original plan and the whole attempt set.
 		["data/dataset experiment/manifest/plan.json experiment/attempts", "data/dataset"],
 		["workflow-experiment.ts execute", "bench-suite.ts"],
+		// Coverage must survive the refusal to publish it.
+		["Retain the per-cell coverage report", "Retain nothing"],
 	] as const) {
 		expect(source).toContain(before);
 		expect(
-			checkExperimentNesting(JSON.parse(source.replace(before, after))).length,
+			checkExperimentNesting(JSON.parse(source.replaceAll(before, after))).length,
 		).toBeGreaterThan(0);
 	}
+});
+
+test("the gate rejects a lane that re-reads the frozen plan at a second level", async () => {
+	const { checkExperimentNesting } = await import("./lib/workflow-nesting.ts");
+	const docs = Object.fromEntries(
+		["bench-matrix.yml", "bench-smoke.yml", "bench-suite.yml", "commit-dataset.yml"].map((file) => [
+			file,
+			readWorkflow(`.github/workflows/${file}`),
+		]),
+	);
+	// The account/round readers this consolidation removed: an extra job whose only work is to
+	// re-download the frozen plan and emit the next axis.
+	const withReader = JSON.parse(JSON.stringify(docs));
+	withReader["bench-matrix.yml"].jobs.round = {
+		"runs-on": "ubuntu-24.04",
+		steps: [{ name: "Read frozen round axis", run: "bun apps/cli/src/bin/workflow-experiment.ts" }],
+	};
+	const errors = checkExperimentNesting(withReader);
+	expect(errors.some((error) => error.includes("read once"))).toBe(true);
 });

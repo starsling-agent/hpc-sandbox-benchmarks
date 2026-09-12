@@ -74,7 +74,8 @@ jobs:
       contents: read
       actions: read
     outputs:
-      accounts: ${{ steps.plan.outputs.axis }}
+      synthetic: ${{ steps.plan.outputs.synthetic }}
+      realworld: ${{ steps.plan.outputs.realworld }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -101,9 +102,14 @@ jobs:
           BENCH_ARTIFACT_VERCEL: ${{ vars.BENCH_ARTIFACT_VERCEL }}
         run: bun apps/cli/src/bin/workflow-experiment.ts plan
 
-  suite:
-    name: ${{ matrix.account }}
+  # The same two waves the full matrix dispatches, narrowed to the one dispatched provider x suite and
+  # stopped before the dataset commit. A smoke dispatch always plans into exactly one of them; the
+  # other's axis is empty and is skipped, so this lane rehearses the real pipeline rather than a
+  # simplified copy of it.
+  synthetic:
+    name: ${{ matrix.suite }}
     needs: plan
+    if: needs.plan.outputs.synthetic != '[]'
     permissions:
       contents: write
       actions: read
@@ -111,8 +117,31 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        account: ${{ fromJSON(needs.plan.outputs.accounts) }}
-    uses: ./.github/workflows/bench-account.yml
+        include: ${{ fromJSON(needs.plan.outputs.synthetic) }}
+    uses: ./.github/workflows/bench-suite.yml
     with:
-      account: ${{ matrix.account }}
+      providers: ${{ toJSON(fromJSON(format('["{0}"]', matrix.provider))) }}
+      suite: ${{ matrix.suite }}
+      batch_id: ${{ matrix.batch }}
+    secrets: inherit
+
+  realworld:
+    name: ${{ matrix.suite }}
+    needs: [plan, synthetic]
+    if: >
+      !cancelled() && needs.plan.result == 'success' &&
+      needs.plan.outputs.realworld != '[]'
+    permissions:
+      contents: write
+      actions: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.realworld) }}
+    uses: ./.github/workflows/bench-suite.yml
+    with:
+      providers: ${{ toJSON(fromJSON(format('["{0}"]', matrix.provider))) }}
+      suite: ${{ matrix.suite }}
+      batch_id: ${{ matrix.batch }}
     secrets: inherit

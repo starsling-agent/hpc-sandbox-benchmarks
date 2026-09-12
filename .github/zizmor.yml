@@ -14,8 +14,8 @@ rules:
       - update-leaderboard.yml
   secrets-inherit:
     ignore:
-      # Matrix/smoke delegate through account and round workflows to the reusable
-      # bench-suite.yml with `secrets: inherit` (the smoke lane is the same pipeline narrowed to one
+      # Matrix/smoke dispatch their two wave matrices straight at the reusable bench-suite.yml with
+      # `secrets: inherit` (the smoke lane is the same pipeline narrowed to one
       # provider × suite and stopped before the dataset commit, so it reaches the cell the same way).
       # The reusable's fan-out job declares `environment: privileged`, which raises the approval gate and
       # scopes the provider ENVIRONMENT secrets (docs/ci-secrets.md) to that job, where it re-scopes each
@@ -26,5 +26,3 @@ rules:
       # entire local call chain reaches a worker gated on `privileged`. (Filename-scoped, not repo-wide.)
       - bench-matrix.yml
       - bench-smoke.yml
-      - bench-account.yml
-      - bench-round.yml

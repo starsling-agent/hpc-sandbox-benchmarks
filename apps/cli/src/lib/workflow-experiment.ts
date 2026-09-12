@@ -1,9 +1,11 @@
 import { evidenceDigest } from "@sandbox-benchmarks/results";
-import type { ExperimentCell, ExperimentPlan } from "@sandbox-benchmarks/schema";
+import type { ExperimentCell, ExperimentPlan, ExperimentWave } from "@sandbox-benchmarks/schema";
 import {
 	accountCapacityPolicySchema,
+	EXPERIMENT_WAVES,
 	quotaDomain,
 	SUITES,
+	suiteWave,
 	TARGET_SPEC,
 } from "@sandbox-benchmarks/schema";
 import {
@@ -74,37 +76,80 @@ export function workflowExperiment(env: NodeJS.ProcessEnv, createdOn: string): E
 		}
 	}
 	const plan = planExperiment({ id, sha, createdOn, cells }, capacity);
-	workflowAxes(plan);
-	for (const account of plan.accounts) workflowAxes(plan, account.quotaDomain);
+	// Freeze only a plan whose every batch is dispatchable: both wave axes are built here, so an
+	// experiment that cannot be expressed as two provider matrices fails at plan time rather than
+	// stranding cells in a matrix GitHub refuses to expand.
+	workflowWaveAxes(plan);
 	return plan;
 }
 
-/** Every nesting level stays within the Actions matrix limit under one frozen plan. */
-export function workflowAxes(plan: ExperimentPlan, account?: string, round?: string): unknown[] {
-	if (account === undefined) {
-		const domains = [...new Set(plan.rounds.map((entry) => entry.quotaDomain))];
-		if (domains.length > 256)
-			throw new Error("experiment requires explicit account collection partitions");
-		return domains;
-	}
-	if (round === undefined) {
-		const rounds = plan.rounds
-			.filter((entry) => entry.quotaDomain === account)
-			.map((entry) => entry.id);
-		if (rounds.length === 0 || rounds.length > 256)
-			throw new Error("account requires explicit round collection partitions");
-		return rounds;
-	}
-	const selected = plan.rounds.find((entry) => entry.quotaDomain === account && entry.id === round);
-	if (!selected) throw new Error("unknown collection round");
-	return selected.batches.map((id) => {
-		const batch = plan.batches.find((entry) => entry.id === id);
-		const cell = plan.cells.find((entry) => entry.id === batch?.cells[0]);
-		if (!batch || !cell || batch.quotaDomain !== quotaDomain(cell.provider))
-			throw new Error("invalid workflow quota domain");
-		const suites = new Set(
-			plan.cells.filter((entry) => batch.cells.includes(entry.id)).map((entry) => entry.suite),
-		);
-		return { batch: id, provider: cell.provider, suite: suites.size === 1 ? cell.suite : "mixed" };
+/** One dispatched benchmark job: the frozen batch it executes, named by provider and workload. */
+export interface WorkflowWaveEntry {
+	batch: string;
+	provider: string;
+	suite: string;
+	budgetMinutes: number;
+}
+
+/** GitHub expands at most 256 jobs from one matrix, and refuses to expand an empty one. */
+const MATRIX_JOB_LIMIT = 256;
+
+/**
+ * The `matrix.include` axis of one wave: every frozen batch whose cells run that wave's suites, as one
+ * job per provider.
+ *
+ * This replaces the account -> round -> batch nesting the matrix used to fan out through. That nesting
+ * re-planned the same frozen experiment at every level (three checkouts and three workspace setups
+ * before a single sandbox was created) purely to keep each level's axis under the matrix limit, and
+ * serialised rounds behind `max-parallel: 1` even where the accounts were independent. Waves are a
+ * fixed pair, so the plan job emits both axes at once and a provider's job for a wave is created as
+ * soon as the plan is frozen; per-account quota exclusion stays where it belongs, on the bench job's
+ * `benchmark-account-<domain>` concurrency group.
+ */
+export function workflowWaveAxis(plan: ExperimentPlan, wave: ExperimentWave): WorkflowWaveEntry[] {
+	const entries = plan.batches.flatMap((batch) => {
+		const members = plan.cells.filter((cell) => batch.cells.includes(cell.id));
+		const first = members[0];
+		if (!first || members.length !== batch.cells.length)
+			throw new Error(`batch cells are absent from the plan: ${batch.id}`);
+		const waves = new Set(members.map((cell) => suiteWave(cell.suite)));
+		const providers = new Set(members.map((cell) => cell.provider));
+		if (
+			waves.size !== 1 ||
+			providers.size !== 1 ||
+			batch.quotaDomain !== quotaDomain(first.provider)
+		)
+			throw new Error(`batch spans more than one provider wave: ${batch.id}`);
+		if (!waves.has(wave)) return [];
+		const suites = new Set(members.map((cell) => cell.suite));
+		return [
+			{
+				batch: batch.id,
+				provider: first.provider,
+				// A wave of one suite reads as that suite; a full wave reads as the wave. Either way the
+				// label is stable per batch, and batch ids — not this label — key the per-job credentials.
+				suite: suites.size === 1 ? first.suite : wave,
+				budgetMinutes: batch.budgetMinutes,
+			},
+		];
 	});
+	if (entries.length > MATRIX_JOB_LIMIT)
+		throw new Error(
+			`${wave} wave needs ${entries.length} jobs, above the ${MATRIX_JOB_LIMIT}-job matrix limit; ` +
+				"lower the replicate count or raise the account sandbox capacity",
+		);
+	return entries;
+}
+
+/** Both wave axes of a frozen plan, keyed by wave, with every batch dispatched exactly once. */
+export function workflowWaveAxes(
+	plan: ExperimentPlan,
+): Record<ExperimentWave, WorkflowWaveEntry[]> {
+	const axes = Object.fromEntries(
+		EXPERIMENT_WAVES.map((wave) => [wave, workflowWaveAxis(plan, wave)]),
+	) as Record<ExperimentWave, WorkflowWaveEntry[]>;
+	const dispatched = Object.values(axes).reduce((total, entries) => total + entries.length, 0);
+	if (dispatched !== plan.batches.length)
+		throw new Error("frozen batches are not covered by exactly one wave each");
+	return axes;
 }

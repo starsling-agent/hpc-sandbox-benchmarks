@@ -348,6 +348,23 @@ export const suiteNameSchema = type.enumerated(...SUITE_NAMES);
 export const WORKFLOW_TIMEOUT_MARGIN_MINUTES = 15;
 
 /**
+ * The wall-clock ceiling one benchmark job may declare — the single owner of the number that
+ * `bench-suite.yml`'s `timeout-minutes`, the `BENCH_CELL_BUDGET_MINUTES` literal it advertises, and
+ * the planner's per-batch `budgetMinutes` must all agree on.
+ *
+ * It is deliberately larger than the longest single sandbox lifetime, because a batch is a POOL: when
+ * a provider's wave holds more replicate sandboxes than its account may run at once, the freed slots
+ * are refilled inside the same job rather than spilling into a second one. The ceiling is therefore
+ * the worst case of `generations x per-cell budget` a job may be asked to hold — two generations of
+ * the 150-minute real-world cell (40 startup + 80 workload + 15 finish + 15 host margin) — and stays
+ * 30 minutes clear of the 360-minute maximum GitHub allows a hosted job, so a job is killed by its own
+ * declared budget rather than by Actions. Raising a suite budget or an account cap can push a wave
+ * past this, and the planner then splits it back into single-generation batches rather than silently
+ * planning a job that cannot finish.
+ */
+export const BENCH_JOB_CEILING_MINUTES = 330;
+
+/**
  * The comma-padded token for one suite, e.g. `cpu-node` → `,cpu-node,`. GitHub Actions `if:`
  * expressions can't split strings, so the setup job emits the planned suites as a padded list
  * ({@link padSuiteList}) and each suite job matches its own token with `contains(..., ',<suite>,')`.
@@ -360,4 +377,34 @@ export function paddedSuiteToken(suite: string): string {
 /** The full padded list the setup job emits, e.g. `[a, b]` → `,a,b,`. */
 export function padSuiteList(suites: readonly string[]): string {
 	return `,${suites.join(",")},`;
+}
+
+/**
+ * The two execution waves a CPU experiment fans out over, in dispatch order: the synthetic
+ * micro-benchmarks first, then the long real-world repository workloads.
+ *
+ * The split is the scheduling unit of `bench-matrix.yml`: one provider-matrixed job per wave, rather
+ * than a batch axis packed by cell count. It exists because the two tiers behave nothing alike — a
+ * synthetic cell is a bounded PTS profile on a fixed budget, a real-world cell is a cold clone +
+ * install + build whose sandbox lives an order of magnitude longer — so mixing them in one batch made
+ * every downstream label read "mixed" (which collided the Namespace token mint in run 34672199543)
+ * and hid the real-world tail behind a synthetic job name.
+ */
+export const EXPERIMENT_WAVES = ["synthetic", "realworld"] as const;
+
+/** One execution wave of an experiment. */
+export type ExperimentWave = (typeof EXPERIMENT_WAVES)[number];
+
+/**
+ * The wave a suite runs in, derived from the registry rather than the suite's spelling: a suite is
+ * real-world exactly when it measures the `realworld` dimension. Adding a real-world suite therefore
+ * lands it in the second wave automatically, with no workflow edit.
+ *
+ * An unregistered suite name (test fixtures, and historical plans replayed by a dataset backfill) is
+ * synthetic — the conservative default, since only the registry can promote a suite into the long
+ * wave and its longer per-cell budget.
+ */
+export function suiteWave(suite: string): ExperimentWave {
+	const registered = (SUITES as Record<string, Suite | undefined>)[suite];
+	return registered?.dimensions.includes("realworld") ? "realworld" : "synthetic";
 }

@@ -1,5 +1,24 @@
 name: CPU benchmark
 
+# One frozen experiment, dispatched as TWO provider matrices:
+#
+#   plan  ->  synthetic (one job per provider)  ->  realworld (one job per provider)  ->  publish
+#
+# Each wave job runs every cell of that wave for its provider in ONE job, holding at most the
+# account's sandbox cap at a time and refilling a slot the moment a replicate finishes. Nothing in
+# this file decides how the cells are grouped: `workflow-experiment.ts plan` freezes the batches and
+# emits both matrices as job outputs, so the dispatch cannot select a cell the plan did not freeze,
+# or select one twice.
+#
+# What this replaced: a plan -> account -> round -> batch chain of nested reusable workflows, each
+# level re-downloading the same frozen plan through its own checkout and workspace setup purely to
+# read the next axis, and serialising rounds behind `max-parallel: 1` even between independent
+# accounts. Run 34672199543 spent three sequential planning jobs per account before any sandbox
+# existed and packed each provider's cells by count rather than by workload, so both of a provider's
+# jobs reported suite `mixed` — which is what collided the Namespace credential mint. Per-account
+# quota exclusion never lived at those levels anyway; it lives, and stays, on the bench job's
+# `benchmark-account-<domain>` concurrency group.
+
 on:
   workflow_dispatch:
     inputs:
@@ -48,7 +67,8 @@ jobs:
       contents: read
       actions: read
     outputs:
-      accounts: ${{ steps.plan.outputs.axis }}
+      synthetic: ${{ steps.plan.outputs.synthetic }}
+      realworld: ${{ steps.plan.outputs.realworld }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -75,9 +95,46 @@ jobs:
           BENCH_ARTIFACT_VERCEL: ${{ vars.BENCH_ARTIFACT_VERCEL }}
         run: bun apps/cli/src/bin/workflow-experiment.ts plan
 
-  suite:
-    name: ${{ matrix.account }}
+  # Wave 1 — the synthetic micro-benchmarks. Bounded PTS profiles, so these jobs are the short ones;
+  # every provider starts at once and only providers sharing a vendor account queue behind each other.
+  # A suite selection that plans no synthetic cell leaves the axis empty, which GitHub refuses to
+  # expand, so the wave is skipped rather than failed.
+  synthetic:
+    name: ${{ matrix.suite }}
     needs: plan
+    if: needs.plan.outputs.synthetic != '[]'
+    permissions:
+      contents: write
+      actions: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      # Deliberately NO max-parallel. Every provider's wave job is created at once, so they all reach
+      # the `privileged` approval gate together and ONE approval releases the wave (GitHub approves
+      # only the jobs already pending). Providers that share a vendor account then serialise on the
+      # bench job's `benchmark-account-<domain>` queue, which is the only place a quota is enforced.
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.synthetic) }}
+    uses: ./.github/workflows/bench-suite.yml
+    with:
+      providers: ${{ toJSON(fromJSON(format('["{0}"]', matrix.provider))) }}
+      suite: ${{ matrix.suite }}
+      batch_id: ${{ matrix.batch }}
+    secrets: inherit
+
+  # Wave 2 — the real-world repository workloads (cold clone, install, build, test). An order of
+  # magnitude longer per sandbox and more replicates each, so they run after the synthetic wave: a
+  # provider's account cap cannot hold both waves at once anyway, and putting the cheap wave first
+  # surfaces a broken plan, credential or image before the expensive one commits to it.
+  #
+  # `!cancelled()` rather than `success()`: a provider whose synthetic wave failed still runs its
+  # real-world wave, because a partial experiment's evidence is what the coverage report is built from.
+  realworld:
+    name: ${{ matrix.suite }}
+    needs: [plan, synthetic]
+    if: >
+      !cancelled() && needs.plan.result == 'success' &&
+      needs.plan.outputs.realworld != '[]'
     permissions:
       contents: write
       actions: read
@@ -85,15 +142,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        account: ${{ fromJSON(needs.plan.outputs.accounts) }}
-    uses: ./.github/workflows/bench-account.yml
+        include: ${{ fromJSON(needs.plan.outputs.realworld) }}
+    uses: ./.github/workflows/bench-suite.yml
     with:
-      account: ${{ matrix.account }}
+      providers: ${{ toJSON(fromJSON(format('["{0}"]', matrix.provider))) }}
+      suite: ${{ matrix.suite }}
+      batch_id: ${{ matrix.batch }}
     secrets: inherit
 
   publish:
     name: Commit complete experiment
-    needs: [plan, suite]
+    needs: [plan, synthetic, realworld]
     if: >
       !cancelled() && needs.plan.result == 'success' &&
       github.ref == 'refs/heads/main' &&

@@ -85,6 +85,27 @@ jobs:
           bun apps/cli/src/bin/aggregate-experiment.ts experiment/manifest/plan.json experiment/attempts data/candidate
           bun apps/cli/src/bin/promote.ts "data/candidate/runs/$RUN_ID.json" data/dataset experiment/manifest/plan.json experiment/attempts
 
+      # An INCOMPLETE experiment is the case this exists for. Aggregation writes the per-cell coverage
+      # report and then exits non-zero without a Run — the correct refusal to publish partial data —
+      # and until now that report died with the runner, leaving the frozen plan's 648 cells to be
+      # reconstructed by hand from the attempt artifacts (run 34672199543). Retain it on failure,
+      # scoped to the run + attempt that produced it, and put the headline in the job summary so the
+      # first question after a red publish ("which cells are missing, and why") is answered in the UI.
+      #
+      # Retention is observability only: it cannot make an incomplete experiment publishable, because
+      # the promotion step above has already failed the job by the time this runs.
+      - name: Retain the per-cell coverage report
+        if: always() && hashFiles('data/candidate/coverage.json') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: experiment-coverage-${{ inputs.run_id }}-attempt-${{ github.run_attempt }}
+          path: data/candidate/coverage.json
+          if-no-files-found: error
+
+      - name: Summarize coverage
+        if: always() && hashFiles('data/candidate/coverage.json') != ''
+        run: bun apps/cli/src/bin/summarize-coverage.ts data/candidate/coverage.json >> "$GITHUB_STEP_SUMMARY"
+
       # Canonicalize the promoted dataset to Biome's format before the gate + commit. The promote
       # writer emits `JSON.stringify(run, null, 2)` (every array element on its own line), but Biome's
       # JSON formatter inlines short arrays and wraps long ones at the 100-col width — so the committed

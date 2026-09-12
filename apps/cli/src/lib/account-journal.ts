@@ -18,6 +18,19 @@ export const accountRecordSchema = type.or(
 		"reject",
 	),
 	type({ ...base, kind: "'released'", outcome: "'not-allocated'" }).onUndeclaredKey("reject"),
+	type({
+		...base,
+		kind: "'released'",
+		outcome: "'reconciled'",
+		evidence: {
+			kind: "'completed-create'",
+			sourceSha: /^[a-f0-9]{40}$/,
+			attemptDigest: /^sha256:[a-f0-9]{64}$/,
+			workflowRun: /^[0-9]+$/,
+			confirmedAt: "string.date.iso",
+			operator: identity,
+		},
+	}).onUndeclaredKey("reject"),
 );
 export type AccountRecord = typeof accountRecordSchema.infer;
 export interface AccountJournal {
@@ -47,11 +60,16 @@ export async function recoverAccount(
 		const intent = records.find((entry) => entry.kind === "intent");
 		const allocated = records.find((entry) => entry.kind === "allocated");
 		const released = records.find((entry) => entry.kind === "released");
-		if (!intent || records.some((entry) => entry.planDigest !== intent.planDigest))
+		if (
+			!intent ||
+			records.some(
+				(entry) => entry.planDigest !== intent.planDigest || entry.cellId !== intent.cellId,
+			)
+		)
 			throw new Error("incomplete account journal provenance");
 		if (released) {
 			if (
-				released.outcome === "not-allocated"
+				released.outcome !== "absent"
 					? allocated !== undefined
 					: !allocated ||
 						allocated.ref.provider !== released.ref.provider ||

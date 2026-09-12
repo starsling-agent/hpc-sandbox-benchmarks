@@ -62,3 +62,33 @@ they adopt the owner. Account-wide capacity is guaranteed only after that admiss
 See [GitHub's reference API](https://docs.github.com/en/rest/git/refs) for fast-forward ref updates and
 [tree API](https://docs.github.com/en/rest/git/trees) for complete tree enumeration. Truncated histories
 and competing ref updates fail admission rather than discarding ownership facts.
+
+## Operator recovery of a completed create with a lost journal append
+
+A returned create is distinct from an interrupted vendor request. At revision
+`b061d9f201d787e3c87045c1fe2a1db24122691e`, the exact premeasurement
+`sandbox-create-failed` marker containing `account journal PATCH HTTP 422; allocation blocked`
+can only arise after SDK create returned and the subsequent allocation append failed. The intent
+append occurs outside the harness and cannot produce this marker. Later revisions persist the
+allocation reference locally before appending it; use ordinary identity-based recovery for those.
+
+For that reviewed historical failure only, an operator may append a `released/reconciled` record
+without inventing a sandbox reference. Recovery validates the original attempt's raw and Run digests,
+source revision, marker and intent identities, absence of measurement and execution receipts, and
+absence of an existing allocation record. The original workflow must have completed. All workflow
+and local account writers must be stopped; the command checks repository workflow quiescence before
+and after reconciliation. It requires complete account inventory, normal owned-resource destruction
+and control-plane confirmation, and a second complete empty inventory sweep. The initial recovery
+path supports only single-provider quota domains.
+
+The append preserves the operator, confirmation time, original workflow, source revision and attempt
+digest in the protected journal. It records account clearance, not a recovered sandbox identity or a
+claim that allocation never happened. It does not modify original attempt evidence or make it eligible
+for publication. Unknown or still-in-flight creates continue to block even when inventory is empty.
+This exception is an explicit operator command, never an automatic admission fallback.
+
+Run `recover-completed-create --exclusive-account <provider> <suite> <original-attempt-directory>`
+with provider credentials, `GITHUB_REPOSITORY`, a journal-write `GH_TOKEN`, and `GITHUB_ACTOR` identifying
+the operator. Obtain the immutable original attempt artifact first and stop local account writers.
+The flag asserts exclusive operational ownership; it does not acquire a distributed lock. Normal
+benchmark queues and complete journal admission remain mandatory after recovery.

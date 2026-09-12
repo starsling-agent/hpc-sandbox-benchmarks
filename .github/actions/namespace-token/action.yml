@@ -34,9 +34,9 @@ inputs:
     description: >-
       Name recorded on the minted token, so a leaked one is traceable to the cell that minted it.
       Include github.run_attempt as well as github.run_id: run_id is PRESERVED across re-runs, so
-      without it a retry collides with the first attempt's token — and a caller's
-      `continue-on-error` would turn that name clash into a silent namespace skip on exactly the
-      re-run where the run was wanted.
+      without it a retry collides with the first attempt's token. Bench suite jobs must also include
+      the immutable batch id: two mixed batches in one run share suite/run/attempt and would
+      otherwise mint colliding names.
     required: true
 
 outputs:

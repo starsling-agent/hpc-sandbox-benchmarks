@@ -62,11 +62,22 @@ jobs:
         # >>> generated: preauth-namespace-token-bench — bun run generate-provider-wiring
         if: matrix.provider == 'namespace'
         # <<< end generated: preauth-namespace-token-bench
-        continue-on-error: true
         id: namespace
         uses: ./.github/actions/namespace-token
         with:
-          token-name: sandbox-benchmarks-${{ inputs.suite }}-${{ github.run_id }}-${{ github.run_attempt }}
+          # batch_id is required: two mixed batches in one run otherwise mint the same
+          # suite-run-attempt name and the second job's continue-on-error path left NSC_TOKEN_FILE empty.
+          token-name: sandbox-benchmarks-${{ inputs.suite }}-${{ inputs.batch_id }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Require Namespace credentials
+        if: matrix.provider == 'namespace'
+        env:
+          NSC_TOKEN_FILE: ${{ steps.namespace.outputs.token-file }}
+        run: |
+          if [ -z "${NSC_TOKEN_FILE}" ] || [ ! -s "${NSC_TOKEN_FILE}" ]; then
+            echo "::error::Namespace credential mint failed; refusing to continue without NSC_TOKEN_FILE"
+            exit 1
+          fi
 
       - name: Set up the tama CLI
         if: matrix.provider == 'tama'
@@ -76,7 +87,6 @@ jobs:
         # >>> generated: preauth-vercel-auth-bench — bun run generate-provider-wiring
         if: matrix.provider == 'vercel'
         # <<< end generated: preauth-vercel-auth-bench
-        continue-on-error: true
         id: vercel-auth
         uses: ./.github/actions/vercel-auth
         with:
@@ -112,7 +122,7 @@ jobs:
           RUNLOOP_API_KEY: ${{ matrix.provider == 'runloop' && secrets.RUNLOOP_API_KEY || '' }}
           RUNLOOP_BLUEPRINT: ${{ matrix.provider == 'runloop' && (env.RUNLOOP_BLUEPRINT || vars.RUNLOOP_BLUEPRINT || secrets.RUNLOOP_BLUEPRINT) || '' }}
           NSC_TOKEN_FILE: ${{ steps.namespace.outputs.token-file }}
-          VERCEL_OIDC_TOKEN: ${{ matrix.provider == 'vercel' && steps.vercel-auth.outcome == 'success' && env.VERCEL_OIDC_TOKEN || '' }}
+          VERCEL_OIDC_TOKEN: ${{ matrix.provider == 'vercel' && env.VERCEL_OIDC_TOKEN || '' }}
           VERCEL_TEAM_SLUG: ${{ matrix.provider == 'vercel' && (env.VERCEL_TEAM_SLUG || vars.VERCEL_TEAM_SLUG || secrets.VERCEL_TEAM_SLUG) || '' }}
           VERCEL_PROJECT_NAME: ${{ matrix.provider == 'vercel' && (env.VERCEL_PROJECT_NAME || vars.VERCEL_PROJECT_NAME || secrets.VERCEL_PROJECT_NAME) || '' }}
           RUN_CLOUD_API_KEY: ${{ matrix.provider == 'runcloud' && secrets.RUN_CLOUD_API_KEY || '' }}

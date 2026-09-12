@@ -214,13 +214,21 @@ test("a failed terminal upload does not discard its local immutable evidence or 
 	expect(retry.every((attempt) => !attempt.measurementStarted)).toBe(true);
 });
 
-test("a typed clean create refusal releases its intent while an ambiguous failure does not", async () => {
-	const { DriverError, markRetryableDriverCreate } = await import("@sandbox-benchmarks/driver");
+test("a create-failed releases its intent while a failed-create cleanup keeps ownership", async () => {
+	const { DriverError, FailedCreateCleanupError } = await import("@sandbox-benchmarks/driver");
 	for (const clean of [true, false]) {
 		const f = await fixture(`create-refusal-${clean}`);
 		const open = f.options.open;
-		const failure = new DriverError("create-failed", "boot interrupted", { provider: "tama" });
-		if (clean) markRetryableDriverCreate(failure);
+		const primary = new DriverError("create-failed", "boot interrupted", { provider: "tama" });
+		const failure = clean
+			? primary
+			: new FailedCreateCleanupError(new Error("destroy unavailable"), primary, {
+					provider: "tama",
+					locator: { kind: "name", value: "bench-orphan" },
+					cleanup: async () => {
+						throw new Error("destroy unavailable");
+					},
+				});
 		f.options.open = async () => {
 			const opened = await open();
 			return {

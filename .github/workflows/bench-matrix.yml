@@ -75,6 +75,11 @@ jobs:
           BENCH_ARTIFACT_VERCEL: ${{ vars.BENCH_ARTIFACT_VERCEL }}
         run: bun apps/cli/src/bin/workflow-experiment.ts plan
 
+      - name: Audit account journals
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bun apps/cli/src/bin/audit-account-journals.ts --from-plan experiment/manifest/plan.json
+
   suite:
     name: ${{ matrix.account }}
     needs: plan

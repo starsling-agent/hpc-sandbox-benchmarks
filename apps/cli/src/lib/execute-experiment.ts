@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { SandboxDriver, SandboxRef } from "@sandbox-benchmarks/driver";
-import { describeDriverFailure, isRetryableDriverCreate } from "@sandbox-benchmarks/driver";
+import {
+	describeDriverFailure,
+	isFailedCreateCleanupError,
+} from "@sandbox-benchmarks/driver";
 import { diagnosticSecretsFromEnv } from "@sandbox-benchmarks/driver/env";
 import { executeSuite } from "@sandbox-benchmarks/harness";
 import {
@@ -35,6 +38,11 @@ import {
 	writeImmutableJson,
 } from "./experiment-artifacts.ts";
 import type { ExperimentStore } from "./experiment-store.ts";
+import {
+	concurrentSandboxAdmissionDetail,
+	isConcurrentSandboxAdmissionError,
+} from "./admission-capacity.ts";
+import { logInfo } from "./actions-log.ts";
 import { runReplicate } from "./run-replicate.ts";
 
 export interface BatchExecution {
@@ -62,6 +70,15 @@ export async function executeExperimentBatch(
 		return cell;
 	});
 	if (cells.length > batch.maxConcurrency) throw new Error("batch exceeds frozen concurrency");
+	const account = plan.accounts.find((entry) => entry.quotaDomain === batch.quotaDomain);
+	if (!account) throw new Error("batch quota domain missing from frozen account capacity");
+	logInfo(
+		`admission ${batch.quotaDomain}: declared sandboxes=${account.sandboxes} batchCells=${cells.length} maxConcurrency=${batch.maxConcurrency}`,
+	);
+	if (batch.maxConcurrency > account.sandboxes)
+		throw new Error(
+			`frozen batch maxConcurrency ${batch.maxConcurrency} exceeds declared sandboxes ${account.sandboxes} for ${batch.quotaDomain}`,
+		);
 	const startupDeadline =
 		Date.now() + Math.min(...cells.map((cell) => cell.startupMinutes)) * 60_000;
 	const drivers = new Map<ProviderId, OpenedDriver>();
@@ -153,8 +170,19 @@ export async function executeExperimentBatch(
 							throw new Error("startup deadline exceeded before create");
 						createStarted = true;
 						const session = await opened.driver.create(request, createOptions).catch((error) => {
-							// This marker guarantees that the failed create left no allocation behind.
-							createRejectedCleanly = isRetryableDriverCreate(error);
+							// Drivers throw FailedCreateCleanupError only when cleanup could not prove
+							// absence. Any other create failure has already reconciled or never allocated.
+							createRejectedCleanly = !isFailedCreateCleanupError(error);
+							if (isConcurrentSandboxAdmissionError(error)) {
+								throw new Error(
+									concurrentSandboxAdmissionDetail(error, {
+										quotaDomain: batch.quotaDomain,
+										declaredSandboxes: account.sandboxes,
+										batchConcurrency: batch.maxConcurrency,
+									}),
+									{ cause: error },
+								);
+							}
 							throw error;
 						});
 						allocated = session.sandboxRef;

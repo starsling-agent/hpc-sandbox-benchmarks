@@ -24,7 +24,8 @@
     "plan-experiment": "./src/bin/plan-experiment.ts",
     "evaluate-experiment": "./src/bin/evaluate-experiment.ts",
     "aggregate-experiment": "./src/bin/aggregate-experiment.ts",
-    "workflow-experiment": "./src/bin/workflow-experiment.ts"
+    "workflow-experiment": "./src/bin/workflow-experiment.ts",
+    "recover-completed-create": "./src/bin/recover-completed-create.ts"
   },
   "scripts": {
     "test": "bun test",

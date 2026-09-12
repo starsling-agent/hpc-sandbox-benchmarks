@@ -258,23 +258,22 @@ test("production workflows preserve planned account batching and strict promotio
 	expect(runCheck()).toEqual([]);
 });
 
-test("the integrated workflow gate rejects parallel rounds, serialised batches, detached plan axes and legacy promotion", async () => {
+test("the integrated workflow gate rejects parallel waves, serialised batches, detached plan axes and legacy promotion", async () => {
 	const { checkExperimentNesting } = await import("./lib/workflow-nesting.ts");
 	const docs = Object.fromEntries(
 		[
 			"bench-matrix.yml",
 			"bench-smoke.yml",
 			"bench-account.yml",
-			"bench-round.yml",
 			"bench-suite.yml",
 			"commit-dataset.yml",
 		].map((file) => [file, readWorkflow(`.github/workflows/${file}`)]),
 	);
 	const source = JSON.stringify(docs);
 	for (const [before, after] of [
-		// Rounds serialised (bench-account.yml is the only remaining max-parallel: 1).
-		['"max-parallel":1', '"max-parallel":2'],
-		// A round's batches created together: reintroducing max-parallel there is one approval per batch.
+		// Realworld must wait for synthetic; dropping that edge reintroduces mixed-label collision.
+		['"needs":["plan","wave-synthetic"]', '"needs":["plan"]'],
+		// A wave's batches created together: reintroducing max-parallel is one approval per batch.
 		[
 			'"fail-fast":false,"matrix":{"include":',
 			'"fail-fast":false,"max-parallel":1,"matrix":{"include":',

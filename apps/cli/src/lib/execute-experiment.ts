@@ -69,7 +69,7 @@ export async function executeExperimentBatch(
 			throw new Error("batch account mismatch");
 		return cell;
 	});
-	if (cells.length > batch.maxConcurrency) throw new Error("batch exceeds frozen concurrency");
+	if (batch.maxConcurrency < 1) throw new Error("batch concurrency must be positive");
 	const account = plan.accounts.find((entry) => entry.quotaDomain === batch.quotaDomain);
 	if (!account) throw new Error("batch quota domain missing from frozen account capacity");
 	logInfo(
@@ -119,8 +119,7 @@ export async function executeExperimentBatch(
 	} catch (error) {
 		admissionFailure = error;
 	}
-	const results = await Promise.allSettled(
-		cells.map(async (cell) => {
+	const runCell = async (cell: (typeof cells)[number]) => {
 			const id = `${cell.id}-a${options.workflowAttempt}-${randomUUID()}`;
 			const directory = join(options.root, id);
 			const raw = join(directory, "raw");
@@ -321,11 +320,40 @@ export async function executeExperimentBatch(
 				options.store.upload(`experiment-attempt-${plan.id}-${id}`, directory),
 			);
 			return evidence;
-		}),
+	};
+	const results: PromiseSettledResult<Awaited<ReturnType<typeof runCell>>>[] = Array.from(
+		{ length: cells.length },
 	);
-	const failedUpload = results.find((result) => result.status === "rejected");
+	const pending = new Set<Promise<void>>();
+	let next = 0;
+	const launch = () => {
+		while (next < cells.length && pending.size < batch.maxConcurrency) {
+			const index = next;
+			const cell = cells[index];
+			if (!cell) break;
+			next += 1;
+			const task = runCell(cell).then(
+				(value) => {
+					results[index] = { status: "fulfilled", value };
+				},
+				(reason) => {
+					results[index] = { status: "rejected", reason };
+				},
+			);
+			const tracked = task.finally(() => {
+				pending.delete(tracked);
+			});
+			pending.add(tracked);
+		}
+	};
+	launch();
+	while (pending.size > 0) {
+		await Promise.race(pending);
+		launch();
+	}
+	const failedUpload = results.find((result) => result?.status === "rejected");
 	if (failedUpload?.status === "rejected") throw failedUpload.reason;
-	return results.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
+	return results.flatMap((result) => (result?.status === "fulfilled" ? [result.value] : []));
 }
 
 export function batchIsComplete(

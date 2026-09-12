@@ -325,6 +325,14 @@ export const SUITES = {
 } as const satisfies Record<string, Suite>;
 
 /** A registered suite name. */
+
+/** CPU matrix waves: synthetic suites finish before realworld suites start. */
+export type BenchmarkWave = "synthetic" | "realworld";
+
+export function benchmarkWave(suite: string): BenchmarkWave {
+	return suite.startsWith("realworld-") ? "realworld" : "synthetic";
+}
+
 export type SuiteName = keyof typeof SUITES;
 
 /** The known suite names. */

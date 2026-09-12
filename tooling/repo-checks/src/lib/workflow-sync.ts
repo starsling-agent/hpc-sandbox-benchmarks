@@ -217,7 +217,6 @@ export function runCheck(root: string = findRepoRoot()): string[] {
 					"bench-matrix.yml",
 					"bench-smoke.yml",
 					"bench-account.yml",
-					"bench-round.yml",
 					"bench-suite.yml",
 					"commit-dataset.yml",
 				].map((file) => [file, readWorkflow(`.github/workflows/${file}`, root)]),

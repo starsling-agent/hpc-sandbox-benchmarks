@@ -1,8 +1,12 @@
-name: Benchmark account (reusable)
+name: Benchmark account wave (reusable)
 on:
   workflow_call:
     inputs:
       account:
+        type: string
+        required: true
+      wave:
+        description: 'synthetic or realworld — the only two CPU matrix waves'
         type: string
         required: true
 
@@ -24,25 +28,31 @@ jobs:
           persist-credentials: false
       - name: Set up workspace
         uses: ./.github/actions/setup-workspace
-      - name: Read frozen account axis
+      - name: Read frozen account wave axis
         id: plan
         env:
           GH_TOKEN: ${{ github.token }}
           BENCH_ACCOUNT: ${{ inputs.account }}
-        run: bun apps/cli/src/bin/workflow-experiment.ts axes "$BENCH_ACCOUNT"
+          BENCH_WAVE: ${{ inputs.wave }}
+        run: bun apps/cli/src/bin/workflow-experiment.ts axes "$BENCH_ACCOUNT" "$BENCH_WAVE"
   execute:
     needs: plan
+    # Accounts with no cells in this wave emit an empty axis; skip rather than failing the matrix.
+    if: needs.plan.outputs.axis != '[]'
     permissions:
       contents: write
       actions: read
       id-token: write
     strategy:
       fail-fast: false
-      max-parallel: 1
+      # No max-parallel: account exclusion is the suite job concurrency group, so every batch in this
+      # wave may be created together for one privileged approval. ROUND_BATCH_LIMIT keeps a released
+      # wave under the 100-job queue:max ceiling.
       matrix:
-        round: ${{ fromJSON(needs.plan.outputs.axis) }}
-    uses: ./.github/workflows/bench-round.yml
+        include: ${{ fromJSON(needs.plan.outputs.axis) }}
+    uses: ./.github/workflows/bench-suite.yml
     with:
-      account: ${{ inputs.account }}
-      round: ${{ matrix.round }}
+      providers: ${{ toJSON(fromJSON(format('["{0}"]', matrix.provider))) }}
+      suite: ${{ matrix.suite }}
+      batch_id: ${{ matrix.batch }}
     secrets: inherit

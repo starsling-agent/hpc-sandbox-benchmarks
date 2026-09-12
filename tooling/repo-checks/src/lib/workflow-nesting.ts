@@ -85,15 +85,28 @@ export function checkExperimentNesting(docs: Record<string, unknown>): string[] 
 		if (!condition) errors.push(detail);
 	};
 	for (const file of ["bench-matrix.yml", "bench-smoke.yml"]) {
-		const caller = job(file, "suite");
+		for (const waveJob of ["wave-synthetic", "wave-realworld"]) {
+			const caller = job(file, waveJob);
+			expect(
+				caller.uses === "./.github/workflows/bench-account.yml",
+				`${file}: ${waveJob} must dispatch account workflow`,
+			);
+			const strategy = asRecord(caller.strategy, file);
+			expect(
+				asRecord(strategy.matrix, file).account ===
+					"${{ fromJSON(needs.plan.outputs.accounts) }}",
+				`${file}: ${waveJob} account axis must come from frozen plan`,
+			);
+			const wave = asRecord(caller.with, file).wave;
+			expect(
+				wave === (waveJob === "wave-synthetic" ? "synthetic" : "realworld"),
+				`${file}: ${waveJob} must bind its wave input`,
+			);
+		}
+		const realworldNeeds = asRecord(job(file, "wave-realworld"), file).needs;
 		expect(
-			caller.uses === "./.github/workflows/bench-account.yml",
-			`${file}: must dispatch account workflow`,
-		);
-		const strategy = asRecord(caller.strategy, file);
-		expect(
-			asRecord(strategy.matrix, file).account === "${{ fromJSON(needs.plan.outputs.accounts) }}",
-			`${file}: account axis must come from frozen plan`,
+			Array.isArray(realworldNeeds) && realworldNeeds.includes("wave-synthetic"),
+			`${file}: realworld wave must wait for synthetic wave`,
 		);
 		const step = stepByName(job(file, "plan"), "Plan", file);
 		expect(
@@ -117,32 +130,21 @@ export function checkExperimentNesting(docs: Record<string, unknown>): string[] 
 			`${file}: preserve replicate defaults`,
 		);
 	}
-	for (const [file, callee, axis] of [
-		["bench-account.yml", "bench-round.yml", "round"],
-		["bench-round.yml", "bench-suite.yml", "include"],
-	]) {
-		if (!file || !callee || !axis) continue;
-		const caller = job(file, "execute");
-		const strategy = asRecord(caller.strategy, file);
-		// Rounds run one at a time so a later round's approval gate is raised only once the previous
-		// round has finished; a round's batches are created together — no max-parallel, the account
-		// concurrency queue serialises them — so ONE `privileged` approval releases the whole round
-		// (GitHub approves only the jobs already pending). Neither level may cancel its peers.
-		if (axis === "round") {
-			expect(
-				strategy["max-parallel"] === 1 && strategy["fail-fast"] === false,
-				`${file}: rounds must run one at a time without cancelling peers`,
-			);
-		} else {
-			expect(
-				strategy["max-parallel"] === undefined && strategy["fail-fast"] === false,
-				`${file}: a round's batches must be created together (no max-parallel) without cancelling peers`,
-			);
-		}
-		expect(caller.uses === `./.github/workflows/${callee}`, `${file}: wrong execution delegate`);
+	{
+		const caller = job("bench-account.yml", "execute");
+		const strategy = asRecord(caller.strategy, "bench-account.yml");
 		expect(
-			asRecord(strategy.matrix, file)[axis] === "${{ fromJSON(needs.plan.outputs.axis) }}",
-			`${file}: axis must come from frozen plan`,
+			strategy["max-parallel"] === undefined && strategy["fail-fast"] === false,
+			"bench-account.yml: a wave's batches must be created together (no max-parallel) without cancelling peers",
+		);
+		expect(
+			caller.uses === "./.github/workflows/bench-suite.yml",
+			"bench-account.yml: must dispatch suite workflow directly",
+		);
+		expect(
+			asRecord(strategy.matrix, "bench-account.yml").include ===
+				"${{ fromJSON(needs.plan.outputs.axis) }}",
+			"bench-account.yml: axis must come from frozen plan",
 		);
 	}
 	const worker = job("bench-suite.yml", "bench");
@@ -158,9 +160,10 @@ export function checkExperimentNesting(docs: Record<string, unknown>): string[] 
 	const publish = job("bench-matrix.yml", "publish");
 	expect(
 		Array.isArray(publish.needs) &&
-			publish.needs.includes("suite") &&
+			publish.needs.includes("wave-synthetic") &&
+			publish.needs.includes("wave-realworld") &&
 			publish.needs.includes("plan"),
-		"publication must wait for plan and all account batches",
+		"publication must wait for plan and both waves",
 	);
 	const commitJob = job("commit-dataset.yml", "commit");
 	const aggregate = stepByName(commitJob, "Aggregate", "commit-dataset.yml");

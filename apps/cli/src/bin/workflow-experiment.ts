@@ -13,7 +13,7 @@ import { workflowAxes, workflowExperiment } from "../lib/workflow-experiment.ts"
 
 if (import.meta.main) {
 	try {
-		const [command, account, round] = process.argv.slice(2);
+		const [command, account, wave] = process.argv.slice(2);
 		const id = process.env.BENCH_EXPERIMENT_ID ?? process.env.GITHUB_RUN_ID;
 		if (!id) throw new Error("experiment id is required");
 		const store = githubExperimentStore(id);
@@ -29,7 +29,7 @@ if (import.meta.main) {
 		if (command !== "collect" && plan.sha !== process.env.GITHUB_SHA)
 			throw new Error("checkout revision differs from frozen experiment");
 		if (command === "plan" || command === "axes") {
-			const axis = workflowAxes(plan, account, round);
+			const axis = workflowAxes(plan, account, wave);
 			if (!process.env.GITHUB_OUTPUT) throw new Error("workflow output file is required");
 			appendFileSync(process.env.GITHUB_OUTPUT, `axis=${JSON.stringify(axis)}\n`);
 		} else if (command === "execute") {
@@ -67,7 +67,7 @@ if (import.meta.main) {
 			);
 		} else
 			throw new Error(
-				"usage: workflow-experiment plan | axes [account] [round] | execute | collect",
+				"usage: workflow-experiment plan | axes [account] [wave] | execute | collect",
 			);
 	} catch (error) {
 		console.error(describeDriverFailure(error, diagnosticSecretsFromEnv(process.env)));

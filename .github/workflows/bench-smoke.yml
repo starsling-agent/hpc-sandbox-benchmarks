@@ -101,8 +101,8 @@ jobs:
           BENCH_ARTIFACT_VERCEL: ${{ vars.BENCH_ARTIFACT_VERCEL }}
         run: bun apps/cli/src/bin/workflow-experiment.ts plan
 
-  suite:
-    name: ${{ matrix.account }}
+  wave-synthetic:
+    name: synthetic / ${{ matrix.account }}
     needs: plan
     permissions:
       contents: write
@@ -115,4 +115,22 @@ jobs:
     uses: ./.github/workflows/bench-account.yml
     with:
       account: ${{ matrix.account }}
+      wave: synthetic
+    secrets: inherit
+
+  wave-realworld:
+    name: realworld / ${{ matrix.account }}
+    needs: [plan, wave-synthetic]
+    permissions:
+      contents: write
+      actions: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        account: ${{ fromJSON(needs.plan.outputs.accounts) }}
+    uses: ./.github/workflows/bench-account.yml
+    with:
+      account: ${{ matrix.account }}
+      wave: realworld
     secrets: inherit

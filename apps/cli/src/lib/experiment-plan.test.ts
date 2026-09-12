@@ -215,7 +215,6 @@ test("declared metrics with non-positive samples cannot satisfy coverage", () =>
 	expect(evaluateExperiment(plan(), [zero]).cells[0]?.missingMetrics).toEqual(["stream_type_copy"]);
 });
 
-
 test("provenance, duplicate attempts, and measured reruns cannot satisfy coverage", () => {
 	const valid = successful();
 	expect(evaluateExperiment(plan(), [valid, valid]).complete).toBe(false);

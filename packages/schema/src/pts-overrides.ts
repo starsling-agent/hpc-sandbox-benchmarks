@@ -186,14 +186,6 @@ export const ptsOverrides: Record<string, MetricOverride> = {
 		dimension: "realworld",
 		label: "OpenClaw: typecheck (tsgo)",
 	},
-	realworld_openclaw_task_shrinkwrap_check: {
-		dimension: "realworld",
-		label: "OpenClaw: shrinkwrap check",
-	},
-	realworld_openclaw_task_test_unit_fast: {
-		dimension: "realworld",
-		label: "OpenClaw: test (unit, fast)",
-	},
 	realworld_openclaw_task_test_types: {
 		dimension: "realworld",
 		label: "OpenClaw: typecheck (test tree)",

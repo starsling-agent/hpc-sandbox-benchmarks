@@ -4,7 +4,7 @@
   <TestInformation>
     <Title>OpenClaw CI Tasks</Title>
     <AppVersion>623534400684eca7c451cf587189fae714f2abe2</AppVersion>
-    <Description>Runs the CI tasks openclaw/openclaw's own pipeline runs -- clone, cold install (its exact CI invocation), lint (Oxlint), extension-channel lint (type-aware Oxlint), typecheck (tsgo), shrinkwrap check, fast unit tests, test-tree typecheck (tsgo) -- against a pinned main-HEAD checkout, timing each phase per sandbox provider.</Description>
+    <Description>Runs the CI tasks openclaw/openclaw's own pipeline runs -- clone, cold install (its exact CI invocation), lint (Oxlint), extension-channel lint (type-aware Oxlint), typecheck (tsgo), test-tree typecheck (tsgo) -- against a pinned main-HEAD checkout, timing each phase per sandbox provider.</Description>
     <ResultScale>Seconds</ResultScale>
     <Proportion>LIB</Proportion>
     <Executable>realworld-run</Executable>
@@ -46,14 +46,6 @@
         <Entry>
           <Name>Typecheck</Name>
           <Value>typecheck</Value>
-        </Entry>
-        <Entry>
-          <Name>Shrinkwrap Check</Name>
-          <Value>shrinkwrap_check</Value>
-        </Entry>
-        <Entry>
-          <Name>Test Unit Fast</Name>
-          <Value>test_unit_fast</Value>
         </Entry>
         <Entry>
           <Name>Test Types</Name>

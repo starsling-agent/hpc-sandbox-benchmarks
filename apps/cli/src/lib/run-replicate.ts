@@ -108,7 +108,7 @@ export async function runReplicate(ctx: ReplicateContext): Promise<ReplicateOutc
 				// Dimensions (the runtime half of the suite↔dimension↔metric contract).
 				resultsDir: join(rawRoot, provider, suite),
 			});
-			logInfo(`Suite "${suite}" completed on ${provider}`);
+			logInfo(`Suite "${suite}" command finished on ${provider}`);
 		} catch (err) {
 			// A usage error (unknown provider/suite) produced no raw tree and no marker: there is nothing to
 			// normalize, and pretending otherwise would write an empty Run for a cell that never existed.

@@ -202,6 +202,19 @@ test("all-skipped, missing, partial, unknown completion, and unresolved cleanup 
 	]);
 	expect(evaluateExperiment(plan(), [successful()]).complete).toBe(true);
 });
+test("declared metrics with non-positive samples cannot satisfy coverage", () => {
+	// Empty samples cannot form a schema-valid Run (parseRun rejects them). Non-positive values
+	// can still appear if a producer writes a 0; coverage must treat that as a shortfall.
+	const zero = successful();
+	const zeroMetric = zero.run?.providers[0]?.metrics[0];
+	if (!zeroMetric) throw new Error("fixture missing metric");
+	zeroMetric.samples = [0];
+	zeroMetric.aggregates = aggregate([0]);
+	zero.evidence.runDigest = evidenceDigest(zero.run);
+	expect(evaluateExperiment(plan(), [zero]).complete).toBe(false);
+	expect(evaluateExperiment(plan(), [zero]).cells[0]?.missingMetrics).toEqual(["stream_type_copy"]);
+});
+
 test("provenance, duplicate attempts, and measured reruns cannot satisfy coverage", () => {
 	const valid = successful();
 	expect(evaluateExperiment(plan(), [valid, valid]).complete).toBe(false);

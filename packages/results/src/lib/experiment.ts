@@ -293,7 +293,18 @@ export function evaluateExperiment(
 		const artifact = provider?.artifactEvidence?.find(
 			(entry) => entry.cell.suite === cell.suite && entry.cell.replicateIndex === cell.replicate,
 		);
-		const measured = new Set(provider?.metrics.map((metric) => metric.metricId) ?? []);
+		// Declared metrics need real samples — an empty samples array (or non-positive values) is a
+		// shortfall, not coverage. Frozen CPU run 34672199543 finished PTS exit 0 for mastra/openclaw
+		// while Test Core / Shrinkwrap / Test Unit Fast posted no Values.
+		const measured = new Set(
+			(provider?.metrics ?? [])
+				.filter(
+					(metric) =>
+						metric.samples.length > 0 &&
+						metric.samples.every((sample) => Number.isFinite(sample) && sample > 0),
+				)
+				.map((metric) => metric.metricId),
+		);
 		const missingMetrics = eligible.filter((id) => !measured.has(id));
 		const evidence = selected?.evidence;
 		const execution = selected?.execution && executionReceiptSchema.assert(selected.execution);

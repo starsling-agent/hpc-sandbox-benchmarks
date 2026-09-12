@@ -81,6 +81,7 @@ export const experimentCellSchema = type({
 export const experimentBatchSchema = type({
 	id: identifier,
 	quotaDomain: identifier,
+	wave: "'synthetic' | 'realworld'",
 	cells: "string[] >= 1",
 	maxConcurrency: "number.integer >= 1",
 	budgetMinutes: "number.safe > 0",
@@ -106,7 +107,12 @@ export const experimentPlanSchema = type({
 		.atLeastLength(1),
 	cells: experimentCellSchema.array().atLeastLength(1),
 	batches: experimentBatchSchema.array().atLeastLength(1),
-	rounds: type({ id: identifier, quotaDomain: identifier, batches: "string[] >= 1" })
+	rounds: type({
+		id: identifier,
+		quotaDomain: identifier,
+		wave: "'synthetic' | 'realworld'",
+		batches: "string[] >= 1",
+	})
 		.onUndeclaredKey("reject")
 		.array()
 		.atLeastLength(1),

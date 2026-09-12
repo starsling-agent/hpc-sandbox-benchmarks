@@ -151,12 +151,11 @@ test("normalizer placeholder rows are allowed but foreign provider observations 
 	expect(evaluateExperiment(plan(), [attempt]).complete).toBe(false);
 });
 
-test("default capacity preserves twelve replicates in bounded individual batches", () => {
+test("default capacity preserves twelve replicates in one rolling batch", () => {
 	const result = plan(12);
-	expect(result.batches).toHaveLength(12);
-	expect(result.batches.flatMap((batch) => batch.cells)).toEqual(
-		result.cells.map((entry) => entry.id),
-	);
+	expect(result.batches).toHaveLength(1);
+	expect(result.batches[0]?.cells).toEqual(result.cells.map((entry) => entry.id));
+	expect(result.batches[0]?.maxConcurrency).toBe(1);
 	expect(result.accounts[0]?.sandboxes).toBe(1);
 });
 test("resource budgets constrain an explicit sandbox cap", () => {
@@ -164,7 +163,9 @@ test("resource budgets constrain an explicit sandbox cap", () => {
 		{ id: "experiment-1", sha, createdOn: "2026-09-10", cells: [cell(0), cell(1), cell(2)] },
 		{ "e2b-benchmark": { sandboxes: 12, vcpus: 8, memoryGb: 16 } },
 	);
-	expect(result.batches.map((batch) => batch.cells.length)).toEqual([2, 1]);
+	expect(result.batches).toHaveLength(1);
+	expect(result.batches[0]?.cells).toHaveLength(3);
+	expect(result.batches[0]?.maxConcurrency).toBe(2);
 });
 test("rejects infeasible work, duplicate logical replicates, and mutated plans", () => {
 	expect(() =>
@@ -412,10 +413,12 @@ test("real aggregate and promote commands require intact original evidence", () 
 	}
 });
 
-test("large experiments retain every batch in explicit collection rounds", () => {
+test("large experiments retain every cell in explicit collection rounds", () => {
 	const result = plan(257);
 	expect(ROUND_BATCH_LIMIT).toBe(64);
-	expect(result.rounds.map((round) => round.batches.length)).toEqual([64, 64, 64, 64, 1]);
+	expect(result.batches).toHaveLength(1);
+	expect(result.batches[0]?.cells).toHaveLength(257);
+	expect(result.rounds.map((round) => round.batches.length)).toEqual([1]);
 	expect(result.rounds.flatMap((round) => round.batches)).toEqual(
 		result.batches.map((batch) => batch.id),
 	);
@@ -529,7 +532,7 @@ test("stock boots do not require verification of an artifact they never requeste
 	expect(evaluateExperiment(stockPlan, [attempt]).complete).toBe(true);
 });
 
-test("mixed suites share resource-bounded waves with the longest member budget", () => {
+test("mixed synthetic suites share a rolling batch with the longest member budget", () => {
 	const cells = [
 		cell(),
 		{
@@ -547,10 +550,11 @@ test("mixed suites share resource-bounded waves with the longest member budget",
 		{ "e2b-benchmark": { sandboxes: 30, vcpus: 8, memoryGb: 16 } },
 	);
 	expect(result.batches.map((batch) => batch.cells)).toEqual([
-		["e2b-memory-r0", "e2b-system-r0"],
-		["e2b-memory-r1"],
+		["e2b-memory-r0", "e2b-system-r0", "e2b-memory-r1"],
 	]);
-	expect(result.batches.map((batch) => batch.budgetMinutes)).toEqual([105, 85]);
+	expect(result.batches.map((batch) => batch.wave)).toEqual(["synthetic"]);
+	expect(result.batches.map((batch) => batch.maxConcurrency)).toEqual([2]);
+	expect(result.batches.map((batch) => batch.budgetMinutes)).toEqual([105]);
 });
 
 test("different allocation requirements stay in separate waves", () => {

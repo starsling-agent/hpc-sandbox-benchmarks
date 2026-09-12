@@ -66,7 +66,7 @@ export async function executeExperimentBatch(
 			throw new Error("batch account mismatch");
 		return cell;
 	});
-	if (cells.length > batch.maxConcurrency) throw new Error("batch exceeds frozen concurrency");
+	if (batch.maxConcurrency < 1) throw new Error("batch concurrency must be positive");
 	const account = plan.accounts.find((entry) => entry.quotaDomain === batch.quotaDomain);
 	if (!account) throw new Error("batch quota domain missing from frozen account capacity");
 	logInfo(
@@ -116,213 +116,237 @@ export async function executeExperimentBatch(
 	} catch (error) {
 		admissionFailure = error;
 	}
-	const results = await Promise.allSettled(
-		cells.map(async (cell) => {
-			const id = `${cell.id}-a${options.workflowAttempt}-${randomUUID()}`;
-			const directory = join(options.root, id);
-			const raw = join(directory, "raw");
-			mkdirSync(raw, { recursive: true });
-			const intent: AccountRecord = {
-				version: "1",
-				kind: "intent",
-				account: cell.quotaDomain,
-				attempt: id,
-				cellId: cell.id,
-				planDigest: plan.digest,
-			};
-			let createStarted = false;
-			let createRejectedCleanly = false;
-			let allocated: SandboxRef | undefined;
-			let allocationRecorded = false;
-			let failure = admissionFailure;
-			let runDigest: string | undefined;
-			try {
-				if (
-					history.some((record) => record.planDigest === plan.digest && record.cellId === cell.id)
-				)
-					throw new Error(
-						"this planned cell already has an attempt; retries require an authorized lineage or a fresh experiment",
-					);
-				if (failure !== undefined) throw failure;
-				const opened = drivers.get(cell.provider);
-				if (!opened) throw new Error("driver was not admitted");
-				if (!(cell.suite in SUITES)) throw new Error("suite was not admitted");
-				const suite = SUITES[cell.suite as SuiteName];
-				if (
-					cell.gpu !== undefined ||
-					evidenceDigest(opened.artifact) !== cell.artifactIdentity ||
-					cell.environmentRevision !== plan.sha ||
-					evidenceDigest({ sha: plan.sha, suite, passes: cell.passes }) !== cell.workloadRevision ||
-					evidenceDigest(cell.target) !== evidenceDigest(TARGET_SPEC)
-				)
-					throw new Error("resolved execution inputs differ from frozen plan");
-				if (Date.now() >= startupDeadline)
-					throw new Error("startup deadline exceeded before allocation");
-				await withinSignal(startupSignal, () => options.journal.append(intent));
-				const driver: SandboxDriver = {
-					...opened.driver,
-					async create(request, createOptions) {
-						createOptions?.signal?.throwIfAborted();
-						if (Date.now() >= startupDeadline)
-							throw new Error("startup deadline exceeded before create");
-						createStarted = true;
-						const session = await opened.driver.create(request, createOptions).catch((error) => {
-							// Drivers throw FailedCreateCleanupError only when cleanup could not prove
-							// absence. Any other create failure has already reconciled or never allocated.
-							createRejectedCleanly = !isFailedCreateCleanupError(error);
-							if (isConcurrentSandboxAdmissionError(error)) {
-								throw new Error(
-									concurrentSandboxAdmissionDetail(error, {
-										quotaDomain: batch.quotaDomain,
-										declaredSandboxes: account.sandboxes,
-										batchConcurrency: batch.maxConcurrency,
-									}),
-									{ cause: error },
-								);
-							}
-							throw error;
-						});
-						allocated = session.sandboxRef;
-						try {
-							const allocation: AccountRecord = {
-								...intent,
-								kind: "allocated",
-								ref: session.sandboxRef,
-							};
-							// Preserve vendor identity for operator recovery even if the durable append fails.
-							// This artifact is evidence only; it never substitutes for journal admission.
-							writeImmutableJson(join(raw, "allocation.json"), allocation);
-							await withinSignal(startupSignal, () => options.journal.append(allocation));
-							allocationRecorded = true;
-						} catch (error) {
-							// The harness has not received this session yet. Retain the original journal failure.
-							try {
-								const signal = AbortSignal.timeout(15_000);
-								await withinSignal(signal, () => session.destroy({ signal }));
-							} catch {
-								/* journal stays unresolved */
-							}
-							throw error;
+	const runCell = async (cell: (typeof cells)[number]) => {
+		const id = `${cell.id}-a${options.workflowAttempt}-${randomUUID()}`;
+		const directory = join(options.root, id);
+		const raw = join(directory, "raw");
+		mkdirSync(raw, { recursive: true });
+		const intent: AccountRecord = {
+			version: "1",
+			kind: "intent",
+			account: cell.quotaDomain,
+			attempt: id,
+			cellId: cell.id,
+			planDigest: plan.digest,
+		};
+		let createStarted = false;
+		let createRejectedCleanly = false;
+		let allocated: SandboxRef | undefined;
+		let allocationRecorded = false;
+		let failure = admissionFailure;
+		let runDigest: string | undefined;
+		try {
+			if (history.some((record) => record.planDigest === plan.digest && record.cellId === cell.id))
+				throw new Error(
+					"this planned cell already has an attempt; retries require an authorized lineage or a fresh experiment",
+				);
+			if (failure !== undefined) throw failure;
+			const opened = drivers.get(cell.provider);
+			if (!opened) throw new Error("driver was not admitted");
+			if (!(cell.suite in SUITES)) throw new Error("suite was not admitted");
+			const suite = SUITES[cell.suite as SuiteName];
+			if (
+				cell.gpu !== undefined ||
+				evidenceDigest(opened.artifact) !== cell.artifactIdentity ||
+				cell.environmentRevision !== plan.sha ||
+				evidenceDigest({ sha: plan.sha, suite, passes: cell.passes }) !== cell.workloadRevision ||
+				evidenceDigest(cell.target) !== evidenceDigest(TARGET_SPEC)
+			)
+				throw new Error("resolved execution inputs differ from frozen plan");
+			if (Date.now() >= startupDeadline)
+				throw new Error("startup deadline exceeded before allocation");
+			await withinSignal(startupSignal, () => options.journal.append(intent));
+			const driver: SandboxDriver = {
+				...opened.driver,
+				async create(request, createOptions) {
+					createOptions?.signal?.throwIfAborted();
+					if (Date.now() >= startupDeadline)
+						throw new Error("startup deadline exceeded before create");
+					createStarted = true;
+					const session = await opened.driver.create(request, createOptions).catch((error) => {
+						// Drivers throw FailedCreateCleanupError only when cleanup could not prove
+						// absence. Any other create failure has already reconciled or never allocated.
+						createRejectedCleanly = !isFailedCreateCleanupError(error);
+						if (isConcurrentSandboxAdmissionError(error)) {
+							throw new Error(
+								concurrentSandboxAdmissionDetail(error, {
+									quotaDomain: batch.quotaDomain,
+									declaredSandboxes: account.sandboxes,
+									batchConcurrency: batch.maxConcurrency,
+								}),
+								{ cause: error },
+							);
 						}
-						return session;
-					},
-				};
-				const outcome = await runReplicate({
-					provider: cell.provider,
-					suite: cell.suite,
-					runId: plan.id,
-					sha: plan.sha,
-					rawRoot: raw,
-					outFile: join(directory, "run.json"),
-					replicateIndex: cell.replicate,
-					required: [cell.provider],
-					execute: async (runOptions) =>
-						executeSuite({
-							allocation: {
-								module: opened.module,
-								driver,
-								request: { spec: cell.target, artifact: opened.artifact },
-							},
-							runId: plan.id,
-							replicateIndex: cell.replicate,
-							suiteName: cell.suite as SuiteName,
-							resultsDir: runOptions.resultsDir,
-							// The remaining finish allowance covers teardown, cleanup observation and cost evidence.
-							managed: {
-								sourceRevision: plan.sha,
-								passes: cell.passes,
-								startupDeadline,
-								workloadMs: cell.workloadMinutes * 60_000,
-								collectionMs: Math.max(1, cell.finishMinutes * 60_000 - 120_000),
-							},
-						}),
-				});
-				if (outcome.run) runDigest = evidenceDigest(outcome.run);
-				if (outcome.failed) failure = new Error(outcome.detail ?? "suite failed");
-			} catch (error) {
-				failure = error;
-			}
-			let receipts: ReturnType<typeof readAttemptReceipts> = {};
-			try {
-				receipts = readAttemptReceipts(raw);
-			} catch (error) {
-				failure ??= error;
-			}
-			const cleanup =
-				receipts.cleanup?.completed && receipts.cleanup.confirmedAbsent
-					? "confirmed"
-					: createStarted && !createRejectedCleanly
-						? "unresolved"
-						: "not-allocated";
-			try {
-				if (allocationRecorded && allocated && cleanup === "confirmed")
-					await options.journal.append({
-						...intent,
-						kind: "released",
-						outcome: "absent",
-						ref: allocated,
+						throw error;
 					});
-				// Close only intents known to have no remaining allocation; ambiguous create failures stay open.
-				else if (
-					(!createStarted || createRejectedCleanly) &&
-					admissionFailure === undefined &&
-					drivers.has(cell.provider)
-				) {
-					const records = await options.journal.read(cell.quotaDomain);
-					if (records.some((entry) => entry.kind === "intent" && entry.attempt === id))
-						await options.journal.append({ ...intent, kind: "released", outcome: "not-allocated" });
-				}
-			} catch (error) {
-				failure ??= error;
-			}
-			const diagnostic =
-				failure === undefined
-					? undefined
-					: describeDriverFailure(failure, diagnosticSecretsFromEnv(process.env));
-			writeImmutableJson(join(raw, "attempt-diagnostic.json"), { diagnostic: diagnostic ?? null });
-			const measurementStarted =
-				!!receipts.execution?.steps.some((step) => step.phase === "benchmark") ||
-				!!receipts.execution?.detached.some((step) => step.phase === "benchmark");
-			const evidence = experimentAttemptSchema.assert({
-				schemaVersion: "1",
-				id,
-				cellId: cell.id,
-				planDigest: plan.digest,
+					allocated = session.sandboxRef;
+					try {
+						const allocation: AccountRecord = {
+							...intent,
+							kind: "allocated",
+							ref: session.sandboxRef,
+						};
+						// Preserve vendor identity for operator recovery even if the durable append fails.
+						// This artifact is evidence only; it never substitutes for journal admission.
+						writeImmutableJson(join(raw, "allocation.json"), allocation);
+						await withinSignal(startupSignal, () => options.journal.append(allocation));
+						allocationRecorded = true;
+					} catch (error) {
+						// The harness has not received this session yet. Retain the original journal failure.
+						try {
+							const signal = AbortSignal.timeout(15_000);
+							await withinSignal(signal, () => session.destroy({ signal }));
+						} catch {
+							/* journal stays unresolved */
+						}
+						throw error;
+					}
+					return session;
+				},
+			};
+			const outcome = await runReplicate({
+				provider: cell.provider,
+				suite: cell.suite,
+				runId: plan.id,
 				sha: plan.sha,
-				workloadRevision: cell.workloadRevision,
-				environmentRevision: cell.environmentRevision,
-				artifactIdentity: cell.artifactIdentity,
-				passes: cell.passes,
-				workflowRun: plan.id,
-				workflowAttempt: options.workflowAttempt,
-				job: options.job,
-				sequence: 0,
-				outcome: failure === undefined && cleanup === "confirmed" ? "completed" : "failed",
-				measurementStarted,
-				retryable: false,
-				cleanup,
-				completion:
-					failure === undefined && measurementStarted
-						? "known-success"
-						: receipts.execution?.steps.some(
-									(step) => step.exitCode !== null && step.exitCode !== 0,
-								)
-							? "known-failure"
-							: "unknown",
-				...(runDigest ? { runDigest } : {}),
-				rawDigest: rawTreeDigest(raw),
-				...(diagnostic ? { diagnostic } : {}),
+				rawRoot: raw,
+				outFile: join(directory, "run.json"),
+				replicateIndex: cell.replicate,
+				required: [cell.provider],
+				execute: async (runOptions) =>
+					executeSuite({
+						allocation: {
+							module: opened.module,
+							driver,
+							request: { spec: cell.target, artifact: opened.artifact },
+						},
+						runId: plan.id,
+						replicateIndex: cell.replicate,
+						suiteName: cell.suite as SuiteName,
+						resultsDir: runOptions.resultsDir,
+						// The remaining finish allowance covers teardown, cleanup observation and cost evidence.
+						managed: {
+							sourceRevision: plan.sha,
+							passes: cell.passes,
+							startupDeadline,
+							workloadMs: cell.workloadMinutes * 60_000,
+							collectionMs: Math.max(1, cell.finishMinutes * 60_000 - 120_000),
+						},
+					}),
 			});
-			writeImmutableJson(join(directory, "attempt.json"), evidence);
-			await withinSignal(AbortSignal.timeout(5 * 60_000), () =>
-				options.store.upload(`experiment-attempt-${plan.id}-${id}`, directory),
+			if (outcome.run) runDigest = evidenceDigest(outcome.run);
+			if (outcome.failed) failure = new Error(outcome.detail ?? "suite failed");
+		} catch (error) {
+			failure = error;
+		}
+		let receipts: ReturnType<typeof readAttemptReceipts> = {};
+		try {
+			receipts = readAttemptReceipts(raw);
+		} catch (error) {
+			failure ??= error;
+		}
+		const cleanup =
+			receipts.cleanup?.completed && receipts.cleanup.confirmedAbsent
+				? "confirmed"
+				: createStarted && !createRejectedCleanly
+					? "unresolved"
+					: "not-allocated";
+		try {
+			if (allocationRecorded && allocated && cleanup === "confirmed")
+				await options.journal.append({
+					...intent,
+					kind: "released",
+					outcome: "absent",
+					ref: allocated,
+				});
+			// Close only intents known to have no remaining allocation; ambiguous create failures stay open.
+			else if (
+				(!createStarted || createRejectedCleanly) &&
+				admissionFailure === undefined &&
+				drivers.has(cell.provider)
+			) {
+				const records = await options.journal.read(cell.quotaDomain);
+				if (records.some((entry) => entry.kind === "intent" && entry.attempt === id))
+					await options.journal.append({ ...intent, kind: "released", outcome: "not-allocated" });
+			}
+		} catch (error) {
+			failure ??= error;
+		}
+		const diagnostic =
+			failure === undefined
+				? undefined
+				: describeDriverFailure(failure, diagnosticSecretsFromEnv(process.env));
+		writeImmutableJson(join(raw, "attempt-diagnostic.json"), { diagnostic: diagnostic ?? null });
+		const measurementStarted =
+			!!receipts.execution?.steps.some((step) => step.phase === "benchmark") ||
+			!!receipts.execution?.detached.some((step) => step.phase === "benchmark");
+		const evidence = experimentAttemptSchema.assert({
+			schemaVersion: "1",
+			id,
+			cellId: cell.id,
+			planDigest: plan.digest,
+			sha: plan.sha,
+			workloadRevision: cell.workloadRevision,
+			environmentRevision: cell.environmentRevision,
+			artifactIdentity: cell.artifactIdentity,
+			passes: cell.passes,
+			workflowRun: plan.id,
+			workflowAttempt: options.workflowAttempt,
+			job: options.job,
+			sequence: 0,
+			outcome: failure === undefined && cleanup === "confirmed" ? "completed" : "failed",
+			measurementStarted,
+			retryable: false,
+			cleanup,
+			completion:
+				failure === undefined && measurementStarted
+					? "known-success"
+					: receipts.execution?.steps.some((step) => step.exitCode !== null && step.exitCode !== 0)
+						? "known-failure"
+						: "unknown",
+			...(runDigest ? { runDigest } : {}),
+			rawDigest: rawTreeDigest(raw),
+			...(diagnostic ? { diagnostic } : {}),
+		});
+		writeImmutableJson(join(directory, "attempt.json"), evidence);
+		await withinSignal(AbortSignal.timeout(5 * 60_000), () =>
+			options.store.upload(`experiment-attempt-${plan.id}-${id}`, directory),
+		);
+		return evidence;
+	};
+	const results: PromiseSettledResult<Awaited<ReturnType<typeof runCell>>>[] = Array.from({
+		length: cells.length,
+	});
+	const pending = new Set<Promise<void>>();
+	let next = 0;
+	const launch = () => {
+		while (next < cells.length && pending.size < batch.maxConcurrency) {
+			const index = next;
+			const cell = cells[index];
+			if (!cell) break;
+			next += 1;
+			const task = runCell(cell).then(
+				(value) => {
+					results[index] = { status: "fulfilled", value };
+				},
+				(reason) => {
+					results[index] = { status: "rejected", reason };
+				},
 			);
-			return evidence;
-		}),
-	);
-	const failedUpload = results.find((result) => result.status === "rejected");
+			const tracked = task.finally(() => {
+				pending.delete(tracked);
+			});
+			pending.add(tracked);
+		}
+	};
+	launch();
+	while (pending.size > 0) {
+		await Promise.race(pending);
+		launch();
+	}
+	const failedUpload = results.find((result) => result?.status === "rejected");
 	if (failedUpload?.status === "rejected") throw failedUpload.reason;
-	return results.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
+	return results.flatMap((result) => (result?.status === "fulfilled" ? [result.value] : []));
 }
 
 export function batchIsComplete(

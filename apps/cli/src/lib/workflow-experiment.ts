@@ -80,31 +80,41 @@ export function workflowExperiment(env: NodeJS.ProcessEnv, createdOn: string): E
 }
 
 /** Every nesting level stays within the Actions matrix limit under one frozen plan. */
-export function workflowAxes(plan: ExperimentPlan, account?: string, round?: string): unknown[] {
+export function workflowAxes(plan: ExperimentPlan, account?: string, wave?: string): unknown[] {
 	if (account === undefined) {
 		const domains = [...new Set(plan.rounds.map((entry) => entry.quotaDomain))];
 		if (domains.length > 256)
 			throw new Error("experiment requires explicit account collection partitions");
 		return domains;
 	}
-	if (round === undefined) {
-		const rounds = plan.rounds
-			.filter((entry) => entry.quotaDomain === account)
-			.map((entry) => entry.id);
-		if (rounds.length === 0 || rounds.length > 256)
-			throw new Error("account requires explicit round collection partitions");
-		return rounds;
+	if (wave === undefined) {
+		const waves = [
+			...new Set(
+				plan.rounds.filter((entry) => entry.quotaDomain === account).map((entry) => entry.wave),
+			),
+		];
+		if (waves.length === 0 || waves.length > 256)
+			throw new Error("account requires explicit wave collection partitions");
+		return waves;
 	}
-	const selected = plan.rounds.find((entry) => entry.quotaDomain === account && entry.id === round);
-	if (!selected) throw new Error("unknown collection round");
-	return selected.batches.map((id) => {
-		const batch = plan.batches.find((entry) => entry.id === id);
-		const cell = plan.cells.find((entry) => entry.id === batch?.cells[0]);
-		if (!batch || !cell || batch.quotaDomain !== quotaDomain(cell.provider))
+	if (wave !== "synthetic" && wave !== "realworld") throw new Error("unknown collection wave");
+	const selected = plan.batches.filter(
+		(batch) => batch.quotaDomain === account && batch.wave === wave,
+	);
+	if (selected.length === 0) return [];
+	if (selected.length > 256) throw new Error("wave requires explicit batch collection partitions");
+	return selected.map((batch) => {
+		const cell = plan.cells.find((entry) => entry.id === batch.cells[0]);
+		if (!cell || batch.quotaDomain !== quotaDomain(cell.provider))
 			throw new Error("invalid workflow quota domain");
 		const suites = new Set(
 			plan.cells.filter((entry) => batch.cells.includes(entry.id)).map((entry) => entry.suite),
 		);
-		return { batch: id, provider: cell.provider, suite: suites.size === 1 ? cell.suite : "mixed" };
+		return {
+			batch: batch.id,
+			provider: cell.provider,
+			suite: suites.size === 1 ? [...suites][0] : "mixed",
+			wave: batch.wave,
+		};
 	});
 }

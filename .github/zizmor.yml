@@ -27,4 +27,3 @@ rules:
       - bench-matrix.yml
       - bench-smoke.yml
       - bench-account.yml
-      - bench-round.yml

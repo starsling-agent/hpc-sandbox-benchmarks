@@ -8,6 +8,7 @@ import type {
 } from "@sandbox-benchmarks/schema";
 import {
 	artifactVerified,
+	benchmarkWave,
 	canonicalJsonString,
 	cleanupReceiptSchema,
 	effectiveArtifact,
@@ -74,7 +75,7 @@ export function verifyExperimentPlan(value: unknown): ExperimentPlan {
 		if (
 			!account ||
 			batch.maxConcurrency > account.sandboxes ||
-			batch.cells.length > batch.maxConcurrency ||
+			batch.cells.length < 1 ||
 			batch.budgetMinutes > 180
 		) {
 			throw new Error(`invalid account batch capacity: ${batch.id}`);
@@ -94,11 +95,16 @@ export function verifyExperimentPlan(value: unknown): ExperimentPlan {
 			assigned.add(id);
 		}
 		const members = batch.cells.map((id) => cells.get(id)).filter((cell) => cell !== undefined);
+		if (members.some((cell) => benchmarkWave(cell.suite) !== batch.wave))
+			throw new Error(`batch mixes synthetic and realworld work: ${batch.id}`);
+		// Rolling admission runs at most maxConcurrency cells at once; capacity is checked against
+		// that window, not the full batch length.
+		const sample = members[0];
 		if (
-			members.reduce((sum, cell) => sum + (cell.gpu?.count ?? 0), 0) > (account.gpus ?? 0) ||
-			members.reduce((sum, cell) => sum + cell.target.vcpus, 0) > (account.vcpus ?? Infinity) ||
-			members.reduce((sum, cell) => sum + cell.target.memoryGb, 0) >
-				(account.memoryGb ?? Infinity) ||
+			!sample ||
+			(sample.gpu?.count ?? 0) * batch.maxConcurrency > (account.gpus ?? 0) ||
+			sample.target.vcpus * batch.maxConcurrency > (account.vcpus ?? Infinity) ||
+			sample.target.memoryGb * batch.maxConcurrency > (account.memoryGb ?? Infinity) ||
 			members.some(
 				(cell) =>
 					cell.startupMinutes + cell.workloadMinutes + cell.finishMinutes + 15 >
@@ -118,7 +124,12 @@ export function verifyExperimentPlan(value: unknown): ExperimentPlan {
 		roundIds.add(round.id);
 		for (const id of round.batches) {
 			const batch = plan.batches.find((entry) => entry.id === id);
-			if (!batch || batch.quotaDomain !== round.quotaDomain || scheduled.has(id))
+			if (
+				!batch ||
+				batch.quotaDomain !== round.quotaDomain ||
+				batch.wave !== round.wave ||
+				scheduled.has(id)
+			)
 				throw new Error(`invalid round assignment: ${id}`);
 			scheduled.add(id);
 		}

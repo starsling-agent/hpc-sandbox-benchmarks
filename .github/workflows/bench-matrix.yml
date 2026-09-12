@@ -80,8 +80,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: bun apps/cli/src/bin/audit-account-journals.ts --from-plan experiment/manifest/plan.json
 
-  suite:
-    name: ${{ matrix.account }}
+  # Exactly two waves. Synthetic finishes across the provider matrix before realworld starts.
+  wave-synthetic:
+    name: synthetic / ${{ matrix.account }}
     needs: plan
     permissions:
       contents: write
@@ -94,11 +95,29 @@ jobs:
     uses: ./.github/workflows/bench-account.yml
     with:
       account: ${{ matrix.account }}
+      wave: synthetic
+    secrets: inherit
+
+  wave-realworld:
+    name: realworld / ${{ matrix.account }}
+    needs: [plan, wave-synthetic]
+    permissions:
+      contents: write
+      actions: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        account: ${{ fromJSON(needs.plan.outputs.accounts) }}
+    uses: ./.github/workflows/bench-account.yml
+    with:
+      account: ${{ matrix.account }}
+      wave: realworld
     secrets: inherit
 
   publish:
     name: Commit complete experiment
-    needs: [plan, suite]
+    needs: [plan, wave-synthetic, wave-realworld]
     if: >
       !cancelled() && needs.plan.result == 'success' &&
       github.ref == 'refs/heads/main' &&
